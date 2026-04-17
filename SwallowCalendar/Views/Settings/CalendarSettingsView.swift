@@ -46,7 +46,7 @@ struct CalendarSettingsView: View {
                         Toggle(isOn: isOn) {
                             HStack(spacing: 6) {
                                 Circle()
-                                    .fill(Color(cgColor: cal.cgColor) ?? .accentColor)
+                                    .fill(Color(cgColor: cal.cgColor))
                                     .frame(width: 8, height: 8)
                                 Text(cal.title)
                                     .font(.system(size: 12))
@@ -109,7 +109,7 @@ struct CalendarSettingsView: View {
         .formStyle(.grouped)
         .padding()
         .task {
-            await calendarService.loadCalendars()
+            calendarService.loadCalendars()
         }
     }
 

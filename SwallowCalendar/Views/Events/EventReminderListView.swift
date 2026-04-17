@@ -24,7 +24,7 @@ struct EventReminderListView: View {
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let range = filterMode.dateRange(from: selectedDate)
         // 优先从缓存获取全天事件
-        var events = calendarService.fetchCachedAllDayEvents(
+        let events = calendarService.fetchCachedAllDayEvents(
             from: range.start,
             to: range.end,
             calendars: enabledCals

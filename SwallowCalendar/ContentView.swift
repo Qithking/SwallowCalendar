@@ -116,7 +116,7 @@ struct ContentView: View {
             _ = await calendarService.requestAccess()
         }
 
-        await calendarService.loadCalendars()
+        calendarService.loadCalendars()
 
         // 初始化默认自定义日历（中国节假日）
         if customSources.isEmpty {
