@@ -54,7 +54,7 @@ final class StatusBarIconManager {
     }
 
     private static func renderTextIcon(text: String, filled: Bool, iconColor: NSColor = .systemBlue) -> NSImage {
-        let size = NSSize(width: 22, height: 22)
+        let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size)
         image.lockFocus()
 
@@ -64,23 +64,26 @@ final class StatusBarIconManager {
         if filled {
             // 实心日期：背景填充 + 居中日期
             let bgRect = NSRect(x: 0, y: 0, width: size.width, height: size.height)
-            let bgPath = NSBezierPath(roundedRect: bgRect, xRadius: 4, yRadius: 4)
+            let bgPath = NSBezierPath(roundedRect: bgRect, xRadius: 3, yRadius: 3)
             iconColor.setFill()
             bgPath.fill()
 
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.alignment = .center
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 14, weight: .bold),
+                .font: NSFont.systemFont(ofSize: 11, weight: .bold),
                 .foregroundColor: textColor,
                 .paragraphStyle: paragraphStyle,
             ]
-            let textRect = NSRect(x: 0, y: 2, width: size.width, height: size.height - 2)
+            // 文字垂直居中
+            let textHeight: CGFloat = 12
+            let textY = (size.height - textHeight) / 2
+            let textRect = NSRect(x: 0, y: textY, width: size.width, height: textHeight)
             text.draw(in: textRect, withAttributes: attrs)
         } else {
             // 描边日期：透明背景 + 边框 + 白色日期
             let strokeRect = NSRect(x: 1, y: 1, width: size.width - 2, height: size.height - 2)
-            let strokePath = NSBezierPath(roundedRect: strokeRect, xRadius: 4, yRadius: 4)
+            let strokePath = NSBezierPath(roundedRect: strokeRect, xRadius: 3, yRadius: 3)
             strokePath.lineWidth = 1.5
             iconColor.setStroke()
             strokePath.stroke()
@@ -88,11 +91,14 @@ final class StatusBarIconManager {
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.alignment = .center
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 13, weight: .regular),
+                .font: NSFont.systemFont(ofSize: 10, weight: .regular),
                 .foregroundColor: NSColor.white,
                 .paragraphStyle: paragraphStyle,
             ]
-            let textRect = NSRect(x: 0, y: 2, width: size.width, height: size.height - 2)
+            // 文字垂直居中
+            let textHeight: CGFloat = 11
+            let textY = (size.height - textHeight) / 2
+            let textRect = NSRect(x: 0, y: textY, width: size.width, height: textHeight)
             text.draw(in: textRect, withAttributes: attrs)
         }
 

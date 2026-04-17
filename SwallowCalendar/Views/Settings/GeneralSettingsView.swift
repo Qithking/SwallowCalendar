@@ -7,6 +7,7 @@ import SwiftUI
 
 struct GeneralSettingsView: View {
     @Environment(AppSettings.self) private var appSettings
+    @State private var customColor: Color = Color(hex: AppSettings.shared.iconColorHex)
 
     var body: some View {
         @Bindable var settings = appSettings
@@ -28,20 +29,34 @@ struct GeneralSettingsView: View {
 
                 // 颜色选择（仅实心日期和描边日期显示）
                 if appSettings.iconStyle == .solidDate || appSettings.iconStyle == .strokeDate {
-                    HStack(spacing: 8) {
-                        Text("图标颜色")
-                            .font(.system(size: 12))
-                        Spacer()
-                        ForEach(iconColors, id: \.self) { colorHex in
-                            Circle()
-                                .fill(Color(hex: colorHex))
-                                .frame(width: 18, height: 18)
-                                .overlay(
-                                    Circle()
-                                        .stroke(appSettings.iconColorHex == colorHex ? Color.primary : Color.clear, lineWidth: 1.5)
-                                )
-                                .onTapGesture {
-                                    settings.iconColorHex = colorHex
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Text("图标颜色")
+                                .font(.system(size: 12))
+                            Spacer()
+                            ForEach(iconColors, id: \.self) { colorHex in
+                                Circle()
+                                    .fill(Color(hex: colorHex))
+                                    .frame(width: 18, height: 18)
+                                    .overlay(
+                                        Circle()
+                                            .stroke(appSettings.iconColorHex == colorHex ? Color.primary : Color.clear, lineWidth: 1.5)
+                                    )
+                                    .onTapGesture {
+                                        settings.iconColorHex = colorHex
+                                    }
+                            }
+                        }
+                        
+                        HStack {
+                            Text("自定义颜色")
+                                .font(.system(size: 12))
+                            Spacer()
+                            ColorPicker("", selection: $customColor)
+                                .labelsHidden()
+                                .frame(width: 30)
+                                .onChange(of: customColor) { _, newColor in
+                                    settings.iconColorHex = newColor.toHex() ?? settings.iconColorHex
                                 }
                         }
                     }
@@ -91,4 +106,17 @@ struct GeneralSettingsView: View {
         "#FF2D55", // 粉色
         "#8E8E93"  // 灰色
     ]
+}
+
+// MARK: - Color to Hex Extension
+
+extension Color {
+    func toHex() -> String? {
+        let nsColor = NSColor(self)
+        guard let rgbColor = nsColor.usingColorSpace(.sRGB) else { return nil }
+        let r = Int(rgbColor.redComponent * 255)
+        let g = Int(rgbColor.greenComponent * 255)
+        let b = Int(rgbColor.blueComponent * 255)
+        return String(format: "#%02X%02X%02X", r, g, b)
+    }
 }

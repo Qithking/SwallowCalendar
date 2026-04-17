@@ -9,6 +9,7 @@ import SwiftData
 
 struct CalendarSettingsView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(AppSettings.self) private var appSettings
     @Query private var calendarPreferences: [CalendarPreference]
     @Query private var customSources: [CustomCalendarSource]
     @State private var calendarService = CalendarService.shared
@@ -17,7 +18,15 @@ struct CalendarSettingsView: View {
     @State private var newSourceURL = ""
 
     var body: some View {
+        @Bindable var settings = appSettings
+
         Form {
+            // 显示选项
+            Section("显示选项") {
+                Toggle("显示农历", isOn: $settings.showLunarCalendar)
+            }
+
+            // 日历分类
             // 日历分类
             Section("系统日历分类") {
                 if calendarService.calendars.isEmpty {

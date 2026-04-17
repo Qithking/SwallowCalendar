@@ -11,7 +11,6 @@ struct EventPanelView: View {
     let calendarPreferences: [CalendarPreference]
 
     @State private var filterMode: EventFilterMode = .all
-    @State private var eventToEdit: CalendarEvent?
     @State private var showDeleteConfirmation = false
     @State private var eventToDelete: CalendarEvent?
 
@@ -42,7 +41,11 @@ struct EventPanelView: View {
                         calendarPreferences: calendarPreferences,
                         filterMode: filterMode,
                         onEditEvent: { event in
-                            eventToEdit = event
+                            EditEventWindowManager.shared.openEditWindow(
+                                event: event,
+                                calendarService: calendarService,
+                                onDismiss: {}
+                            )
                         },
                         onDeleteEvent: { event in
                             eventToDelete = event
@@ -57,7 +60,11 @@ struct EventPanelView: View {
                         calendarPreferences: calendarPreferences,
                         filterMode: filterMode,
                         onEditEvent: { event in
-                            eventToEdit = event
+                            EditEventWindowManager.shared.openEditWindow(
+                                event: event,
+                                calendarService: calendarService,
+                                onDismiss: {}
+                            )
                         },
                         onDeleteEvent: { event in
                             eventToDelete = event
@@ -70,18 +77,15 @@ struct EventPanelView: View {
             }
             .frame(maxHeight: .infinity)
         }
-        .sheet(item: $eventToEdit) { event in
-            EditEventSheet(event: event, calendarService: calendarService)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
         .alert("确认删除", isPresented: $showDeleteConfirmation, presenting: eventToDelete) { event in
-            Button("取消", role: .cancel) {
+            Button("取消") {
                 eventToDelete = nil
+                showDeleteConfirmation = false
             }
             Button("删除", role: .destructive) {
                 deleteEvent(event)
                 eventToDelete = nil
+                showDeleteConfirmation = false
             }
         } message: { event in
             Text("确定要删除事件「\(event.title)」吗？此操作无法撤销。")

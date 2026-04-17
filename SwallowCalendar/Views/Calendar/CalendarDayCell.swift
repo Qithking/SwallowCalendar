@@ -7,6 +7,7 @@ import SwiftUI
 import EventKit
 
 struct CalendarDayCell: View {
+    @Environment(AppSettings.self) private var appSettings
     let date: Date
     let isSelected: Bool
     let isToday: Bool
@@ -28,10 +29,21 @@ struct CalendarDayCell: View {
                 .foregroundColor(dayTextColor)
 
             // 农历/节假日
-            Text(holidayNames.first ?? lunarText)
-                .font(.system(size: 7))
-                .foregroundColor(holidayTextColor)
-                .lineLimit(1)
+            if appSettings.showLunarCalendar {
+                Text(holidayNames.first ?? lunarText)
+                    .font(.system(size: 7))
+                    .foregroundColor(holidayTextColor)
+                    .lineLimit(1)
+            } else if !holidayNames.isEmpty {
+                Text(holidayNames.first ?? "")
+                    .font(.system(size: 7))
+                    .foregroundColor(holidayTextColor)
+                    .lineLimit(1)
+            } else {
+                Text("")
+                    .font(.system(size: 7))
+                    .lineLimit(1)
+            }
 
             // 事件标记
             if eventCount > 0 {

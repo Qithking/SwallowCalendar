@@ -46,6 +46,13 @@ final class AppSettings {
         }
     }
 
+    /// 是否显示农历
+    var showLunarCalendar: Bool {
+        didSet {
+            UserDefaults.standard.set(showLunarCalendar, forKey: "showLunarCalendar")
+        }
+    }
+
     /// 菜单栏图标颜色（用于实心日期和描边日期）
     var iconColorHex: String {
         didSet {
@@ -82,6 +89,7 @@ final class AppSettings {
         self.customIconFormat = UserDefaults.standard.string(forKey: "customIconFormat") ?? "d"
         self.themeMode = ThemeMode(rawValue: UserDefaults.standard.string(forKey: "themeModeRaw") ?? "") ?? .system
         self.weekdayStart = UserDefaults.standard.object(forKey: "weekdayStart") as? Int ?? 2
+        self.showLunarCalendar = UserDefaults.standard.object(forKey: "showLunarCalendar") as? Bool ?? true
         self.iconColorHex = UserDefaults.standard.string(forKey: "iconColorHex") ?? "#007AFF"
     }
 

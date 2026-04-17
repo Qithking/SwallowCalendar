@@ -49,7 +49,12 @@ struct StatusBarLabelView: View {
     @State private var iconManager = StatusBarIconManager.shared
 
     var body: some View {
-        Image(nsImage: iconManager.currentIcon)
+        Button {
+            // 空白动作，图标点击由 MenuBarExtra 本身处理
+        } label: {
+            Image(nsImage: iconManager.currentIcon)
+        }
+        .buttonStyle(.plain)
     }
 }
 

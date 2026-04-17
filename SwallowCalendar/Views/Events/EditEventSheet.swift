@@ -8,8 +8,8 @@ import SwiftUI
 struct EditEventSheet: View {
     let event: CalendarEvent
     let calendarService: CalendarService
+    var onDismiss: (() -> Void)?
 
-    @Environment(\.dismiss) private var dismiss
     @State private var title: String
     @State private var startDate: Date
     @State private var isAllDay: Bool
@@ -19,9 +19,10 @@ struct EditEventSheet: View {
     @State private var taskReminderMinutes: Int = 10
     @State private var isProcessing = false
 
-    init(event: CalendarEvent, calendarService: CalendarService) {
+    init(event: CalendarEvent, calendarService: CalendarService, onDismiss: (() -> Void)? = nil) {
         self.event = event
         self.calendarService = calendarService
+        self.onDismiss = onDismiss
         _title = State(initialValue: event.title)
         _startDate = State(initialValue: event.startDate ?? Date())
         _isAllDay = State(initialValue: event.isAllDay)
@@ -35,7 +36,7 @@ struct EditEventSheet: View {
                     .font(.headline)
                 Spacer()
                 Button("取消") {
-                    dismiss()
+                    onDismiss?()
                 }
                 .buttonStyle(.plain)
             }
@@ -148,7 +149,7 @@ struct EditEventSheet: View {
                 startDate: isAllDay ? startDate : startDate,
                 endDate: isAllDay ? nil : startDate.addingTimeInterval(3600)
             )
-            dismiss()
+            onDismiss?()
         } catch {
             print("Failed to update event: \(error)")
         }
