@@ -70,6 +70,7 @@ final class SettingsWindowManager {
     var modelContainer: ModelContainer?
     var appSettings: AppSettings?
     private var settingsWindow: NSWindow?
+    private var settingsWindowDelegate: SettingsWindowDelegate?
     private var isOpening = false
 
     private init() {}
@@ -112,7 +113,8 @@ final class SettingsWindowManager {
         window.title = "设置"
         window.contentView = hostingView
         window.center()
-        window.delegate = SettingsWindowDelegate(window: window)
+        settingsWindowDelegate = SettingsWindowDelegate()
+        window.delegate = settingsWindowDelegate
         window.isReleasedWhenClosed = false
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -135,12 +137,6 @@ final class SettingsWindowManager {
 }
 
 private class SettingsWindowDelegate: NSObject, NSWindowDelegate {
-    private let window: NSWindow
-
-    init(window: NSWindow) {
-        self.window = window
-    }
-
     func windowWillClose(_ notification: Notification) {
         SettingsWindowManager.shared.windowDidClose()
     }

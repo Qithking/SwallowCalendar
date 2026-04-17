@@ -1,0 +1,243 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  PRODUCT_BUNDLE_IDENTIFIER: com.swallowscreen.app
+  MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest
+
+      - name: Build Universal Binary
+        run: |
+          mkdir -p build
+
+          # 构建 arm64 版本
+          swift build --configuration release --arch arm64 2>&1
+
+          # 查找 arm64 二进制文件 (排除 dSYM)
+          ARM64_PATH=$(find .build -type f -name "SwallowCalendar" -not -path "*.dSYM/*" 2>/dev/null | head -1)
+          echo "=== arm64 binary: $ARM64_PATH ==="
+
+          if [ -z "$ARM64_PATH" ] || [ ! -f "$ARM64_PATH" ]; then
+            echo "Error: arm64 binary not found"
+            exit 1
+          fi
+
+          cp "$ARM64_PATH" build/SwallowCalendar-arm64
+
+          # 构建 x86_64 版本 (先保存 arm64 后再删除 .build)
+          swift build --configuration release --arch x86_64 2>&1
+
+          # 查找 x86_64 二进制文件 (排除 dSYM)
+          X86_PATH=$(find .build -type f -name "SwallowCalendar" -not -path "*.dSYM/*" 2>/dev/null | head -1)
+          echo "=== x86_64 binary: $X86_PATH ==="
+
+          if [ -z "$X86_PATH" ] || [ ! -f "$X86_PATH" ]; then
+            echo "Error: x86_64 binary not found"
+            exit 1
+          fi
+
+          cp "$X86_PATH" build/SwallowCalendar-x86_64
+
+          # 合并为 Universal Binary
+          lipo -create build/SwallowCalendar-arm64 build/SwallowCalendar-x86_64 -output build/SwallowCalendar
+
+          echo "=== Universal Binary Info ==="
+          lipo -info build/SwallowCalendar
+          file build/SwallowCalendar
+
+      - name: Create App Bundle
+        run: |
+          # 创建 App Bundle 目录结构
+          mkdir -p SwallowCalendar.app/Contents/MacOS
+          mkdir -p SwallowCalendar.app/Contents/Resources
+
+          # 复制二进制文件
+          cp build/SwallowCalendar SwallowCalendar.app/Contents/MacOS/
+          chmod +x SwallowCalendar.app/Contents/MacOS/SwallowCalendar
+
+          # 生成 .icns 图标文件
+          ICONSET_DIR="SwallowCalendar.app/Contents/Resources/AppIcon.iconset"
+          mkdir -p "$ICONSET_DIR"
+
+          # 复制各种尺寸的图标到 iconset
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/16x16.png" "$ICONSET_DIR/icon_16x16.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/16x16@2x.png" "$ICONSET_DIR/icon_16x16@2x.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/32x32.png" "$ICONSET_DIR/icon_32x32.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/32x32@2x.png" "$ICONSET_DIR/icon_32x32@2x.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/128x128.png" "$ICONSET_DIR/icon_128x128.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/128x128@2x.png" "$ICONSET_DIR/icon_128x128@2x.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/256x256.png" "$ICONSET_DIR/icon_256x256.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/256x256@2x.png" "$ICONSET_DIR/icon_256x256@2x.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/512x512.png" "$ICONSET_DIR/icon_512x512.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/512x512@2x.png" "$ICONSET_DIR/icon_512x512@2x.png" 2>/dev/null || true
+
+          # 使用 iconutil 生成 .icns 文件
+          iconutil -c icns "$ICONSET_DIR" -o "SwallowCalendar.app/Contents/Resources/AppIcon.icns"
+          rm -rf "$ICONSET_DIR"
+
+          # 获取版本号
+          VERSION=${GITHUB_REF#refs/tags/v}
+
+          # 创建 Info.plist
+          cat > SwallowCalendar.app/Contents/Info.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDevelopmentRegion</key>
+              <string>zh_CN</string>
+              <key>CFBundleExecutable</key>
+              <string>SwallowCalendar</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.swallowcalendar.app</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
+              <key>CFBundleName</key>
+              <string>SwallowCalendar</string>
+              <key>CFBundleDisplayName</key>
+              <string>燕子日历</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>VERSION_PLACEHOLDER</string>
+              <key>CFBundleVersion</key>
+              <string>BUILD_PLACEHOLDER</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>13.0</string>
+              <key>LSUIElement</key>
+              <true/>
+              <key>NSHumanReadableCopyright</key>
+              <string>Copyright © 2026 thking. All rights reserved.</string>
+              <key>NSPrincipalClass</key>
+              <string>NSApplication</string>
+              <key>NSCalendarsUsageDescription</key>
+              <string>燕子日历需要访问您的日历以显示和管理日程事件。</string>
+              <key>NSCalendarsFullAccessUsageDescription</key>
+              <string>燕子日历需要完整的日历访问权限以读取和创建日历事件。</string>
+          </dict>
+          </plist>
+          EOF
+
+          sed -i '' "s/VERSION_PLACEHOLDER/${VERSION}/g" SwallowCalendar.app/Contents/Info.plist
+          BUILD_NUM=$(git rev-list HEAD --count)
+          sed -i '' "s/BUILD_PLACEHOLDER/${BUILD_NUM}/g" SwallowCalendar.app/Contents/Info.plist
+
+          # 添加 entitlements 文件
+          cat > SwallowCalendar.app/Contents/Entitlements.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.security.app-sandbox</key>
+              <false/>
+              <key>com.apple.security.personal-information.calendars</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+          echo "=== App Bundle Structure ==="
+          ls -la SwallowCalendar.app/Contents/
+
+      - name: Ad-hoc Sign App
+        run: |
+          # 使用 ad-hoc 签名
+          codesign --force --deep --sign "-" SwallowCalendar.app
+
+          echo "=== Verify Signature ==="
+          codesign -vvv SwallowCalendar.app || true
+          spctl --assess --type exec --verbose=2 SwallowCalendar.app 2>&1 || true
+
+      - name: Create DMG
+        run: |
+          brew install create-dmg
+
+          mkdir -p dmg_temp
+          cp -R SwallowCalendar.app dmg_temp/
+
+          # 使用 .icns 作为 DMG 卷图标
+          ICON_PATH="dmg_temp/SwallowCalendar.app/Contents/Resources/AppIcon.icns"
+
+          echo "=== Using icon: $ICON_PATH ==="
+
+          # 创建 DMG
+          create-dmg \
+            --volname "SwallowCalendar" \
+            --window-pos 200 120 \
+            --window-size 500 350 \
+            --icon "SwallowCalendar.app" 150 175 \
+            --app-drop-link 350 175 \
+            --hide-extension "SwallowCalendar.app" \
+            --volicon "$ICON_PATH" \
+            "SwallowCalendar-${{ github.ref_name }}-universal.dmg" \
+            "dmg_temp/"
+
+          ls -la *.dmg
+
+      - name: Generate Release Body
+        id: release_body
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log "$PREV_TAG"..HEAD --oneline --format='  - %s' 2>/dev/null | head -50 || echo "  - 无更新内容")
+          else
+            CHANGELOG=$(git log --oneline --format='  - %s' | head -20 2>/dev/null || echo "  - 无更新内容")
+          fi
+
+          {
+            echo "### 更新内容"
+            echo "$CHANGELOG"
+            echo ""
+            echo "### 安装说明"
+            echo "  1. 下载并打开 DMG 文件"
+            echo "  2. 将 SwallowCalendar.app 拖入 Applications 文件夹"
+            echo "  3. 如果提示"无法打开"，请在系统设置 > 隐私与安全性中允许运行"
+            echo ""
+            echo "### 系统要求"
+            echo "  - macOS 13.0 (Ventura) 或更高版本"
+          } > release_body.txt
+
+          cat release_body.txt
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release_body.txt
+          files: SwallowCalendar-*.dmg
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: SwallowCalendar-build
+          path: |
+            SwallowCalendar.app
+            SwallowCalendar-*.dmg
+          retention-days: 7
