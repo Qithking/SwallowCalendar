@@ -90,13 +90,47 @@ final class CalendarService {
 
     /// 创建日历事件
     @MainActor
-    func createEvent(title: String, startDate: Date, endDate: Date?, isAllDay: Bool, calendar: EKCalendar?) throws {
+    func createEvent(
+        title: String,
+        startDate: Date,
+        endDate: Date?,
+        isAllDay: Bool,
+        calendar: EKCalendar?,
+        priority: EventPriority? = nil,
+        recurrence: RecurrenceType? = nil,
+        reminderMinutes: Int? = nil
+    ) throws {
         let event = EKEvent(eventStore: eventStore)
         event.title = title
         event.startDate = startDate
         event.endDate = endDate ?? startDate.addingTimeInterval(3600)
         event.isAllDay = isAllDay
         event.calendar = calendar ?? eventStore.defaultCalendarForNewEvents ?? calendars.first
+
+        // 设置重复规则
+        if let recurrence = recurrence, recurrence != .none {
+            let freq: EKRecurrenceFrequency
+            switch recurrence {
+            case .daily: freq = .daily
+            case .weekly: freq = .weekly
+            case .monthly: freq = .monthly
+            case .yearly: freq = .yearly
+            case .none, .custom: freq = .daily
+            }
+            let rule = EKRecurrenceRule(recurrenceWith: freq, interval: 1, end: nil)
+            event.addRecurrenceRule(rule)
+        }
+
+        // 设置提醒
+        if let minutes = reminderMinutes, minutes > 0 {
+            let alarm = EKAlarm(relativeOffset: TimeInterval(-minutes * 60))
+            event.addAlarm(alarm)
+        } else {
+            // 默认提前10分钟提醒
+            let alarm = EKAlarm(relativeOffset: -600)
+            event.addAlarm(alarm)
+        }
+
         guard event.calendar != nil else {
             throw EventError.noCalendarAvailable
         }

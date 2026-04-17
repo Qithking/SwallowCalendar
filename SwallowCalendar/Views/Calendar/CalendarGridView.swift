@@ -76,7 +76,8 @@ struct CalendarGridView: View {
                     holidayNames: icsService.holidayNameSync(for: date),
                     eventCount: eventCount(for: date),
                     isHovered: hoveredDate.flatMap { calendar.isDate(date, inSameDayAs: $0) } ?? false,
-                    eventTitles: eventTitles(for: date)
+                    eventTitles: eventTitles(for: date),
+                    eventColors: eventColors(for: date)
                 )
                 .onTapGesture {
                     withAnimation(.easeInOut(duration: 0.15)) {
@@ -146,5 +147,12 @@ struct CalendarGridView: View {
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
         return events.map { $0.title }
+    }
+
+    private func eventColors(for date: Date) -> [String] {
+        guard calendarService.authorizationStatus == .fullAccess else { return [] }
+        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
+        let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
+        return events.map { $0.calendarColorHex }
     }
 }

@@ -5,6 +5,63 @@
 
 import Foundation
 
+// MARK: - Event Priority
+
+enum EventPriority: Int, CaseIterable {
+    case none = 0
+    case low = 5
+    case medium = 7
+    case high = 9
+
+    var displayName: String {
+        switch self {
+        case .none: return "无"
+        case .low: return "低"
+        case .medium: return "中"
+        case .high: return "高"
+        }
+    }
+}
+
+// MARK: - Recurrence Type
+
+enum RecurrenceType: String, CaseIterable {
+    case none = "1次"           // 不重复
+    case daily = "每天"
+    case weekly = "每周"
+    case monthly = "每月"
+    case yearly = "每年"
+    case custom = "自定义"
+}
+
+// MARK: - Event Color
+
+enum EventColor: String, CaseIterable {
+    case red = "#FF3B30"
+    case orange = "#FF9500"
+    case yellow = "#FFCC00"
+    case green = "#34C759"
+    case blue = "#007AFF"
+    case purple = "#AF52DE"
+    case pink = "#FF2D55"
+    case gray = "#8E8E93"
+
+    var displayName: String {
+        switch self {
+        case .red: return "红色"
+        case .orange: return "橙色"
+        case .yellow: return "黄色"
+        case .green: return "绿色"
+        case .blue: return "蓝色"
+        case .purple: return "紫色"
+        case .pink: return "粉色"
+        case .gray: return "灰色"
+        }
+    }
+}
+
+// MARK: - CalendarEvent
+
 /// 统一事件展示模型，用于 UI 展示
 struct CalendarEvent: Identifiable {
     let id: String

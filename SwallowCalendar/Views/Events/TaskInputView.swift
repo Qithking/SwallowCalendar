@@ -52,24 +52,84 @@ struct TaskInputView: View {
 
             // 解析预览
             if let preview = parsePreview, !inputText.isEmpty {
-                HStack(spacing: 4) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary)
-                    Text(preview.title)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                    Text("·")
-                        .foregroundColor(.secondary)
-                    Text(formatDate(preview.date))
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.leading, 24)
+                previewTags(preview)
             }
         }
     }
+
+    // MARK: - Preview Tags
+
+    @ViewBuilder
+    private func previewTags(_ preview: ParsedTask) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                // 标题
+                Text(preview.title)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+
+                Text("·")
+                    .foregroundColor(.secondary)
+
+                // 日期时间
+                Text(formatDate(preview.date))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+
+                // 农历标记
+                if preview.isLunar {
+                    tagView("农历", color: .orange)
+                }
+
+                // 颜色标签
+                if let color = preview.color {
+                    tagView(color.displayName, color: Color(hex: color.rawValue))
+                }
+
+                // 优先级标签
+                if let priority = preview.priority {
+                    tagView("优先:\(priority.displayName)", color: priorityColor(priority))
+                }
+
+                // 周期标签
+                if let recurrence = preview.recurrence, recurrence != .none {
+                    tagView(recurrence.rawValue, color: .blue)
+                }
+
+                // 提醒时间
+                if let minutes = preview.reminderMinutes {
+                    let text = minutes >= 1440 ? "提前\(minutes / 1440)天" :
+                               minutes >= 60 ? "提前\(minutes / 60)小时" : "提前\(minutes)分钟"
+                    tagView(text, color: .purple)
+                }
+            }
+            .padding(.leading, 24)
+        }
+    }
+
+    private func tagView(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9))
+            .foregroundColor(color)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(color.opacity(0.15))
+            )
+    }
+
+    private func priorityColor(_ priority: EventPriority) -> Color {
+        switch priority {
+        case .high: return .red
+        case .medium: return .orange
+        case .low: return .gray
+        case .none: return .secondary
+        }
+    }
+
+    // MARK: - Actions
 
     private func updatePreview(_ text: String) {
         guard !text.trimmingCharacters(in: .whitespaces).isEmpty else {
@@ -95,7 +155,10 @@ struct TaskInputView: View {
                 startDate: parsed.date,
                 endDate: isAllDay ? nil : parsed.date.addingTimeInterval(3600),
                 isAllDay: isAllDay,
-                calendar: nil
+                calendar: nil,
+                priority: parsed.priority,
+                recurrence: parsed.recurrence,
+                reminderMinutes: parsed.reminderMinutes
             )
             inputText = ""
             parsePreview = nil

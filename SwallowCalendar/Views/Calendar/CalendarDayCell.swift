@@ -16,6 +16,7 @@ struct CalendarDayCell: View {
     let eventCount: Int
     let isHovered: Bool
     var eventTitles: [String] = []
+    var eventColors: [String] = []
 
     @State private var showPopover = false
 
@@ -66,9 +67,10 @@ struct CalendarDayCell: View {
             Text(dateString)
                 .font(.system(size: 12, weight: .semibold))
 
-            // 节假日
-            if !holidayNames.isEmpty {
-                ForEach(holidayNames, id: \.self) { name in
+            // 节假日（去重，保持顺序）
+            let uniqueHolidays = holidayNames.uniqued()
+            if !uniqueHolidays.isEmpty {
+                ForEach(Array(uniqueHolidays.enumerated()), id: \.offset) { _, name in
                     HStack(spacing: 4) {
                         Circle()
                             .fill(.red)
@@ -79,9 +81,10 @@ struct CalendarDayCell: View {
                 }
             }
 
-            // 事件
-            if !eventTitles.isEmpty {
-                ForEach(eventTitles, id: \.self) { title in
+            // 事件（去重，保持顺序）
+            let uniqueEvents = eventTitles.uniqued()
+            if !uniqueEvents.isEmpty {
+                ForEach(Array(uniqueEvents.enumerated()), id: \.offset) { _, title in
                     HStack(spacing: 4) {
                         Circle()
                             .fill(Color.accentColor)
@@ -130,8 +133,26 @@ struct CalendarDayCell: View {
         } else if isToday {
             RoundedRectangle(cornerRadius: 6)
                 .stroke(Color.accentColor, lineWidth: 1)
+        } else if eventCount > 1 {
+            // 多事件日期使用第一个事件的颜色作为背景提示
+            if let firstColorHex = eventColors.first {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color(hex: firstColorHex).opacity(0.5), lineWidth: 1)
+            } else {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+            }
         } else {
             Color.clear
         }
+    }
+}
+
+// MARK: - Array Deduplication
+
+extension Array where Element: Equatable & Hashable {
+    func uniqued() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
     }
 }

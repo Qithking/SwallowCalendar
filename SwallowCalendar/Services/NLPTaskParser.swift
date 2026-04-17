@@ -7,7 +7,7 @@ import Foundation
 
 /// 自然语言任务解析器
 struct NLPTaskParser {
-    /// 解析自然语言输入，返回任务名和日期
+    /// 解析自然语言输入，返回任务详情
     static func parse(_ input: String) -> ParsedTask {
         let trimmed = input.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
@@ -16,16 +16,194 @@ struct NLPTaskParser {
 
         // 1. 先尝试 NSDataDetector
         if let detected = parseWithDataDetector(trimmed) {
-            return detected
+            return mergeAdditionalAttributes(from: trimmed, to: detected)
         }
 
         // 2. 尝试自定义中文正则
         if let detected = parseWithChinesePatterns(trimmed) {
-            return detected
+            return mergeAdditionalAttributes(from: trimmed, to: detected)
         }
 
         // 3. 无法解析时间，默认今天
         return ParsedTask(title: trimmed, date: Date())
+    }
+
+    /// 从输入中提取颜色、优先级、周期等属性
+    private static func mergeAdditionalAttributes(from input: String, to task: ParsedTask) -> ParsedTask {
+        var result = task
+
+        // 提取颜色
+        if let color = parseColor(from: input) {
+            result.color = color
+        }
+
+        // 提取优先级
+        if let priority = parsePriority(from: input) {
+            result.priority = priority
+        }
+
+        // 提取周期
+        if let recurrence = parseRecurrence(from: input) {
+            result.recurrence = recurrence
+        }
+
+        // 提取农历标记
+        if input.contains("农历") || input.contains("阴历") {
+            result.isLunar = true
+        }
+
+        // 提取提醒时间（提前X分钟/小时/天提醒）
+        if let reminderMinutes = parseReminder(from: input) {
+            result.reminderMinutes = reminderMinutes
+        }
+
+        // 清理标题中的属性关键词
+        result.title = cleanTitle(input, removingAttributes: true)
+
+        return result
+    }
+
+    // MARK: - 颜色解析
+
+    private static func parseColor(from input: String) -> EventColor? {
+        let colorPatterns: [(String, EventColor)] = [
+            ("红色|红", .red),
+            ("橙色|橙", .orange),
+            ("黄色|黄", .yellow),
+            ("绿色|绿", .green),
+            ("蓝色|蓝", .blue),
+            ("紫色|紫", .purple),
+            ("粉色|粉", .pink),
+            ("灰色|灰", .gray),
+        ]
+
+        for (pattern, color) in colorPatterns {
+            if input.contains(pattern) {
+                return color
+            }
+        }
+        return nil
+    }
+
+    // MARK: - 优先级解析
+
+    private static func parsePriority(from input: String) -> EventPriority? {
+        let highPatterns = ["重要", "紧急", "高优", "最高", "必须", "关键", "!!!", "!!", "!!!", "[!]", "(!)", "★"]
+        let mediumPatterns = ["中等", "普通", "一般"]
+        let lowPatterns = ["低优", "低优先级", "次要", "可选", "不重要"]
+
+        for pattern in highPatterns {
+            if input.contains(pattern) { return .high }
+        }
+        for pattern in mediumPatterns {
+            if input.contains(pattern) { return .medium }
+        }
+        for pattern in lowPatterns {
+            if input.contains(pattern) { return .low }
+        }
+
+        return nil
+    }
+
+    // MARK: - 周期解析
+
+    private static func parseRecurrence(from input: String) -> RecurrenceType? {
+        if input.contains("每天") || input.contains("日循环") {
+            return .daily
+        }
+        if input.contains("每周") || input.contains("周循环") {
+            return .weekly
+        }
+        if input.contains("每月") || input.contains("月循环") {
+            return .monthly
+        }
+        if input.contains("每年") || input.contains("年循环") || input.contains("周年") {
+            return .yearly
+        }
+        if input.contains("循环") || input.contains("重复") || input.contains("不限") {
+            return .daily
+        }
+        return nil
+    }
+
+    // MARK: - 提醒时间解析
+
+    private static func parseReminder(from input: String) -> Int? {
+        // "提前X分钟提醒"
+        if let match = input.range(of: "提前(\\d+)分钟", options: .regularExpression) {
+            let numbers = input[match].filter { $0.isNumber }
+            return Int(numbers)
+        }
+        // "提前X小时提醒"
+        if let match = input.range(of: "提前(\\d+)小时", options: .regularExpression) {
+            let numbers = input[match].filter { $0.isNumber }
+            return (Int(numbers) ?? 0) * 60
+        }
+        // "提前X天提醒"
+        if let match = input.range(of: "提前(\\d+)天", options: .regularExpression) {
+            let numbers = input[match].filter { $0.isNumber }
+            return (Int(numbers) ?? 0) * 1440
+        }
+        return nil
+    }
+
+    // MARK: - 标题清理
+
+    private static func cleanTitle(_ input: String, removingAttributes: Bool) -> String {
+        var result = input
+
+        if removingAttributes {
+            // 移除颜色关键词
+            let colorKeywords = ["红色", "红", "橙色", "橙", "黄色", "黄", "绿色", "绿",
+                                  "蓝色", "蓝", "紫色", "紫", "粉色", "粉", "灰色", "灰"]
+            for kw in colorKeywords {
+                result = result.replacingOccurrences(of: kw, with: "")
+            }
+
+            // 移除优先级关键词
+            let priorityKeywords = ["重要", "紧急", "高优", "最高", "必须", "关键", "中等", "普通",
+                                     "一般", "低优", "低优先级", "次要", "可选", "不重要"]
+            for kw in priorityKeywords {
+                result = result.replacingOccurrences(of: kw, with: "")
+            }
+
+            // 移除优先级符号
+            let prioritySymbols = ["!!!", "!!", "!", "[!]", "(!)", "★"]
+            for sym in prioritySymbols {
+                result = result.replacingOccurrences(of: sym, with: "")
+            }
+
+            // 移除周期关键词
+            let recurrenceKeywords = ["每天", "每周", "每月", "每年", "循环", "重复", "不限"]
+            for kw in recurrenceKeywords {
+                result = result.replacingOccurrences(of: kw, with: "")
+            }
+
+            // 移除农历标记
+            result = result.replacingOccurrences(of: "农历", with: "")
+            result = result.replacingOccurrences(of: "阴历", with: "")
+
+            // 移除提醒时间关键词
+            if let range = result.range(of: "提前\\d+分钟", options: .regularExpression) {
+                result.removeSubrange(range)
+            }
+            if let range = result.range(of: "提前\\d+小时", options: .regularExpression) {
+                result.removeSubrange(range)
+            }
+            if let range = result.range(of: "提前\\d+天", options: .regularExpression) {
+                result.removeSubrange(range)
+            }
+            result = result.replacingOccurrences(of: "提醒", with: "")
+        }
+
+        // 清理空白
+        result = result.trimmingCharacters(in: .whitespaces)
+        // 清理多余空格
+        while result.contains("  ") {
+            result = result.replacingOccurrences(of: "  ", with: " ")
+        }
+
+        return result.isEmpty ? "待办事项" : result
     }
 
     // MARK: - NSDataDetector
@@ -130,9 +308,6 @@ struct NLPTaskParser {
         ]
 
         // 时间后缀模式（可以和上面组合）
-        // "早上X点" / "上午X点" / "中午X点"
-        // "下午X点" / "晚上X点" / "傍晚X点"
-        // "X点半" / "X:XX"
         let timeSuffixPatterns: [(String, (String) -> (hour: Int, minute: Int)?)] = [
             ("(?:早上|上午)(\\d+)(?:点(\\d+)分?)?(?:点半)?", { match in
                 guard let hour = Int(match), hour >= 0, hour <= 23 else { return nil }
@@ -150,7 +325,7 @@ struct NLPTaskParser {
                 guard let hour = Int(match), hour >= 0, hour <= 23 else { return nil }
                 return (hour, 30)
             }),
-            ("(\\d+):(\\d+)", { _ in nil }), // 由双捕获处理
+            ("(\\d+):(\\d+)", { _ in nil }),
         ]
 
         let dualTimePatterns: [(String, (String, String) -> (hour: Int, minute: Int)?)] = [
@@ -276,7 +451,23 @@ struct NLPTaskParser {
     }
 }
 
+/// 解析后的任务数据
 struct ParsedTask {
-    let title: String
-    let date: Date
+    var title: String
+    var date: Date
+    var color: EventColor?
+    var priority: EventPriority?
+    var recurrence: RecurrenceType?
+    var isLunar: Bool = false
+    var reminderMinutes: Int?
+
+    init(title: String, date: Date) {
+        self.title = title
+        self.date = date
+        self.color = nil
+        self.priority = nil
+        self.recurrence = nil
+        self.isLunar = false
+        self.reminderMinutes = nil
+    }
 }
