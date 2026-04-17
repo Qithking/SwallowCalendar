@@ -16,6 +16,7 @@ struct CalendarGridView: View {
 
     @State private var currentMonth = Date()
     @State private var hoveredDate: Date?
+    @State private var holidaysLoaded = false  // 用于触发节假日数据刷新
 
     private let calendar = Calendar.current
     private let weekDaySymbols: [String] = {
@@ -51,6 +52,12 @@ struct CalendarGridView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
+        .task {
+            // 预加载节假日数据
+            await icsService.preloadHolidays(sources: customSources)
+            holidaysLoaded = true
+            print("[CalendarGridView] 节假日数据预加载完成")
+        }
     }
 
     // MARK: - Weekday Header
@@ -72,6 +79,8 @@ struct CalendarGridView: View {
     private var dateGrid: some View {
         let days = daysInMonth()
         let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
+        // 使用 holidaysLoaded 触发节假日数据重新计算
+        _ = holidaysLoaded
 
         return LazyVGrid(columns: columns, spacing: 2) {
             ForEach(days, id: \.self) { date in

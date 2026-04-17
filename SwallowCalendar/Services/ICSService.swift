@@ -125,19 +125,28 @@ final class ICSService {
     /// 同步版本：基于已缓存数据查询
     func holidayNameSync(for date: Date) -> [String] {
         let dateKey = formatDateKey(date)
-        return holidayCache[dateKey] ?? []
+        let holidays = holidayCache[dateKey] ?? []
+        if !holidays.isEmpty {
+            print("[ICSService] holidayNameSync(\(dateKey)): \(holidays)")
+        }
+        return holidays
     }
 
     /// 预加载节假日数据
     func preloadHolidays(sources: [CustomCalendarSource]) async {
+        print("[ICSService] 开始预加载节假日数据, sources=\(sources.count)")
         for source in sources where source.isEnabled {
+            print("[ICSService] 加载日历源: \(source.name), URL: \(source.icsURL)")
             let events: [ICSEvent]
             if let cached = loadCached(url: source.icsURL) {
                 events = cached
+                print("[ICSService] 从缓存加载 \(events.count) 个事件")
             } else {
                 do {
                     events = try await fetchAndParse(url: source.icsURL)
+                    print("[ICSService] 从网络加载 \(events.count) 个事件")
                 } catch {
+                    print("[ICSService] 加载失败: \(error)")
                     continue
                 }
             }
@@ -149,6 +158,7 @@ final class ICSService {
                 }
             }
         }
+        print("[ICSService] 预加载完成, 缓存条目数: \(holidayCache.count)")
     }
 
     // MARK: - ICS Date Parsing
@@ -157,15 +167,25 @@ final class ICSService {
         // 格式: DTSTART;VALUE=DATE:20260101 或 DTSTART:20260101T080000Z
         let parts = line.components(separatedBy: ":")
         guard parts.count >= 2 else { return nil }
-        let dateStr = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+        var dateStr = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
 
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "UTC")
 
+        // 判断是全天事件还是有时间的事件
         if dateStr.contains("T") {
-            formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+            // 有时间的事件
+            if dateStr.hasSuffix("Z") {
+                dateStr = String(dateStr.dropLast())
+                formatter.timeZone = TimeZone(identifier: "UTC")
+                formatter.dateFormat = "yyyyMMdd'T'HHmmss"
+            } else {
+                formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+                formatter.dateFormat = "yyyyMMdd'T'HHmmss"
+            }
         } else {
+            // 全天事件（如节假日）- 使用本地时区的日期
+            formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
             formatter.dateFormat = "yyyyMMdd"
         }
 
