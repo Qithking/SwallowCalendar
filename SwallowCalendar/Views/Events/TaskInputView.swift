@@ -6,6 +6,7 @@
 import SwiftUI
 
 struct TaskInputView: View {
+    @Environment(AppSettings.self) private var appSettings
     let calendarService: CalendarService
     let calendarPreferences: [CalendarPreference]
     @Binding var refreshTrigger: Bool
@@ -22,12 +23,13 @@ struct TaskInputView: View {
     @State private var taskReminderMinutes: Int = 10
     @State private var taskIsLunar = false
     @State private var showAttributeEditor = false
+    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     var body: some View {
         VStack(spacing: 6) {
             HStack {
                 Image(systemName: "plus.circle.fill")
-                    .foregroundColor(.accentColor)
+                    .foregroundColor(accentColor)
                     .font(.system(size: 14))
 
                 TextField("输入待办，如：明天下午3点开会 红色 重要 每天循环", text: $inputText)
@@ -59,7 +61,7 @@ struct TaskInputView: View {
                     } label: {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.system(size: 16))
-                            .foregroundColor(.accentColor)
+                            .foregroundColor(accentColor)
                     }
                     .buttonStyle(.plain)
                     .disabled(isProcessing)
@@ -70,13 +72,16 @@ struct TaskInputView: View {
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color(nsColor: .controlBackgroundColor))
-                    .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
+                    .stroke(accentColor.opacity(0.3), lineWidth: 1)
             )
 
             // 属性编辑面板
             if showAttributeEditor && !inputText.isEmpty {
                 attributeEditor
             }
+        }
+        .onChange(of: appSettings.accentColorHex) { _, newColor in
+            accentColor = Color(hex: newColor)
         }
     }
 
