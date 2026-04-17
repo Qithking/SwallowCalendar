@@ -6,7 +6,9 @@
 import SwiftUI
 
 struct EventFilterBar: View {
+    @Environment(AppSettings.self) private var appSettings
     @Binding var selectedFilter: EventFilterMode
+    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -23,9 +25,9 @@ struct EventFilterBar: View {
                             .padding(.vertical, 3)
                             .background(
                                 RoundedRectangle(cornerRadius: 4)
-                                    .fill(selectedFilter == mode ? Color.accentColor.opacity(0.15) : Color.clear)
+                                    .fill(selectedFilter == mode ? accentColor.opacity(0.15) : Color.clear)
                             )
-                            .foregroundColor(selectedFilter == mode ? .accentColor : .secondary)
+                            .foregroundColor(selectedFilter == mode ? accentColor : .secondary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -33,5 +35,8 @@ struct EventFilterBar: View {
             .padding(.horizontal, 8)
         }
         .padding(.vertical, 6)
+        .onChange(of: appSettings.accentColorHex) { _, newColor in
+            accentColor = Color(hex: newColor)
+        }
     }
 }

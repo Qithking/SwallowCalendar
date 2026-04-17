@@ -6,10 +6,12 @@
 import SwiftUI
 
 struct CalendarHeaderView: View {
+    @Environment(AppSettings.self) private var appSettings
     @Binding var currentMonth: Date
     @Binding var selectedDate: Date
 
     @State private var showMonthPicker = false
+    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     private let calendar = Calendar.current
 
@@ -51,6 +53,7 @@ struct CalendarHeaderView: View {
                 } label: {
                     Text("今天")
                         .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(accentColor)
                 }
                 .buttonStyle(.plain)
 
@@ -68,6 +71,9 @@ struct CalendarHeaderView: View {
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 6)
+        .onChange(of: appSettings.accentColorHex) { _, newColor in
+            accentColor = Color(hex: newColor)
+        }
     }
 
     private var monthTitle: String {
@@ -81,6 +87,7 @@ struct CalendarHeaderView: View {
 // MARK: - Month Year Picker
 
 struct MonthYearPickerView: View {
+    @Environment(AppSettings.self) private var appSettings
     @Binding var currentMonth: Date
     @Binding var selectedDate: Date
     @Environment(\.dismiss) private var dismiss
@@ -90,6 +97,7 @@ struct MonthYearPickerView: View {
     @State private var selectedYear: Int
     @State private var selectedMonth: Int
     @State private var yearText: String = ""
+    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     init(currentMonth: Binding<Date>, selectedDate: Binding<Date>) {
         self._currentMonth = currentMonth
@@ -164,7 +172,7 @@ struct MonthYearPickerView: View {
                             .padding(.vertical, 6)
                             .background(
                                 month == selectedMonth
-                                    ? RoundedRectangle(cornerRadius: 4).fill(Color.accentColor)
+                                    ? RoundedRectangle(cornerRadius: 4).fill(accentColor)
                                     : RoundedRectangle(cornerRadius: 4).fill(Color.clear)
                             )
                     }
@@ -174,6 +182,9 @@ struct MonthYearPickerView: View {
             .padding(12)
         }
         .frame(width: 220)
+        .onChange(of: appSettings.accentColorHex) { _, newColor in
+            accentColor = Color(hex: newColor)
+        }
     }
 
     private func selectMonth(_ month: Int) {
