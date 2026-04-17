@@ -20,6 +20,7 @@ struct CalendarDayCell: View {
     var eventColors: [String] = []
 
     @State private var showPopover = false
+    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     var body: some View {
         VStack(spacing: 1) {
@@ -48,7 +49,7 @@ struct CalendarDayCell: View {
             // 事件标记
             if eventCount > 0 {
                 Circle()
-                    .fill(Color.accentColor)
+                    .fill(accentColor)
                     .frame(width: 3, height: 3)
             }
         }
@@ -64,6 +65,9 @@ struct CalendarDayCell: View {
         }
         .popover(isPresented: $showPopover, arrowEdge: .bottom) {
             popoverContent
+        }
+        .onChange(of: appSettings.accentColorHex) { _, newColor in
+            accentColor = Color(hex: newColor)
         }
     }
 
@@ -99,7 +103,7 @@ struct CalendarDayCell: View {
                 ForEach(Array(uniqueEvents.enumerated()), id: \.offset) { _, title in
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(Color.accentColor)
+                            .fill(accentColor)
                             .frame(width: 6, height: 6)
                         Text(title)
                             .font(.system(size: 11))
@@ -122,8 +126,8 @@ struct CalendarDayCell: View {
     // MARK: - Colors
 
     private var dayTextColor: Color {
-        if isSelected { return .white }
-        if isToday { return .accentColor }
+        if isToday { return .white }
+        if isSelected { return accentColor }
         if !isCurrentMonth { return .secondary.opacity(0.4) }
         return .primary
     }
@@ -136,15 +140,17 @@ struct CalendarDayCell: View {
 
     @ViewBuilder
     private var backgroundShape: some View {
-        if isSelected {
+        if isToday {
+            // 今天：主题色实心背景
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color.accentColor)
+                .fill(accentColor)
+        } else if isSelected {
+            // 选中日期：只有边框，无填充
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(accentColor, lineWidth: 2)
         } else if isHovered {
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color.accentColor.opacity(0.1))
-        } else if isToday {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.accentColor)
+                .fill(accentColor.opacity(0.1))
         } else if eventCount > 1 {
             // 多事件日期使用第一个事件的颜色作为背景提示
             if let firstColorHex = eventColors.first {
