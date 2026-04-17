@@ -156,7 +156,8 @@ struct CalendarGridView: View {
     private func eventCount(for date: Date) -> Int {
         guard calendarService.authorizationStatus == .fullAccess else { return 0 }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
+        // 优先从缓存获取，加快显示速度
+        let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
         // 显示所有事件（包括订阅日历的节假日）
         return events.count
     }
@@ -165,7 +166,8 @@ struct CalendarGridView: View {
     private func allEventTitles(for date: Date) -> [String] {
         guard calendarService.authorizationStatus == .fullAccess else { return [] }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
+        // 优先从缓存获取
+        let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
         return events.map { $0.title }
     }
 
@@ -173,7 +175,8 @@ struct CalendarGridView: View {
     private func allEventColors(for date: Date) -> [String] {
         guard calendarService.authorizationStatus == .fullAccess else { return [] }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
+        // 优先从缓存获取
+        let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
         return events.map { $0.calendarColorHex }
     }
 
@@ -181,7 +184,8 @@ struct CalendarGridView: View {
     private func eventTitles(for date: Date) -> [String] {
         guard calendarService.authorizationStatus == .fullAccess else { return [] }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
+        // 优先从缓存获取
+        let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
         return events.filter { !$0.isSubscription }.map { $0.title }
     }
 
@@ -189,7 +193,8 @@ struct CalendarGridView: View {
     private func eventColors(for date: Date) -> [String] {
         guard calendarService.authorizationStatus == .fullAccess else { return [] }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
+        // 优先从缓存获取
+        let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
         return events.filter { !$0.isSubscription }.map { $0.calendarColorHex }
     }
 }

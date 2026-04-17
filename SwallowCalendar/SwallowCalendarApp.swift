@@ -15,6 +15,7 @@ struct SwallowCalendarApp: App {
         let schema = Schema([
             CalendarPreference.self,
             CustomCalendarSource.self,
+            CachedEvent.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
@@ -41,6 +42,9 @@ struct SwallowCalendarApp: App {
         // 设置 SettingsWindowManager 的依赖
         SettingsWindowManager.shared.modelContainer = sharedModelContainer
         SettingsWindowManager.shared.appSettings = appSettings
+        
+        // 配置事件缓存服务
+        EventCacheService.shared.configure(with: sharedModelContainer)
     }
 }
 

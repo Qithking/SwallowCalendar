@@ -14,6 +14,9 @@ final class CalendarService {
     var authorizationStatus: EKAuthorizationStatus = .notDetermined
     var calendars: [EKCalendar] = []
     var isLoading = false
+    
+    /// 事件缓存服务
+    let cacheService = EventCacheService.shared
 
     private init() {
         authorizationStatus = EKEventStore.authorizationStatus(for: .event)
@@ -76,11 +79,23 @@ final class CalendarService {
         let ekEvents = eventStore.events(matching: predicate)
         return ekEvents.map { mapToCalendarEvent($0) }
     }
+    
+    /// 从缓存获取指定日期范围的事件（优先使用缓存，加快启动速度）
+    func fetchCachedEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil) -> [CalendarEvent] {
+        let cached = cacheService.getEvents(from: startDate, to: endDate, calendars: calendars)
+        return cached.map { cachedToCalendarEvent($0) }
+    }
 
     /// 获取某天的事件
     func fetchEvents(for date: Date, calendars: [EKCalendar]? = nil) -> [CalendarEvent] {
         let (start, end) = dayRange(for: date)
         return fetchEvents(from: start, to: end, calendars: calendars)
+    }
+    
+    /// 从缓存获取某天的事件（优先使用缓存）
+    func fetchCachedEvents(for date: Date, calendars: [EKCalendar]? = nil) -> [CalendarEvent] {
+        let cached = cacheService.getEvents(for: date, calendars: calendars)
+        return cached.map { cachedToCalendarEvent($0) }
     }
 
     /// 获取未来的待办事件（有明确时间的）
@@ -105,6 +120,14 @@ final class CalendarService {
     /// 获取全天事件（提醒）
     func fetchAllDayEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil) -> [CalendarEvent] {
         var events = fetchEvents(from: startDate, to: endDate, calendars: calendars)
+        events = events.filter(\.isAllDay)
+        events.sort { $0.startDate ?? .distantFuture < $1.startDate ?? .distantFuture }
+        return events
+    }
+    
+    /// 从缓存获取全天事件
+    func fetchCachedAllDayEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil) -> [CalendarEvent] {
+        var events = fetchCachedEvents(from: startDate, to: endDate, calendars: calendars)
         events = events.filter(\.isAllDay)
         events.sort { $0.startDate ?? .distantFuture < $1.startDate ?? .distantFuture }
         return events
@@ -191,6 +214,20 @@ final class CalendarService {
             calendarColorHex: ekEvent.calendar.cgColor?.hexString ?? "#007AFF",
             source: .system,
             isSubscription: isSubscription
+        )
+    }
+    
+    private func cachedToCalendarEvent(_ cached: CachedEvent) -> CalendarEvent {
+        return CalendarEvent(
+            id: cached.eventID,
+            title: cached.title,
+            startDate: cached.startDate,
+            endDate: cached.endDate,
+            isAllDay: cached.isAllDay,
+            calendarTitle: cached.calendarTitle,
+            calendarColorHex: cached.calendarColorHex,
+            source: .system,
+            isSubscription: cached.isSubscription
         )
     }
 

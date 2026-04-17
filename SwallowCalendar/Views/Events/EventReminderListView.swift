@@ -23,7 +23,8 @@ struct EventReminderListView: View {
         guard calendarService.authorizationStatus == .fullAccess else { return [] }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let range = filterMode.dateRange(from: selectedDate)
-        var events = calendarService.fetchAllDayEvents(
+        // 优先从缓存获取全天事件
+        var events = calendarService.fetchCachedAllDayEvents(
             from: range.start,
             to: range.end,
             calendars: enabledCals

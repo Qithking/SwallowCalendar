@@ -50,6 +50,10 @@ struct ContentView: View {
         .task {
             await initializeServices()
         }
+        .task {
+            // 后台同步日历事件
+            await syncCalendarEvents()
+        }
     }
 
     // MARK: - Toolbar
@@ -119,5 +123,16 @@ struct ContentView: View {
 
         // 预加载节假日数据
         await icsService.preloadHolidays(sources: customSources)
+    }
+    
+    /// 后台同步日历事件到本地缓存
+    private func syncCalendarEvents() async {
+        guard calendarService.authorizationStatus == .fullAccess else { return }
+        
+        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
+        await calendarService.cacheService.syncEvents(from: calendarService, calendars: enabledCals)
+        
+        // 同步完成后刷新视图
+        refreshTrigger.toggle()
     }
 }
