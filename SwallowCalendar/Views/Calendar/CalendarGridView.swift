@@ -1,0 +1,150 @@
+//
+//  CalendarGridView.swift
+//  SwallowCalendar
+//
+
+import SwiftUI
+import EventKit
+
+struct CalendarGridView: View {
+    @Binding var selectedDate: Date
+    let calendarService: CalendarService
+    let icsService: ICSService
+    let customSources: [CustomCalendarSource]
+    let calendarPreferences: [CalendarPreference]
+
+    @State private var currentMonth = Date()
+    @State private var hoveredDate: Date?
+
+    private let calendar = Calendar.current
+    private let weekDaySymbols: [String] = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        return formatter.veryShortWeekdaySymbols
+    }()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // 月份导航头
+            CalendarHeaderView(
+                currentMonth: $currentMonth,
+                selectedDate: $selectedDate
+            )
+
+            Divider()
+
+            // 星期标题行
+            weekdayHeader
+
+            Divider()
+
+            // 日期网格
+            dateGrid
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+    }
+
+    // MARK: - Weekday Header
+
+    private var weekdayHeader: some View {
+        HStack(spacing: 2) {
+            ForEach(weekDaySymbols.indices, id: \.self) { index in
+                Text(weekDaySymbols[index])
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    // MARK: - Date Grid
+
+    private var dateGrid: some View {
+        let days = daysInMonth()
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
+
+        return LazyVGrid(columns: columns, spacing: 2) {
+            ForEach(days, id: \.self) { date in
+                CalendarDayCell(
+                    date: date,
+                    isSelected: calendar.isDate(date, inSameDayAs: selectedDate),
+                    isToday: calendar.isDateInToday(date),
+                    isCurrentMonth: calendar.isDate(date, equalTo: currentMonth, toGranularity: .month),
+                    lunarText: LunarCalendarHelper.lunarString(for: date),
+                    holidayNames: icsService.holidayNameSync(for: date),
+                    eventCount: eventCount(for: date),
+                    isHovered: hoveredDate.flatMap { calendar.isDate(date, inSameDayAs: $0) } ?? false,
+                    eventTitles: eventTitles(for: date)
+                )
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        selectedDate = date
+                    }
+                }
+                .onHover { isHovered in
+                    hoveredDate = isHovered ? date : nil
+                }
+            }
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func daysInMonth() -> [Date] {
+        guard let monthRange = calendar.range(of: .day, in: .month, for: currentMonth) else {
+            return []
+        }
+
+        let firstDay = calendar.date(from: calendar.dateComponents([.year, .month], from: currentMonth))!
+        let weekday = calendar.component(.weekday, from: firstDay)
+        // 周一开始: weekday 1=Sunday -> offset 6, 2=Monday -> offset 0
+        let offset = (weekday + 5) % 7
+
+        var days: [Date] = []
+
+        // 填充上月末的日期
+        if offset > 0 {
+            for i in stride(from: offset, to: 0, by: -1) {
+                if let date = calendar.date(byAdding: .day, value: -i, to: firstDay) {
+                    days.append(date)
+                }
+            }
+        }
+
+        // 当月日期
+        for day in monthRange {
+            if let date = calendar.date(byAdding: .day, value: day - 1, to: firstDay) {
+                days.append(date)
+            }
+        }
+
+        // 填充下月初的日期，补全到完整行数
+        let remainder = days.count % 7
+        if remainder > 0 {
+            let lastDay = days.last!
+            for i in 1...(7 - remainder) {
+                if let date = calendar.date(byAdding: .day, value: i, to: lastDay) {
+                    days.append(date)
+                }
+            }
+        }
+
+        return days
+    }
+
+    private func eventCount(for date: Date) -> Int {
+        guard calendarService.authorizationStatus == .fullAccess else { return 0 }
+        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
+        let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
+        return events.count
+    }
+
+    private func eventTitles(for date: Date) -> [String] {
+        guard calendarService.authorizationStatus == .fullAccess else { return [] }
+        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
+        let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
+        return events.map { $0.title }
+    }
+}

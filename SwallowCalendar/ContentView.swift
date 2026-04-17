@@ -7,53 +7,116 @@
 
 import SwiftUI
 import SwiftData
+import EventKit
 
 struct ContentView: View {
+    @Environment(AppSettings.self) private var appSettings
     @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @Query private var customSources: [CustomCalendarSource]
+    @Query private var calendarPreferences: [CalendarPreference]
+
+    @State private var selectedDate = Date()
+    @State private var calendarService = CalendarService.shared
+    @State private var icsService = ICSService.shared
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
+        VStack(spacing: 0) {
+            // 日历区域
+            CalendarGridView(
+                selectedDate: $selectedDate,
+                calendarService: calendarService,
+                icsService: icsService,
+                customSources: customSources,
+                calendarPreferences: calendarPreferences
+            )
+
+            Divider()
+
+            // 事项区域（占满剩余空间）
+            EventPanelView(
+                selectedDate: selectedDate,
+                calendarService: calendarService,
+                calendarPreferences: calendarPreferences
+            )
+            .frame(maxHeight: .infinity)
+
+            Divider()
+
+            // 工具栏
+            toolbar
+        }
+        .preferredColorScheme(appSettings.colorScheme)
+        .task {
+            await initializeServices()
+        }
+    }
+
+    // MARK: - Toolbar
+
+    private var toolbar: some View {
+        HStack {
+            // 设置按钮
+            Button {
+                SettingsWindowManager.shared.openSettings()
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 13))
+            }
+            .buttonStyle(.plain)
+            .help("设置")
+
+            Spacer()
+
+            // 今日按钮
+            Button {
+                withAnimation {
+                    selectedDate = Date()
                 }
-                .onDelete(perform: deleteItems)
+            } label: {
+                Text("今天")
+                    .font(.system(size: 12))
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-            .toolbar {
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
+            .buttonStyle(.plain)
+            .help("回到今天")
+
+            Spacer()
+
+            // 退出按钮
+            Button {
+                NSApplication.shared.terminate(nil)
+            } label: {
+                Image(systemName: "power")
+                    .font(.system(size: 13))
             }
-        } detail: {
-            Text("Select an item")
+            .buttonStyle(.plain)
+            .help("退出应用")
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.bar)
     }
 
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
+    // MARK: - Services Init
 
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
-            }
+    private func initializeServices() async {
+        // 请求日历权限
+        if calendarService.authorizationStatus == .notDetermined {
+            _ = await calendarService.requestAccess()
         }
-    }
-}
 
-#Preview {
-    ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+        await calendarService.loadCalendars()
+
+        // 初始化默认自定义日历（中国节假日）
+        if customSources.isEmpty {
+            let defaultSource = CustomCalendarSource(
+                name: "中国节假日",
+                icsURL: "https://yangh9.github.io/ChinaCalendar/cal_holiday.ics",
+                isEnabled: true
+            )
+            modelContext.insert(defaultSource)
+        }
+
+        // 预加载节假日数据
+        await icsService.preloadHolidays(sources: customSources)
+    }
 }
