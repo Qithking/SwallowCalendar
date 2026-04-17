@@ -72,11 +72,16 @@ struct EventPanelView: View {
         }
         .sheet(item: $eventToEdit) { event in
             EditEventSheet(event: event, calendarService: calendarService)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .alert("确认删除", isPresented: $showDeleteConfirmation, presenting: eventToDelete) { event in
-            Button("取消", role: .cancel) {}
+            Button("取消", role: .cancel) {
+                eventToDelete = nil
+            }
             Button("删除", role: .destructive) {
                 deleteEvent(event)
+                eventToDelete = nil
             }
         } message: { event in
             Text("确定要删除事件「\(event.title)」吗？此操作无法撤销。")

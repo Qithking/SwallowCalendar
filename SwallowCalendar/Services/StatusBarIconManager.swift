@@ -15,13 +15,15 @@ final class StatusBarIconManager {
     private var refreshTimer: Timer?
 
     private init() {
-        currentIcon = Self.generateIcon(style: .solidDate, customFormat: "d")
+        let iconColor = NSColor(hexString: AppSettings.shared.iconColorHex) ?? .systemBlue
+        currentIcon = Self.generateIcon(style: .solidDate, customFormat: "d", iconColor: iconColor)
         startDayChangeTimer()
     }
 
     func updateIcon() {
         let settings = AppSettings.shared
-        let icon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat)
+        let iconColor = NSColor(hexString: settings.iconColorHex) ?? .systemBlue
+        let icon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, iconColor: iconColor)
         currentIcon = icon
     }
 
@@ -32,12 +34,12 @@ final class StatusBarIconManager {
         }
     }
 
-    private static func generateIcon(style: IconStyle, customFormat: String) -> NSImage {
+    private static func generateIcon(style: IconStyle, customFormat: String, iconColor: NSColor = .systemBlue) -> NSImage {
         switch style {
         case .solidDate:
-            return renderTextIcon(text: dayString(), filled: true)
+            return renderTextIcon(text: dayString(), filled: true, iconColor: iconColor)
         case .strokeDate:
-            return renderTextIcon(text: dayString(), filled: false)
+            return renderTextIcon(text: dayString(), filled: false, iconColor: iconColor)
         case .calendarIcon:
             return renderCalendarIcon()
         case .customFormat:
@@ -51,28 +53,63 @@ final class StatusBarIconManager {
         return formatter.string(from: Date())
     }
 
-    private static func renderTextIcon(text: String, filled: Bool) -> NSImage {
+    private static func renderTextIcon(text: String, filled: Bool, iconColor: NSColor = .systemBlue) -> NSImage {
         let size = NSSize(width: 22, height: 22)
         let image = NSImage(size: size)
         image.lockFocus()
 
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.alignment = .center
+        // 计算字体颜色（根据背景色亮度）
+        let textColor: NSColor = isLightColor(iconColor) ? .black : .white
 
-        let fontSize: CGFloat = filled ? 14 : 13
-        let fontWeight: NSFont.Weight = filled ? .bold : .regular
+        if filled {
+            // 实心日期：背景填充 + 居中日期
+            let bgRect = NSRect(x: 0, y: 0, width: size.width, height: size.height)
+            let bgPath = NSBezierPath(roundedRect: bgRect, xRadius: 4, yRadius: 4)
+            iconColor.setFill()
+            bgPath.fill()
 
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: fontSize, weight: fontWeight),
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: paragraphStyle,
-        ]
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.alignment = .center
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 14, weight: .bold),
+                .foregroundColor: textColor,
+                .paragraphStyle: paragraphStyle,
+            ]
+            let textRect = NSRect(x: 0, y: 2, width: size.width, height: size.height - 2)
+            text.draw(in: textRect, withAttributes: attrs)
+        } else {
+            // 描边日期：透明背景 + 边框 + 白色日期
+            let strokeRect = NSRect(x: 1, y: 1, width: size.width - 2, height: size.height - 2)
+            let strokePath = NSBezierPath(roundedRect: strokeRect, xRadius: 4, yRadius: 4)
+            strokePath.lineWidth = 1.5
+            iconColor.setStroke()
+            strokePath.stroke()
 
-        let textRect = NSRect(x: 0, y: 2, width: size.width, height: size.height - 2)
-        text.draw(in: textRect, withAttributes: attrs)
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.alignment = .center
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 13, weight: .regular),
+                .foregroundColor: NSColor.white,
+                .paragraphStyle: paragraphStyle,
+            ]
+            let textRect = NSRect(x: 0, y: 2, width: size.width, height: size.height - 2)
+            text.draw(in: textRect, withAttributes: attrs)
+        }
+
         image.unlockFocus()
-        image.isTemplate = true
+        image.isTemplate = false
         return image
+    }
+
+    /// 判断颜色是否为浅色（用于决定文字颜色）
+    private static func isLightColor(_ color: NSColor) -> Bool {
+        guard let rgbColor = color.usingColorSpace(.sRGB) else { return false }
+        let r = rgbColor.redComponent
+        let g = rgbColor.greenComponent
+        let b = rgbColor.blueComponent
+        // 使用相对亮度公式
+        let brightness = r * 0.299 + g * 0.587 + b * 0.114
+        return brightness > 0.5
     }
 
     private static func renderCalendarIcon() -> NSImage {
@@ -106,5 +143,22 @@ final class StatusBarIconManager {
         image.unlockFocus()
         image.isTemplate = true
         return image
+    }
+}
+
+// MARK: - NSColor Hex Extension
+
+extension NSColor {
+    convenience init?(hexString: String) {
+        let hex = hexString.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        let scanner = Scanner(string: hex)
+        var rgbValue: UInt64 = 0
+        guard scanner.scanHexInt64(&rgbValue) else { return nil }
+
+        let r = CGFloat((rgbValue & 0xFF0000) >> 16) / 255.0
+        let g = CGFloat((rgbValue & 0x00FF00) >> 8) / 255.0
+        let b = CGFloat(rgbValue & 0x0000FF) / 255.0
+
+        self.init(srgbRed: r, green: g, blue: b, alpha: 1.0)
     }
 }

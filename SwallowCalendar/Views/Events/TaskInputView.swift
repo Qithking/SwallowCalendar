@@ -36,6 +36,9 @@ struct TaskInputView: View {
                     }
                     .onChange(of: inputText) { _, newValue in
                         updateFromNLP(newValue)
+                        if !newValue.isEmpty {
+                            showAttributeEditor = true
+                        }
                     }
 
                 if !inputText.isEmpty {

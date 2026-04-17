@@ -50,7 +50,7 @@ struct CalendarSettingsView: View {
             // 自定义日历
             Section("自定义日历 (ICS)") {
                 ForEach(customSources, id: \.id) { source in
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         Toggle("", isOn: Binding(
                             get: { source.isEnabled },
                             set: { newValue in
@@ -59,14 +59,16 @@ struct CalendarSettingsView: View {
                         ))
                         .labelsHidden()
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(source.name)
-                                .font(.system(size: 12))
-                            Text(source.icsURL)
-                                .font(.system(size: 9))
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                        }
+                        Text(source.name)
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                            .frame(minWidth: 60, maxWidth: 80)
+
+                        Text(source.icsURL)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
 
                         Spacer()
 
@@ -82,10 +84,10 @@ struct CalendarSettingsView: View {
                 }
 
                 // 添加新源
-                HStack {
+                HStack(spacing: 8) {
                     TextField("名称", text: $newSourceName)
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 100)
+                        .frame(width: 80)
                     TextField("ICS URL", text: $newSourceURL)
                         .textFieldStyle(.roundedBorder)
                     Button("添加") {

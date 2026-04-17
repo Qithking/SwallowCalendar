@@ -46,6 +46,14 @@ final class AppSettings {
         }
     }
 
+    /// 菜单栏图标颜色（用于实心日期和描边日期）
+    var iconColorHex: String {
+        didSet {
+            UserDefaults.standard.set(iconColorHex, forKey: "iconColorHex")
+            StatusBarIconManager.shared.updateIcon()
+        }
+    }
+
     var colorScheme: ColorScheme? {
         switch themeMode {
         case .light: return .light
@@ -74,6 +82,7 @@ final class AppSettings {
         self.customIconFormat = UserDefaults.standard.string(forKey: "customIconFormat") ?? "d"
         self.themeMode = ThemeMode(rawValue: UserDefaults.standard.string(forKey: "themeModeRaw") ?? "") ?? .system
         self.weekdayStart = UserDefaults.standard.object(forKey: "weekdayStart") as? Int ?? 2
+        self.iconColorHex = UserDefaults.standard.string(forKey: "iconColorHex") ?? "#007AFF"
     }
 
     private func updateLaunchAtLogin() {

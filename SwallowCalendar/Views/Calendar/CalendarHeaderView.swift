@@ -172,22 +172,6 @@ struct MonthYearPickerView: View {
                 }
             }
             .padding(12)
-
-            Divider()
-
-            // 今天按钮
-            Button {
-                selectedYear = calendar.component(.year, from: Date())
-                selectedMonth = calendar.component(.month, from: Date())
-                selectMonth(selectedMonth)
-            } label: {
-                Text("今天")
-                    .font(.system(size: 12))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.plain)
-            .padding(.vertical, 8)
-            .padding(.horizontal, 12)
         }
         .frame(width: 220)
     }
