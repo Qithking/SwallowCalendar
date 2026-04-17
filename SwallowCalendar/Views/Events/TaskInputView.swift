@@ -11,7 +11,15 @@ struct TaskInputView: View {
 
     @State private var inputText = ""
     @State private var isProcessing = false
-    @State private var parsePreview: ParsedTask?
+    // 可编辑的任务属性
+    @State private var taskTitle = ""
+    @State private var taskDate = Date()
+    @State private var taskColor: EventColor?
+    @State private var taskPriority: EventPriority = .none
+    @State private var taskRecurrence: RecurrenceType = .none
+    @State private var taskReminderMinutes: Int = 10
+    @State private var taskIsLunar = false
+    @State private var showAttributeEditor = false
 
     var body: some View {
         VStack(spacing: 6) {
@@ -20,17 +28,27 @@ struct TaskInputView: View {
                     .foregroundColor(.accentColor)
                     .font(.system(size: 14))
 
-                TextField("输入待办，如：明天下午3点开会", text: $inputText)
+                TextField("输入待办，如：明天下午3点开会 红色 重要 每天循环", text: $inputText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .onSubmit {
                         addTask()
                     }
                     .onChange(of: inputText) { _, newValue in
-                        updatePreview(newValue)
+                        updateFromNLP(newValue)
                     }
 
                 if !inputText.isEmpty {
+                    Button {
+                        showAttributeEditor.toggle()
+                    } label: {
+                        Image(systemName: showAttributeEditor ? "slider.horizontal.3" : "slider.horizontal.3")
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("编辑属性")
+
                     Button {
                         addTask()
                     } label: {
@@ -50,118 +68,163 @@ struct TaskInputView: View {
                     .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
             )
 
-            // 解析预览
-            if let preview = parsePreview, !inputText.isEmpty {
-                previewTags(preview)
+            // 属性编辑面板
+            if showAttributeEditor && !inputText.isEmpty {
+                attributeEditor
             }
         }
     }
 
-    // MARK: - Preview Tags
+    // MARK: - 属性编辑器
 
-    @ViewBuilder
-    private func previewTags(_ preview: ParsedTask) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                // 标题
-                Text(preview.title)
-                    .font(.system(size: 10))
+    private var attributeEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+
+            // 第一行：标题预览 + 日期时间
+            HStack(spacing: 8) {
+                Text(taskTitle.isEmpty ? "待办事项" : taskTitle)
+                    .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
 
-                Text("·")
-                    .foregroundColor(.secondary)
+                Spacer()
 
-                // 日期时间
-                Text(formatDate(preview.date))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-
-                // 农历标记
-                if preview.isLunar {
-                    tagView("农历", color: .orange)
-                }
-
-                // 颜色标签
-                if let color = preview.color {
-                    tagView(color.displayName, color: Color(hex: color.rawValue))
-                }
-
-                // 优先级标签
-                if let priority = preview.priority {
-                    tagView("优先:\(priority.displayName)", color: priorityColor(priority))
-                }
-
-                // 周期标签
-                if let recurrence = preview.recurrence, recurrence != .none {
-                    tagView(recurrence.rawValue, color: .blue)
-                }
-
-                // 提醒时间
-                if let minutes = preview.reminderMinutes {
-                    let text = minutes >= 1440 ? "提前\(minutes / 1440)天" :
-                               minutes >= 60 ? "提前\(minutes / 60)小时" : "提前\(minutes)分钟"
-                    tagView(text, color: .purple)
-                }
+                DatePicker("", selection: $taskDate, displayedComponents: [.date, .hourAndMinute])
+                    .labelsHidden()
+                    .scaleEffect(0.8)
             }
-            .padding(.leading, 24)
-        }
-    }
 
-    private func tagView(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 9))
-            .foregroundColor(color)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(color.opacity(0.15))
-            )
-    }
+            // 第二行：农历开关 + 颜色选择
+            HStack(spacing: 12) {
+                Toggle("农历", isOn: $taskIsLunar)
+                    .toggleStyle(.switch)
+                    .scaleEffect(0.75)
 
-    private func priorityColor(_ priority: EventPriority) -> Color {
-        switch priority {
-        case .high: return .red
-        case .medium: return .orange
-        case .low: return .gray
-        case .none: return .secondary
+                Divider().frame(height: 16)
+
+                // 颜色选择
+                HStack(spacing: 4) {
+                    Text("颜色:")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    ForEach(EventColor.allCases, id: \.self) { color in
+                        Circle()
+                            .fill(Color(hex: color.rawValue))
+                            .frame(width: 14, height: 14)
+                            .overlay(
+                                Circle().stroke(taskColor == color ? Color.primary : Color.clear, lineWidth: 1)
+                            )
+                            .onTapGesture {
+                                taskColor = taskColor == color ? nil : color
+                            }
+                    }
+                }
+
+                Spacer()
+            }
+
+            // 第三行：优先级 + 周期
+            HStack(spacing: 12) {
+                // 优先级
+                HStack(spacing: 4) {
+                    Text("优先级:")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    Picker("", selection: $taskPriority) {
+                        ForEach(EventPriority.allCases, id: \.self) { p in
+                            Text(p.displayName).tag(p)
+                        }
+                    }
+                    .labelsHidden()
+                    .scaleEffect(0.75)
+                }
+
+                Divider().frame(height: 16)
+
+                // 周期
+                HStack(spacing: 4) {
+                    Text("周期:")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    Picker("", selection: $taskRecurrence) {
+                        Text("1次").tag(RecurrenceType.none)
+                        Text("不限").tag(RecurrenceType.daily)
+                        Text("每天").tag(RecurrenceType.daily)
+                        Text("每周").tag(RecurrenceType.weekly)
+                        Text("每月").tag(RecurrenceType.monthly)
+                        Text("每年").tag(RecurrenceType.yearly)
+                    }
+                    .labelsHidden()
+                    .scaleEffect(0.75)
+                }
+
+                Spacer()
+            }
+
+            // 第四行：提醒时间
+            HStack(spacing: 12) {
+                HStack(spacing: 4) {
+                    Text("提醒:")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    Picker("", selection: $taskReminderMinutes) {
+                        Text("不提醒").tag(0)
+                        Text("5分钟前").tag(5)
+                        Text("10分钟前").tag(10)
+                        Text("30分钟前").tag(30)
+                        Text("1小时前").tag(60)
+                        Text("1天前").tag(1440)
+                    }
+                    .labelsHidden()
+                    .scaleEffect(0.75)
+                }
+
+                Spacer()
+            }
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
     }
 
     // MARK: - Actions
 
-    private func updatePreview(_ text: String) {
+    private func updateFromNLP(_ text: String) {
         guard !text.trimmingCharacters(in: .whitespaces).isEmpty else {
-            parsePreview = nil
             return
         }
-        parsePreview = NLPTaskParser.parse(text)
+        let parsed = NLPTaskParser.parse(text)
+        taskTitle = parsed.title
+        taskDate = parsed.date
+        taskColor = parsed.color
+        taskPriority = parsed.priority ?? .none
+        taskRecurrence = parsed.recurrence ?? .none
+        taskReminderMinutes = parsed.reminderMinutes ?? 10
+        taskIsLunar = parsed.isLunar
     }
 
     private func addTask() {
         let text = inputText.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
 
-        let parsed = NLPTaskParser.parse(text)
         isProcessing = true
 
-        let isAllDay = Calendar.current.component(.hour, from: parsed.date) == 0
-            && Calendar.current.component(.minute, from: parsed.date) == 0
+        let isAllDay = Calendar.current.component(.hour, from: taskDate) == 0
+            && Calendar.current.component(.minute, from: taskDate) == 0
 
         do {
             try calendarService.createEvent(
-                title: parsed.title,
-                startDate: parsed.date,
-                endDate: isAllDay ? nil : parsed.date.addingTimeInterval(3600),
+                title: taskTitle.isEmpty ? "待办事项" : taskTitle,
+                startDate: taskDate,
+                endDate: isAllDay ? nil : taskDate.addingTimeInterval(3600),
                 isAllDay: isAllDay,
                 calendar: nil,
-                priority: parsed.priority,
-                recurrence: parsed.recurrence,
-                reminderMinutes: parsed.reminderMinutes
+                priority: taskPriority == .none ? nil : taskPriority,
+                recurrence: taskRecurrence,
+                reminderMinutes: taskReminderMinutes > 0 ? taskReminderMinutes : nil
             )
             inputText = ""
-            parsePreview = nil
+            resetTaskAttributes()
         } catch {
             print("Failed to create event: \(error)")
         }
@@ -169,10 +232,15 @@ struct TaskInputView: View {
         isProcessing = false
     }
 
-    private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return formatter.string(from: date)
+    private func resetTaskAttributes() {
+        taskTitle = ""
+        taskDate = Date()
+        taskColor = nil
+        taskPriority = .none
+        taskRecurrence = .none
+        taskReminderMinutes = 10
+        taskIsLunar = false
+        showAttributeEditor = false
     }
+
 }

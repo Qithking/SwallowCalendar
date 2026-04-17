@@ -15,20 +15,7 @@ struct CalendarHeaderView: View {
 
     var body: some View {
         HStack {
-            // 上一月
-            Button {
-                withAnimation {
-                    currentMonth = calendar.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
-                }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 10, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-
-            // 当前年月（点击弹出年月选择器）
+            // 左侧：当前年月（点击弹出年月选择器）
             Button {
                 showMonthPicker = true
             } label: {
@@ -42,16 +29,42 @@ struct CalendarHeaderView: View {
 
             Spacer()
 
-            // 下一月
-            Button {
-                withAnimation {
-                    currentMonth = calendar.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
+            // 右侧：月份导航
+            HStack(spacing: 12) {
+                // 上一月
+                Button {
+                    withAnimation {
+                        currentMonth = calendar.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
+                    }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 10, weight: .semibold))
                 }
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                .buttonStyle(.plain)
+
+                // 今天按钮
+                Button {
+                    withAnimation {
+                        currentMonth = Date()
+                        selectedDate = Date()
+                    }
+                } label: {
+                    Text("今天")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.plain)
+
+                // 下一月
+                Button {
+                    withAnimation {
+                        currentMonth = calendar.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
+                    }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 6)
@@ -76,6 +89,7 @@ struct MonthYearPickerView: View {
 
     @State private var selectedYear: Int
     @State private var selectedMonth: Int
+    @State private var yearText: String = ""
 
     init(currentMonth: Binding<Date>, selectedDate: Binding<Date>) {
         self._currentMonth = currentMonth
@@ -91,10 +105,10 @@ struct MonthYearPickerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 年份选择
+            // 年份选择（支持自定义输入）
             HStack {
                 Button {
-                    withAnimation { selectedYear -= 1 }
+                    withAnimation { selectedYear -= 1; updateYearText() }
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 10))
@@ -103,13 +117,26 @@ struct MonthYearPickerView: View {
 
                 Spacer()
 
-                Text("\(selectedYear)年")
+                TextField("年份", text: $yearText)
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 60)
+                    .multilineTextAlignment(.center)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit {
+                        commitYearEdit()
+                    }
+                    .onChange(of: yearText) { _, newValue in
+                        // 仅允许数字
+                        yearText = newValue.filter { $0.isNumber }
+                    }
+
+                Text("年")
                     .font(.system(size: 13, weight: .semibold))
 
                 Spacer()
 
                 Button {
-                    withAnimation { selectedYear += 1 }
+                    withAnimation { selectedYear += 1; updateYearText() }
                 } label: {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 10))
@@ -118,6 +145,9 @@ struct MonthYearPickerView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+            .onAppear {
+                updateYearText()
+            }
 
             Divider()
 
@@ -163,6 +193,7 @@ struct MonthYearPickerView: View {
     }
 
     private func selectMonth(_ month: Int) {
+        commitYearEdit()
         var components = DateComponents()
         components.year = selectedYear
         components.month = month
@@ -175,5 +206,18 @@ struct MonthYearPickerView: View {
             }
         }
         dismiss()
+    }
+
+    private func updateYearText() {
+        yearText = "\(selectedYear)"
+    }
+
+    private func commitYearEdit() {
+        if let year = Int(yearText), year >= 1900, year <= 2100 {
+            selectedYear = year
+        } else {
+            // 无效输入，回退到当前选中的年份
+            yearText = "\(selectedYear)"
+        }
     }
 }

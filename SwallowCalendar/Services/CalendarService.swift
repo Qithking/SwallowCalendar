@@ -157,7 +157,8 @@ final class CalendarService {
     // MARK: - Helpers
 
     private func mapToCalendarEvent(_ ekEvent: EKEvent) -> CalendarEvent {
-        CalendarEvent(
+        let isSubscription = ekEvent.calendar.type == .subscription
+        return CalendarEvent(
             id: ekEvent.eventIdentifier,
             title: ekEvent.title ?? "",
             startDate: ekEvent.startDate,
@@ -165,7 +166,8 @@ final class CalendarService {
             isAllDay: ekEvent.isAllDay,
             calendarTitle: ekEvent.calendar.title,
             calendarColorHex: ekEvent.calendar.cgColor?.hexString ?? "#007AFF",
-            source: .system
+            source: .system,
+            isSubscription: isSubscription
         )
     }
 

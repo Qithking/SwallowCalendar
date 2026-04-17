@@ -11,6 +11,8 @@ struct EventReminderListView: View {
     let calendarService: CalendarService
     let calendarPreferences: [CalendarPreference]
     let filterMode: EventFilterMode
+    let onEditEvent: ((CalendarEvent) -> Void)?
+    let onDeleteEvent: ((CalendarEvent) -> Void)?
 
     @State private var isExpanded = true
 
@@ -23,7 +25,8 @@ struct EventReminderListView: View {
             to: range.end,
             calendars: enabledCals
         )
-        return events
+        // 过滤订阅日历事件，只显示用户自定义事件
+        return events.filter { !$0.isSubscription }
     }
 
     var body: some View {
@@ -55,7 +58,11 @@ struct EventReminderListView: View {
                         .padding(.leading, 16)
                 } else {
                     ForEach(events) { event in
-                        EventItemRow(event: event)
+                        EventItemRow(
+                            event: event,
+                            onEdit: onEditEvent,
+                            onDelete: onDeleteEvent
+                        )
                     }
                 }
             }

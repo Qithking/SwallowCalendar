@@ -7,6 +7,16 @@ import SwiftUI
 
 struct EventItemRow: View {
     let event: CalendarEvent
+    let onEdit: ((CalendarEvent) -> Void)?
+    let onDelete: ((CalendarEvent) -> Void)?
+
+    @State private var isHovered = false
+
+    init(event: CalendarEvent, onEdit: ((CalendarEvent) -> Void)? = nil, onDelete: ((CalendarEvent) -> Void)? = nil) {
+        self.event = event
+        self.onEdit = onEdit
+        self.onDelete = onDelete
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -38,6 +48,36 @@ struct EventItemRow: View {
             }
 
             Spacer()
+
+            // 悬停时显示操作按钮
+            if isHovered {
+                HStack(spacing: 4) {
+                    if onEdit != nil {
+                        Button {
+                            onEdit?(event)
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("修改")
+                    }
+
+                    if onDelete != nil {
+                        Button {
+                            onDelete?(event)
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 10))
+                                .foregroundColor(.red)
+                        }
+                        .buttonStyle(.plain)
+                        .help("删除")
+                    }
+                }
+                .transition(.opacity)
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -45,6 +85,11 @@ struct EventItemRow: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color(nsColor: .controlBackgroundColor).opacity(0.5))
         )
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
     }
 
     private var countdownColor: Color {

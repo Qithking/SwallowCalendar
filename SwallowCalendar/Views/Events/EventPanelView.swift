@@ -11,6 +11,9 @@ struct EventPanelView: View {
     let calendarPreferences: [CalendarPreference]
 
     @State private var filterMode: EventFilterMode = .all
+    @State private var eventToEdit: CalendarEvent?
+    @State private var showDeleteConfirmation = false
+    @State private var eventToDelete: CalendarEvent?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -37,7 +40,14 @@ struct EventPanelView: View {
                         selectedDate: selectedDate,
                         calendarService: calendarService,
                         calendarPreferences: calendarPreferences,
-                        filterMode: filterMode
+                        filterMode: filterMode,
+                        onEditEvent: { event in
+                            eventToEdit = event
+                        },
+                        onDeleteEvent: { event in
+                            eventToDelete = event
+                            showDeleteConfirmation = true
+                        }
                     )
 
                     // 提醒
@@ -45,13 +55,39 @@ struct EventPanelView: View {
                         selectedDate: selectedDate,
                         calendarService: calendarService,
                         calendarPreferences: calendarPreferences,
-                        filterMode: filterMode
+                        filterMode: filterMode,
+                        onEditEvent: { event in
+                            eventToEdit = event
+                        },
+                        onDeleteEvent: { event in
+                            eventToDelete = event
+                            showDeleteConfirmation = true
+                        }
                     )
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
             }
             .frame(maxHeight: .infinity)
+        }
+        .sheet(item: $eventToEdit) { event in
+            EditEventSheet(event: event, calendarService: calendarService)
+        }
+        .alert("确认删除", isPresented: $showDeleteConfirmation, presenting: eventToDelete) { event in
+            Button("取消", role: .cancel) {}
+            Button("删除", role: .destructive) {
+                deleteEvent(event)
+            }
+        } message: { event in
+            Text("确定要删除事件「\(event.title)」吗？此操作无法撤销。")
+        }
+    }
+
+    private func deleteEvent(_ event: CalendarEvent) {
+        do {
+            try calendarService.deleteEvent(eventID: event.id)
+        } catch {
+            print("Failed to delete event: \(error)")
         }
     }
 }

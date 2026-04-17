@@ -72,6 +72,8 @@ struct CalendarEvent: Identifiable {
     let calendarTitle: String
     let calendarColorHex: String
     let source: EventSource
+    /// 是否为订阅日历（订阅日历不在用户事件列表中显示）
+    let isSubscription: Bool
 
     enum EventSource {
         case system       // 系统日历
