@@ -157,23 +157,25 @@ struct CalendarGridView: View {
         guard calendarService.authorizationStatus == .fullAccess else { return 0 }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
-        // 过滤订阅日历事件
-        return events.filter { !$0.isSubscription }.count
+        // 显示所有事件（包括订阅日历的节假日）
+        return events.count
     }
 
     private func eventTitles(for date: Date) -> [String] {
         guard calendarService.authorizationStatus == .fullAccess else { return [] }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
-        // 过滤订阅日历事件
-        return events.filter { !$0.isSubscription }.map { $0.title }
+        // 用户事件不包含订阅日历事件
+        let userEvents = events.filter { !$0.isSubscription }
+        return userEvents.map { $0.title }
     }
 
     private func eventColors(for date: Date) -> [String] {
         guard calendarService.authorizationStatus == .fullAccess else { return [] }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
-        // 过滤订阅日历事件
-        return events.filter { !$0.isSubscription }.map { $0.calendarColorHex }
+        // 用户事件不包含订阅日历事件
+        let userEvents = events.filter { !$0.isSubscription }
+        return userEvents.map { $0.calendarColorHex }
     }
 }
