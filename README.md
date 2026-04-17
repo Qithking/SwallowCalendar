@@ -175,14 +175,14 @@ open SwallowCalendar.xcodeproj
 
 ## 许可证
 
-本项目基于 [MIT License](./LICENSE) 开源。
+本项目基于 [GPLv3 License](./LICENSE) 开源。
 
 ---
 
 ## 联系方式
 
 - **GitHub**: [Qithking/SwallowCalendar](https://github.com/Qithking/SwallowCalendar)
-- **作者**: [thking](https://github.com/thking)
+- **作者**: [Qithking](https://github.com/thking)
 
 ---
 
