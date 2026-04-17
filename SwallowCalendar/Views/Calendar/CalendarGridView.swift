@@ -93,8 +93,8 @@ struct CalendarGridView: View {
                     holidayNames: icsService.holidayNameSync(for: date),
                     eventCount: eventCount(for: date),
                     isHovered: hoveredDate.flatMap { calendar.isDate(date, inSameDayAs: $0) } ?? false,
-                    eventTitles: eventTitles(for: date),
-                    eventColors: eventColors(for: date)
+                    eventTitles: allEventTitles(for: date),
+                    eventColors: allEventColors(for: date)
                 )
                 .onTapGesture {
                     withAnimation(.easeInOut(duration: 0.15)) {
@@ -161,21 +161,35 @@ struct CalendarGridView: View {
         return events.count
     }
 
+    /// 获取所有事件标题（包括订阅日历节假日）- 用于弹出列表显示
+    private func allEventTitles(for date: Date) -> [String] {
+        guard calendarService.authorizationStatus == .fullAccess else { return [] }
+        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
+        let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
+        return events.map { $0.title }
+    }
+
+    /// 获取所有事件颜色（包括订阅日历节假日）- 用于弹出列表显示
+    private func allEventColors(for date: Date) -> [String] {
+        guard calendarService.authorizationStatus == .fullAccess else { return [] }
+        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
+        let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
+        return events.map { $0.calendarColorHex }
+    }
+
+    /// 获取用户事件标题（不包含订阅日历）- 用于提醒列表
     private func eventTitles(for date: Date) -> [String] {
         guard calendarService.authorizationStatus == .fullAccess else { return [] }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
-        // 用户事件不包含订阅日历事件
-        let userEvents = events.filter { !$0.isSubscription }
-        return userEvents.map { $0.title }
+        return events.filter { !$0.isSubscription }.map { $0.title }
     }
 
+    /// 获取用户事件颜色（不包含订阅日历）- 用于提醒列表
     private func eventColors(for date: Date) -> [String] {
         guard calendarService.authorizationStatus == .fullAccess else { return [] }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let events = calendarService.fetchEvents(for: date, calendars: enabledCals)
-        // 用户事件不包含订阅日历事件
-        let userEvents = events.filter { !$0.isSubscription }
-        return userEvents.map { $0.calendarColorHex }
+        return events.filter { !$0.isSubscription }.map { $0.calendarColorHex }
     }
 }
