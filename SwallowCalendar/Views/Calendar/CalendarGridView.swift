@@ -7,6 +7,7 @@ import SwiftUI
 import EventKit
 
 struct CalendarGridView: View {
+    @Environment(AppSettings.self) private var appSettings
     @Binding var selectedDate: Date
     let calendarService: CalendarService
     let icsService: ICSService
@@ -22,6 +23,13 @@ struct CalendarGridView: View {
         formatter.locale = Locale(identifier: "zh_CN")
         return formatter.veryShortWeekdaySymbols
     }()
+
+    /// 根据 weekdayStart 设置排列的星期符号
+    private var orderedWeekDaySymbols: [String] {
+        let start = appSettings.weekdayStart // 1=Sunday, 2=Monday
+        let index = start - 1
+        return Array(weekDaySymbols[index...]) + Array(weekDaySymbols[..<index])
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,8 +57,8 @@ struct CalendarGridView: View {
 
     private var weekdayHeader: some View {
         HStack(spacing: 2) {
-            ForEach(weekDaySymbols.indices, id: \.self) { index in
-                Text(weekDaySymbols[index])
+            ForEach(orderedWeekDaySymbols.indices, id: \.self) { index in
+                Text(orderedWeekDaySymbols[index])
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity)
@@ -100,8 +108,9 @@ struct CalendarGridView: View {
 
         let firstDay = calendar.date(from: calendar.dateComponents([.year, .month], from: currentMonth))!
         let weekday = calendar.component(.weekday, from: firstDay)
-        // 周一开始: weekday 1=Sunday -> offset 6, 2=Monday -> offset 0
-        let offset = (weekday + 5) % 7
+        // 根据 weekdayStart 计算偏移：使星期列与 orderedWeekDaySymbols 对齐
+        let start = appSettings.weekdayStart // 1=Sunday, 2=Monday
+        let offset = (weekday - start + 7) % 7
 
         var days: [Date] = []
 

@@ -39,6 +39,13 @@ final class AppSettings {
         }
     }
 
+    /// 星期起始日：1=周日，2=周一（默认值跟随系统）
+    var weekdayStart: Int {
+        didSet {
+            UserDefaults.standard.set(weekdayStart, forKey: "weekdayStart")
+        }
+    }
+
     var colorScheme: ColorScheme? {
         switch themeMode {
         case .light: return .light
@@ -66,6 +73,7 @@ final class AppSettings {
         self.iconStyle = IconStyle(rawValue: UserDefaults.standard.string(forKey: "iconStyleRaw") ?? "") ?? .solidDate
         self.customIconFormat = UserDefaults.standard.string(forKey: "customIconFormat") ?? "d"
         self.themeMode = ThemeMode(rawValue: UserDefaults.standard.string(forKey: "themeModeRaw") ?? "") ?? .system
+        self.weekdayStart = UserDefaults.standard.object(forKey: "weekdayStart") as? Int ?? 2
     }
 
     private func updateLaunchAtLogin() {

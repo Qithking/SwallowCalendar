@@ -42,6 +42,12 @@ struct GeneralSettingsView: View {
                         Text(mode.displayName).tag(mode)
                     }
                 }
+
+                // 星期起始日
+                Picker("星期起始日", selection: $settings.weekdayStart) {
+                    Text("周日").tag(1)
+                    Text("周一").tag(2)
+                }
             }
         }
         .formStyle(.grouped)

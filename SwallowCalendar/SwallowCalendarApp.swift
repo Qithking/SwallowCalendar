@@ -61,22 +61,37 @@ final class SettingsWindowManager {
     var modelContainer: ModelContainer?
     var appSettings: AppSettings?
     private var settingsWindow: NSWindow?
+    private var isOpening = false
 
     private init() {}
 
     func openSettings() {
-        if let window = settingsWindow, window.isVisible {
-            window.makeKeyAndOrderFront(nil)
+        // 防止重复打开
+        guard !isOpening else { return }
+
+        // 已有窗口则直接激活
+        if let window = settingsWindow {
+            if window.isVisible {
+                window.makeKeyAndOrderFront(nil)
+            } else {
+                // 窗口可能被隐藏，重新显示
+                window.orderFront(nil)
+            }
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
-        let hostingView = NSHostingView(rootView:
-            SettingsView()
-                .environment(appSettings ?? AppSettings.shared)
-                .modelContainer(modelContainer ?? createFallbackModelContainer())
-                .frame(minWidth: 450, minHeight: 400)
-        )
+        isOpening = true
+        defer { isOpening = false }
+
+        let container = modelContainer ?? createFallbackModelContainer()
+        let settings = appSettings ?? AppSettings.shared
+
+        let settingsView = SettingsView()
+            .environment(settings)
+            .modelContainer(container)
+
+        let hostingView = NSHostingView(rootView: settingsView.frame(minWidth: 450, minHeight: 400))
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 500, height: 450),
@@ -87,8 +102,9 @@ final class SettingsWindowManager {
         window.title = "设置"
         window.contentView = hostingView
         window.center()
-        window.makeKeyAndOrderFront(nil)
         window.delegate = SettingsWindowDelegate(manager: self)
+        window.isReleasedWhenClosed = false
+        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
         settingsWindow = window
@@ -100,12 +116,11 @@ final class SettingsWindowManager {
 
     private func createFallbackModelContainer() -> ModelContainer {
         let schema = Schema([CalendarPreference.self, CustomCalendarSource.self])
-        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         if let container = try? ModelContainer(for: schema, configurations: [config]) {
             return container
         }
-        // 最终兜底：内存模式
-        return try! ModelContainer(for: CalendarPreference.self, CustomCalendarSource.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        return try! ModelContainer(for: CalendarPreference.self, CustomCalendarSource.self)
     }
 }
 
