@@ -60,6 +60,13 @@ final class AppSettings {
             StatusBarIconManager.shared.updateIcon()
         }
     }
+    
+    /// 应用主题色
+    var accentColorHex: String {
+        didSet {
+            UserDefaults.standard.set(accentColorHex, forKey: "accentColorHex")
+        }
+    }
 
     var colorScheme: ColorScheme? {
         switch themeMode {
@@ -91,6 +98,7 @@ final class AppSettings {
         self.weekdayStart = UserDefaults.standard.object(forKey: "weekdayStart") as? Int ?? 2
         self.showLunarCalendar = UserDefaults.standard.object(forKey: "showLunarCalendar") as? Bool ?? true
         self.iconColorHex = UserDefaults.standard.string(forKey: "iconColorHex") ?? "#007AFF"
+        self.accentColorHex = UserDefaults.standard.string(forKey: "accentColorHex") ?? "#007AFF"
     }
 
     private func updateLaunchAtLogin() {

@@ -6,6 +6,7 @@
 import SwiftUI
 
 struct EventPanelView: View {
+    @Environment(AppSettings.self) private var appSettings
     @Binding var selectedDate: Date
     let calendarService: CalendarService
     let calendarPreferences: [CalendarPreference]
@@ -15,6 +16,7 @@ struct EventPanelView: View {
     @State private var showDeleteConfirmation = false
     @State private var eventToDelete: CalendarEvent?
     @State private var refreshTrigger = false
+    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -105,6 +107,10 @@ struct EventPanelView: View {
                     }
                 )
             }
+        }
+        .tint(accentColor)
+        .onChange(of: appSettings.accentColorHex) { _, newColor in
+            accentColor = Color(hex: newColor)
         }
     }
 

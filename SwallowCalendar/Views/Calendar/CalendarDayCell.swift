@@ -144,7 +144,7 @@ struct CalendarDayCell: View {
                 .fill(Color.accentColor.opacity(0.1))
         } else if isToday {
             RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.accentColor, lineWidth: 1)
+                .fill(Color.accentColor)
         } else if eventCount > 1 {
             // 多事件日期使用第一个事件的颜色作为背景提示
             if let firstColorHex = eventColors.first {

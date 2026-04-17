@@ -8,6 +8,7 @@ import SwiftUI
 struct GeneralSettingsView: View {
     @Environment(AppSettings.self) private var appSettings
     @State private var customColor: Color = Color(hex: AppSettings.shared.iconColorHex)
+    @State private var customAccentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     var body: some View {
         @Bindable var settings = appSettings
@@ -78,6 +79,39 @@ struct GeneralSettingsView: View {
                         Text(mode.displayName).tag(mode)
                     }
                 }
+                
+                // 主题色
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text("主题色")
+                            .font(.system(size: 12))
+                        Spacer()
+                        ForEach(accentColors, id: \.self) { colorHex in
+                            Circle()
+                                .fill(Color(hex: colorHex))
+                                .frame(width: 22, height: 22)
+                                .overlay(
+                                    Circle()
+                                        .stroke(appSettings.accentColorHex == colorHex ? Color.primary : Color.clear, lineWidth: 2)
+                                )
+                                .onTapGesture {
+                                    settings.accentColorHex = colorHex
+                                }
+                        }
+                    }
+                    
+                    HStack {
+                        Text("自定义颜色")
+                            .font(.system(size: 12))
+                        Spacer()
+                        ColorPicker("", selection: $customAccentColor)
+                            .labelsHidden()
+                            .frame(width: 30)
+                            .onChange(of: customAccentColor) { _, newColor in
+                                settings.accentColorHex = newColor.toHex() ?? settings.accentColorHex
+                            }
+                    }
+                }
 
                 // 星期起始日
                 Picker("星期起始日", selection: $settings.weekdayStart) {
@@ -105,6 +139,17 @@ struct GeneralSettingsView: View {
         "#AF52DE", // 紫色
         "#FF2D55", // 粉色
         "#8E8E93"  // 灰色
+    ]
+    
+    private let accentColors = [
+        "#FF3B30", // 红色
+        "#FF9500", // 橙色
+        "#FFCC00", // 黄色
+        "#34C759", // 绿色
+        "#007AFF", // 蓝色
+        "#5856D6", // 靛蓝色
+        "#AF52DE", // 紫色
+        "#FF2D55"  // 粉色
     ]
 }
 

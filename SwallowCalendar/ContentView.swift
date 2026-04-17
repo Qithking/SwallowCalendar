@@ -19,6 +19,9 @@ struct ContentView: View {
     @State private var calendarService = CalendarService.shared
     @State private var icsService = ICSService.shared
     @State private var refreshTrigger = false  // 用于触发视图刷新
+    
+    // 用于强制视图响应主题色变化
+    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,6 +50,10 @@ struct ContentView: View {
             toolbar
         }
         .preferredColorScheme(appSettings.colorScheme)
+        .tint(accentColor)
+        .onChange(of: appSettings.accentColorHex) { _, newColor in
+            accentColor = Color(hex: newColor)
+        }
         .task {
             await initializeServices()
         }

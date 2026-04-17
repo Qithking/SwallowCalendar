@@ -17,6 +17,7 @@ struct CalendarGridView: View {
     @State private var currentMonth = Date()
     @State private var hoveredDate: Date?
     @State private var holidaysLoaded = false  // 用于触发节假日数据刷新
+    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     private let calendar = Calendar.current
     private let weekDaySymbols: [String] = {
@@ -52,6 +53,7 @@ struct CalendarGridView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
+        .tint(Color(hex: appSettings.accentColorHex))
         .task {
             // 预加载节假日数据
             await icsService.preloadHolidays(sources: customSources)

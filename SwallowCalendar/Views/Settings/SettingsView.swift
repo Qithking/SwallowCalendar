@@ -17,12 +17,17 @@ struct SettingsView: View {
                 .tabItem {
                     Label("日历", systemImage: "calendar")
                 }
+            
+            DataExportSettingsView()
+                .tabItem {
+                    Label("数据", systemImage: "square.and.arrow.up.on.square")
+                }
 
             AboutSettingsView()
                 .tabItem {
                     Label("关于", systemImage: "info.circle")
                 }
         }
-        .frame(width: 450, height: 380)
+        .frame(minWidth: 450, minHeight: 400)
     }
 }

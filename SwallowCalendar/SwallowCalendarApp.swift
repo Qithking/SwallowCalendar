@@ -99,6 +99,7 @@ final class SettingsWindowManager {
         let settingsView = SettingsView()
             .environment(settings)
             .modelContainer(container)
+            .tint(Color(hex: settings.accentColorHex))
 
         let hostingView = NSHostingView(rootView: settingsView.frame(minWidth: 450, minHeight: 400))
 
