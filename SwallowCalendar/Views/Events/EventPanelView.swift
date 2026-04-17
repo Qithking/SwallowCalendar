@@ -85,18 +85,26 @@ struct EventPanelView: View {
             }
             .frame(maxHeight: .infinity)
         }
-        .alert("确认删除", isPresented: $showDeleteConfirmation, presenting: eventToDelete) { event in
-            Button("取消") {
-                eventToDelete = nil
-                showDeleteConfirmation = false
+        .overlay {
+            if showDeleteConfirmation, let event = eventToDelete {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        // 点击遮罩不关闭，只有按钮可以关闭
+                    }
+                DeleteConfirmDialog(
+                    eventTitle: event.title,
+                    onConfirm: {
+                        deleteEvent(event)
+                        eventToDelete = nil
+                        showDeleteConfirmation = false
+                    },
+                    onCancel: {
+                        eventToDelete = nil
+                        showDeleteConfirmation = false
+                    }
+                )
             }
-            Button("删除", role: .destructive) {
-                deleteEvent(event)
-                eventToDelete = nil
-                showDeleteConfirmation = false
-            }
-        } message: { event in
-            Text("确定要删除事件「\(event.title)」吗？此操作无法撤销。")
         }
     }
 
