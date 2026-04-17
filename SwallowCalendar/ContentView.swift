@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var selectedDate = Date()
     @State private var calendarService = CalendarService.shared
     @State private var icsService = ICSService.shared
+    @State private var refreshTrigger = false  // 用于触发视图刷新
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,7 +35,7 @@ struct ContentView: View {
 
             // 事项区域（占满剩余空间）
             EventPanelView(
-                selectedDate: selectedDate,
+                selectedDate: $selectedDate,
                 calendarService: calendarService,
                 calendarPreferences: calendarPreferences
             )

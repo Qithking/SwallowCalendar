@@ -6,20 +6,26 @@
 import SwiftUI
 
 struct EventPanelView: View {
-    let selectedDate: Date
+    @Binding var selectedDate: Date
     let calendarService: CalendarService
     let calendarPreferences: [CalendarPreference]
+    var externalRefreshTrigger: Bool = false
 
     @State private var filterMode: EventFilterMode = .all
     @State private var showDeleteConfirmation = false
     @State private var eventToDelete: CalendarEvent?
+    @State private var refreshTrigger = false
 
     var body: some View {
         VStack(spacing: 0) {
             // 添加待办输入框（固定顶部）
             TaskInputView(
                 calendarService: calendarService,
-                calendarPreferences: calendarPreferences
+                calendarPreferences: calendarPreferences,
+                refreshTrigger: $refreshTrigger,
+                onTaskAdded: {
+                    refreshTrigger.toggle()
+                }
             )
             .padding(.horizontal, 8)
             .padding(.top, 6)
@@ -50,7 +56,8 @@ struct EventPanelView: View {
                         onDeleteEvent: { event in
                             eventToDelete = event
                             showDeleteConfirmation = true
-                        }
+                        },
+                        refreshTrigger: refreshTrigger
                     )
 
                     // 提醒
@@ -69,7 +76,8 @@ struct EventPanelView: View {
                         onDeleteEvent: { event in
                             eventToDelete = event
                             showDeleteConfirmation = true
-                        }
+                        },
+                        refreshTrigger: refreshTrigger
                     )
                 }
                 .padding(.horizontal, 8)

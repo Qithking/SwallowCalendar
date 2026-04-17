@@ -13,10 +13,13 @@ struct EventReminderListView: View {
     let filterMode: EventFilterMode
     let onEditEvent: ((CalendarEvent) -> Void)?
     let onDeleteEvent: ((CalendarEvent) -> Void)?
+    var refreshTrigger: Bool = false  // 放在最后
 
     @State private var isExpanded = true
 
     private var events: [CalendarEvent] {
+        // 依赖 refreshTrigger 以触发重新计算
+        _ = refreshTrigger
         guard calendarService.authorizationStatus == .fullAccess else { return [] }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let range = filterMode.dateRange(from: selectedDate)

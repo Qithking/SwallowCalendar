@@ -44,9 +44,24 @@ final class CalendarService {
     }
 
     /// 获取已启用的日历（根据用户偏好过滤）
+    /// 优先返回用户配置的日历，如果配置为空则返回所有用户日历
     func enabledCalendars(preferences: [CalendarPreference]) -> [EKCalendar] {
         let enabledIDs = Set(preferences.filter(\.isEnabled).map(\.calendarID))
-        return calendars.filter { enabledIDs.contains($0.calendarIdentifier) || enabledIDs.isEmpty }
+
+        if enabledIDs.isEmpty {
+            // 没有配置偏好，返回所有非订阅日历（用户日历）
+            let userCalendars = calendars.filter { $0.type != .subscription }
+            print("[CalendarService] enabledCalendars: no preferences, returning \(userCalendars.count) user calendars")
+            return userCalendars
+        }
+
+        // 返回配置的日历 + 所有用户日历（确保用户创建的事件能显示）
+        var result = calendars.filter { enabledIDs.contains($0.calendarIdentifier) }
+        let userCalendars = calendars.filter { $0.type != .subscription && !enabledIDs.contains($0.calendarIdentifier) }
+        result.append(contentsOf: userCalendars)
+
+        print("[CalendarService] enabledCalendars: enabledIDs=\(enabledIDs), calendars count=\(calendars.count), result count=\(result.count)")
+        return result
     }
 
     // MARK: - Events
@@ -73,7 +88,16 @@ final class CalendarService {
         let now = Date()
         let end = Calendar.current.date(byAdding: .year, value: 2, to: now)!
         var events = fetchEvents(from: now, to: end, calendars: calendars)
+        print("[CalendarService] fetchUpcomingTimedEvents: raw events count=\(events.count)")
+        print("[CalendarService] now=\(now), end=\(end)")
+
+        // 调试：检查前几个事件
+        for (i, event) in events.prefix(5).enumerated() {
+            print("[CalendarService] event[\(i)]: title=\(event.title), isAllDay=\(event.isAllDay), hasTime=\(event.hasTime), startDate=\(String(describing: event.startDate))")
+        }
+
         events = events.filter { $0.hasTime && $0.startDate ?? Date.distantPast > now }
+        print("[CalendarService] fetchUpcomingTimedEvents: filtered events count=\(events.count)")
         events.sort { $0.startDate ?? .distantFuture < $1.startDate ?? .distantFuture }
         return events
     }
@@ -105,7 +129,9 @@ final class CalendarService {
         event.startDate = startDate
         event.endDate = endDate ?? startDate.addingTimeInterval(3600)
         event.isAllDay = isAllDay
-        event.calendar = calendar ?? eventStore.defaultCalendarForNewEvents ?? calendars.first
+        let targetCalendar = calendar ?? eventStore.defaultCalendarForNewEvents ?? calendars.first
+        event.calendar = targetCalendar
+        print("[CalendarService] createEvent: title=\(title), calendar=\(targetCalendar?.title ?? "nil"), calendarID=\(targetCalendar?.calendarIdentifier ?? "nil"), isAllDay=\(isAllDay)")
 
         // 设置重复规则
         if let recurrence = recurrence, recurrence != .none {
@@ -121,15 +147,12 @@ final class CalendarService {
             event.addRecurrenceRule(rule)
         }
 
-        // 设置提醒
+        // 设置提醒（仅当用户指定时才添加）
         if let minutes = reminderMinutes, minutes > 0 {
             let alarm = EKAlarm(relativeOffset: TimeInterval(-minutes * 60))
             event.addAlarm(alarm)
-        } else {
-            // 默认提前10分钟提醒
-            let alarm = EKAlarm(relativeOffset: -600)
-            event.addAlarm(alarm)
         }
+        // 如果 reminderMinutes 为 nil 或 <= 0，不添加提醒
 
         guard event.calendar != nil else {
             throw EventError.noCalendarAvailable

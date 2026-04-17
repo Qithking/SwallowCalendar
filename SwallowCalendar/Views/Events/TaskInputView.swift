@@ -8,6 +8,8 @@ import SwiftUI
 struct TaskInputView: View {
     let calendarService: CalendarService
     let calendarPreferences: [CalendarPreference]
+    @Binding var refreshTrigger: Bool
+    var onTaskAdded: (() -> Void)?
 
     @State private var inputText = ""
     @State private var isProcessing = false
@@ -211,28 +213,37 @@ struct TaskInputView: View {
         guard !text.isEmpty else { return }
 
         isProcessing = true
+        print("[TaskInput] 添加任务: title=\(taskTitle.isEmpty ? "待办事项" : taskTitle), date=\(taskDate), reminder=\(taskReminderMinutes)分钟")
 
         let isAllDay = Calendar.current.component(.hour, from: taskDate) == 0
             && Calendar.current.component(.minute, from: taskDate) == 0
 
-        do {
-            try calendarService.createEvent(
-                title: taskTitle.isEmpty ? "待办事项" : taskTitle,
-                startDate: taskDate,
-                endDate: isAllDay ? nil : taskDate.addingTimeInterval(3600),
-                isAllDay: isAllDay,
-                calendar: nil,
-                priority: taskPriority == .none ? nil : taskPriority,
-                recurrence: taskRecurrence,
-                reminderMinutes: taskReminderMinutes > 0 ? taskReminderMinutes : nil
-            )
-            inputText = ""
-            resetTaskAttributes()
-        } catch {
-            print("Failed to create event: \(error)")
+        Task { @MainActor in
+            do {
+                try calendarService.createEvent(
+                    title: taskTitle.isEmpty ? "待办事项" : taskTitle,
+                    startDate: taskDate,
+                    endDate: isAllDay ? nil : taskDate.addingTimeInterval(3600),
+                    isAllDay: isAllDay,
+                    calendar: nil,
+                    priority: taskPriority == .none ? nil : taskPriority,
+                    recurrence: taskRecurrence,
+                    reminderMinutes: taskReminderMinutes > 0 ? taskReminderMinutes : nil
+                )
+                await MainActor.run {
+                    inputText = ""
+                    resetTaskAttributes()
+                    refreshTrigger.toggle()  // 触发视图刷新
+                    onTaskAdded?()
+                }
+                print("[TaskInput] 任务添加成功")
+            } catch {
+                print("[TaskInput] 任务添加失败: \(error)")
+            }
+            await MainActor.run {
+                isProcessing = false
+            }
         }
-
-        isProcessing = false
     }
 
     private func resetTaskAttributes() {
