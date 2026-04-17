@@ -93,7 +93,7 @@ struct ContentView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(.bar)
+        .background(Color.clear)
     }
 
     // MARK: - Services Init
