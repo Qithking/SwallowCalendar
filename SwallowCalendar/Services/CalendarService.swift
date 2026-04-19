@@ -5,6 +5,7 @@
 
 import EventKit
 import SwiftUI
+import SwiftData
 
 @Observable
 final class CalendarService {
@@ -145,7 +146,8 @@ final class CalendarService {
         calendar: EKCalendar?,
         priority: EventPriority? = nil,
         recurrence: RecurrenceType? = nil,
-        reminderMinutes: Int? = nil
+        reminderMinutes: Int? = nil,
+        category: EventCategory = .system
     ) throws {
         let event = EKEvent(eventStore: eventStore)
         event.title = title
@@ -154,7 +156,7 @@ final class CalendarService {
         event.isAllDay = isAllDay
         let targetCalendar = calendar ?? eventStore.defaultCalendarForNewEvents ?? calendars.first
         event.calendar = targetCalendar
-        print("[CalendarService] createEvent: title=\(title), calendar=\(targetCalendar?.title ?? "nil"), calendarID=\(targetCalendar?.calendarIdentifier ?? "nil"), isAllDay=\(isAllDay)")
+        print("[CalendarService] createEvent: title=\(title), calendar=\(targetCalendar?.title ?? "nil"), calendarID=\(targetCalendar?.calendarIdentifier ?? "nil"), isAllDay=\(isAllDay), category=\(category)")
 
         // 设置重复规则
         if let recurrence = recurrence, recurrence != .none {
@@ -189,6 +191,18 @@ final class CalendarService {
         guard let event = eventStore.event(withIdentifier: eventID) else { return }
         try eventStore.remove(event, span: .thisEvent)
     }
+    
+    /// 标记事件完成/未完成（仅影响缓存中的标记，不影响系统事件）
+    func toggleEventCompleted(eventID: String, isCompleted: Bool) {
+        guard let context = cacheService.context else { return }
+        
+        let descriptor = FetchDescriptor<CachedEvent>()
+        if let events = try? context.fetch(descriptor),
+           let cached = events.first(where: { $0.eventID == eventID }) {
+            cached.isCompleted = isCompleted
+            try? context.save()
+        }
+    }
 
     /// 更新日历事件
     @MainActor
@@ -212,7 +226,8 @@ final class CalendarService {
             isAllDay: ekEvent.isAllDay,
             calendarTitle: ekEvent.calendar.title,
             calendarColorHex: ekEvent.calendar.cgColor?.hexString ?? "#007AFF",
-            category: category
+            category: category,
+            isCompleted: false
         )
     }
     
@@ -225,7 +240,8 @@ final class CalendarService {
             isAllDay: cached.isAllDay,
             calendarTitle: cached.calendarTitle,
             calendarColorHex: cached.calendarColorHex,
-            category: cached.category
+            category: cached.category,
+            isCompleted: cached.isCompleted
         )
     }
 

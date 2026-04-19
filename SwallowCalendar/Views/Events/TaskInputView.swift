@@ -233,7 +233,8 @@ struct TaskInputView: View {
                     calendar: nil,
                     priority: taskPriority == .none ? nil : taskPriority,
                     recurrence: taskRecurrence,
-                    reminderMinutes: taskReminderMinutes > 0 ? taskReminderMinutes : nil
+                    reminderMinutes: taskReminderMinutes > 0 ? taskReminderMinutes : nil,
+                    category: .user
                 )
                 await MainActor.run {
                     inputText = ""

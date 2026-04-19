@@ -17,6 +17,8 @@ struct EventPanelView: View {
     @State private var eventToDelete: CalendarEvent?
     @State private var refreshTrigger = false
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
+    @State private var todoExpanded = true
+    @State private var completedExpanded = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,21 +41,34 @@ struct EventPanelView: View {
             EventFilterBar(selectedFilter: $filterMode)
                 .padding(.horizontal, 8)
 
-            // 可滚动的倒计时和提醒列表（占满剩余空间）
+            // 可滚动的待办和已办列表（占满剩余空间）
             ScrollView {
                 VStack(spacing: 8) {
-                    // 待办倒计时
-                    EventCountdownListView(
+                    // 待办事项（倒计时 + 提醒合并）
+                    EventTodoListView(
                         selectedDate: selectedDate,
                         calendarService: calendarService,
                         calendarPreferences: calendarPreferences,
                         filterMode: filterMode,
+                        isExpanded: $todoExpanded,
+                        onToggle: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                todoExpanded.toggle()
+                                if todoExpanded {
+                                    completedExpanded = false
+                                }
+                            }
+                        },
                         onEditEvent: { event in
                             EditEventWindowManager.shared.openEditWindow(
                                 event: event,
                                 calendarService: calendarService,
                                 onDismiss: {}
                             )
+                        },
+                        onCompleteEvent: { event in
+                            calendarService.toggleEventCompleted(eventID: event.id, isCompleted: true)
+                            refreshTrigger.toggle()
                         },
                         onDeleteEvent: { event in
                             eventToDelete = event
@@ -62,18 +77,31 @@ struct EventPanelView: View {
                         refreshTrigger: refreshTrigger
                     )
 
-                    // 提醒
-                    EventReminderListView(
+                    // 已办事项
+                    EventCompletedListView(
                         selectedDate: selectedDate,
                         calendarService: calendarService,
                         calendarPreferences: calendarPreferences,
                         filterMode: filterMode,
+                        isExpanded: $completedExpanded,
+                        onToggle: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                completedExpanded.toggle()
+                                if completedExpanded {
+                                    todoExpanded = false
+                                }
+                            }
+                        },
                         onEditEvent: { event in
                             EditEventWindowManager.shared.openEditWindow(
                                 event: event,
                                 calendarService: calendarService,
                                 onDismiss: {}
                             )
+                        },
+                        onUncompleteEvent: { event in
+                            calendarService.toggleEventCompleted(eventID: event.id, isCompleted: false)
+                            refreshTrigger.toggle()
                         },
                         onDeleteEvent: { event in
                             eventToDelete = event

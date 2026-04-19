@@ -82,6 +82,8 @@ struct CalendarEvent: Identifiable {
     let calendarColorHex: String
     /// 事件分类：系统、订阅、用户
     let category: EventCategory
+    /// 是否已完成
+    var isCompleted: Bool
     
     /// 是否为订阅日历（订阅日历不在用户事件列表中显示）
     var isSubscription: Bool {

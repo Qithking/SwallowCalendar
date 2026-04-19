@@ -38,6 +38,9 @@ final class CachedEvent {
     /// 事件分类
     var categoryRaw: String = EventCategory.system.rawValue
     
+    /// 是否已完成（仅对用户事件有效）
+    var isCompleted: Bool = false
+    
     /// 缓存更新时间
     var lastUpdated: Date
     
@@ -60,7 +63,8 @@ final class CachedEvent {
         calendarID: String,
         calendarTitle: String,
         calendarColorHex: String,
-        category: EventCategory = .system
+        category: EventCategory = .system,
+        isCompleted: Bool = false
     ) {
         self.eventID = eventID
         self.title = title
@@ -71,6 +75,7 @@ final class CachedEvent {
         self.calendarTitle = calendarTitle
         self.calendarColorHex = calendarColorHex
         self.categoryRaw = category.rawValue
+        self.isCompleted = isCompleted
         self.lastUpdated = Date()
     }
 }
@@ -96,6 +101,11 @@ final class EventCacheService {
     func configure(with container: ModelContainer) {
         self.modelContainer = container
         self.modelContext = ModelContext(container)
+    }
+    
+    /// 获取 ModelContext
+    var context: ModelContext? {
+        return modelContext
     }
     
     // MARK: - 查询（从缓存）

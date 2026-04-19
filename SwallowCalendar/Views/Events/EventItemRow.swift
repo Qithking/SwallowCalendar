@@ -9,17 +9,50 @@ struct EventItemRow: View {
     let event: CalendarEvent
     let onEdit: ((CalendarEvent) -> Void)?
     let onDelete: ((CalendarEvent) -> Void)?
+    let onComplete: ((CalendarEvent) -> Void)?
+    let onUncomplete: ((CalendarEvent) -> Void)?
 
     @State private var isHovered = false
 
-    init(event: CalendarEvent, onEdit: ((CalendarEvent) -> Void)? = nil, onDelete: ((CalendarEvent) -> Void)? = nil) {
+    init(
+        event: CalendarEvent,
+        onEdit: ((CalendarEvent) -> Void)? = nil,
+        onDelete: ((CalendarEvent) -> Void)? = nil,
+        onComplete: ((CalendarEvent) -> Void)? = nil,
+        onUncomplete: ((CalendarEvent) -> Void)? = nil
+    ) {
         self.event = event
         self.onEdit = onEdit
         self.onDelete = onDelete
+        self.onComplete = onComplete
+        self.onUncomplete = onUncomplete
     }
 
     var body: some View {
         HStack(spacing: 8) {
+            // 完成/未完成复选框
+            if event.isCompleted {
+                Button {
+                    onUncomplete?(event)
+                } label: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.green)
+                }
+                .buttonStyle(.plain)
+                .help("标记未完成")
+            } else {
+                Button {
+                    onComplete?(event)
+                } label: {
+                    Image(systemName: "circle")
+                        .font(.system(size: 16))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("标记完成")
+            }
+
             // 日历颜色标识
             RoundedRectangle(cornerRadius: 2)
                 .fill(Color(hex: event.calendarColorHex))
@@ -29,6 +62,8 @@ struct EventItemRow: View {
                 Text(event.title)
                     .font(.system(size: 12))
                     .lineLimit(1)
+                    .strikethrough(event.isCompleted, color: .secondary)
+                    .foregroundColor(event.isCompleted ? .secondary : .primary)
 
                 HStack(spacing: 4) {
                     if event.hasTime {
@@ -50,7 +85,7 @@ struct EventItemRow: View {
             Spacer()
 
             // 悬停时显示操作按钮
-            if isHovered {
+            if isHovered && !event.isCompleted {
                 HStack(spacing: 4) {
                     if onEdit != nil {
                         Button {
