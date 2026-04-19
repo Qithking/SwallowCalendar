@@ -178,7 +178,9 @@ enum EventFilterMode: String, CaseIterable {
             let end = calendar.date(byAdding: .year, value: 1, to: start)!
             return (start, end)
         case .all:
-            return (now, calendar.date(byAdding: .year, value: 2, to: now)!)
+            let past = calendar.date(byAdding: .year, value: -5, to: now)!
+            let future = calendar.date(byAdding: .year, value: 5, to: now)!
+            return (past, future)
         }
     }
 }
