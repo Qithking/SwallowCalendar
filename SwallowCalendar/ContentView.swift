@@ -8,6 +8,7 @@
 import SwiftUI
 import SwiftData
 import EventKit
+import AppKit
 
 struct ContentView: View {
     @Environment(AppSettings.self) private var appSettings
@@ -19,6 +20,7 @@ struct ContentView: View {
     @State private var calendarService = CalendarService.shared
     @State private var icsService = ICSService.shared
     @State private var refreshTrigger = false  // 用于触发视图刷新
+    @State private var isSyncing = false  // 同步状态
     
     // 用于强制视图响应主题色变化
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
@@ -54,11 +56,9 @@ struct ContentView: View {
         .onChange(of: appSettings.accentColorHex) { _, newColor in
             accentColor = Color(hex: newColor)
         }
-        .task {
+        .task(id: "initialSync") {
+            // 只在初始化时同步一次
             await initializeServices()
-        }
-        .task {
-            // 后台同步日历事件
             await syncCalendarEvents()
         }
     }
@@ -77,19 +77,24 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .help("设置")
 
-            Spacer()
-
-            // 今日按钮
+            // 同步按钮
             Button {
-                withAnimation {
-                    selectedDate = Date()
+                Task {
+                    await manualSyncCalendarEvents()
                 }
             } label: {
-                Text("今天")
-                    .font(.system(size: 12))
+                if isSyncing {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .frame(width: 13, height: 13)
+                } else {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 13))
+                }
             }
             .buttonStyle(.plain)
-            .help("回到今天")
+            .disabled(isSyncing)
+            .help("同步日历")
 
             Spacer()
 
@@ -141,5 +146,46 @@ struct ContentView: View {
         
         // 同步完成后刷新视图
         refreshTrigger.toggle()
+    }
+    
+    /// 手动同步日历事件
+    private func manualSyncCalendarEvents() async {
+        guard !isSyncing else { return }
+
+        isSyncing = true
+
+        // 检查日历权限
+        if calendarService.authorizationStatus != .fullAccess {
+            await MainActor.run {
+                showAlert(title: "同步失败", message: "日历权限不足，请在系统设置中授权", style: .warning)
+            }
+            isSyncing = false
+            return
+        }
+
+        do {
+            let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
+            await calendarService.cacheService.syncEvents(from: calendarService, calendars: enabledCals)
+            refreshTrigger.toggle()
+            await MainActor.run {
+                showAlert(title: "同步成功", message: "日历数据同步完成", style: .informational)
+            }
+        } catch {
+            await MainActor.run {
+                showAlert(title: "同步失败", message: error.localizedDescription, style: .critical)
+            }
+        }
+
+        isSyncing = false
+    }
+
+    private func showAlert(title: String, message: String, style: NSAlert.Style) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = style
+        alert.addButton(withTitle: "确定")
+        alert.runModal()
     }
 }

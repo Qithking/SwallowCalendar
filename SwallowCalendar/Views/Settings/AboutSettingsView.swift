@@ -4,27 +4,10 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct AboutSettingsView: View {
     @StateObject private var updateChecker = UpdateChecker.shared
-    @State private var alertType: AlertType? = nil
-    @State private var showUpdateAlert = false
-    @State private var showNoUpdateAlert = false
-    @State private var showErrorAlert = false
-
-    enum AlertType: Identifiable {
-        case update
-        case noUpdate
-        case error(String)
-
-        var id: String {
-            switch self {
-            case .update: return "update"
-            case .noUpdate: return "noUpdate"
-            case .error: return "error"
-            }
-        }
-    }
 
     var body: some View {
         VStack(spacing: 20) {
@@ -100,6 +83,7 @@ struct AboutSettingsView: View {
 
             // 检查更新按钮 - 始终显示
             Button {
+                NSApplication.shared.activate(ignoringOtherApps: true);
                 checkForUpdates()
             } label: {
                 HStack(spacing: 6) {
@@ -139,28 +123,47 @@ struct AboutSettingsView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
-        .sheet(item: $alertType) { type in
-            AlertSheetView(alertType: type, onDownload: {
-                updateChecker.downloadLatestRelease()
-            })
-        }
     }
 
     private func checkForUpdates() {
         Task {
             await updateChecker.checkForUpdates()
 
-            // 确保在主线程显示 alert
-            try? await Task.sleep(nanoseconds: 100_000_000)
-
-            if let error = updateChecker.errorMessage {
-                alertType = .error(error)
-            } else if updateChecker.updateAvailable {
-                alertType = .update
-            } else {
-                alertType = .noUpdate
+            await MainActor.run {
+                if let error = updateChecker.errorMessage {
+                    showAlert(title: "检查更新失败", message: error, style: .warning)
+                } else if updateChecker.updateAvailable {
+                    showUpdateAlert()
+                } else {
+                    showAlert(title: "已是最新版本", message: "当前版本 v\(appVersion) 已是最新版本", style: .informational)
+                }
             }
         }
+    }
+
+    private func showUpdateAlert() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "发现新版本"
+        alert.informativeText = "最新版本: v\(updateChecker.latestVersion)\n当前版本: v\(appVersion)"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "下载安装包")
+        alert.addButton(withTitle: "稍后")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            updateChecker.downloadLatestRelease()
+        }
+    }
+
+    private func showAlert(title: String, message: String, style: NSAlert.Style) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = style
+        alert.addButton(withTitle: "确定")
+        alert.runModal()
     }
 
     private var appVersion: String {
@@ -172,68 +175,4 @@ struct AboutSettingsView: View {
     }
 }
 
-// MARK: - Alert Sheet View
 
-struct AlertSheetView: View {
-    let alertType: AboutSettingsView.AlertType
-    let onDownload: () -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(spacing: 20) {
-            switch alertType {
-            case .update:
-                Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 48))
-                    .foregroundColor(.accentColor)
-                Text("发现新版本")
-                    .font(.headline)
-                Text("最新版本: v\(UpdateChecker.shared.latestVersion)\n当前版本: v\(UpdateChecker.shared.currentVersionString)")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                HStack(spacing: 12) {
-                    Button("下载安装包") {
-                        dismiss()
-                        onDownload()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    Button("稍后", role: .cancel) {
-                        dismiss()
-                    }
-                }
-
-            case .noUpdate:
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 48))
-                    .foregroundColor(.green)
-                Text("已是最新版本")
-                    .font(.headline)
-                Text("当前版本 v\(UpdateChecker.shared.currentVersionString) 已是最新版本")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                Button("确定", role: .cancel) {
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-
-            case .error(let message):
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 48))
-                    .foregroundColor(.orange)
-                Text("检查更新失败")
-                    .font(.headline)
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                Button("确定", role: .cancel) {
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding(30)
-        .frame(width: 280)
-    }
-}
