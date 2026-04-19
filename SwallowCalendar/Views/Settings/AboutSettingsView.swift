@@ -83,7 +83,6 @@ struct AboutSettingsView: View {
 
             // 检查更新按钮 - 始终显示
             Button {
-                NSApplication.shared.activate(ignoringOtherApps: true);
                 checkForUpdates()
             } label: {
                 HStack(spacing: 6) {
@@ -97,7 +96,7 @@ struct AboutSettingsView: View {
                         .font(.system(size: 13))
                 }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
             .disabled(updateChecker.isChecking)
 
             // 新版本信息 - 仅当有新版本时显示

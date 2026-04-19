@@ -438,7 +438,7 @@ struct DownloadProgressView: View {
                     Button("重试") {
                         updateChecker.retryDownload()
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.bordered)
                     .controlSize(.small)
 
                     Button {
