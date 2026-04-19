@@ -35,11 +35,21 @@ final class CachedEvent {
     /// 日历颜色（十六进制）
     var calendarColorHex: String
     
-    /// 是否为订阅日历
-    var isSubscription: Bool
+    /// 事件分类
+    var categoryRaw: String
     
     /// 缓存更新时间
     var lastUpdated: Date
+    
+    var category: EventCategory {
+        get { EventCategory(rawValue: categoryRaw) ?? .system }
+        set { categoryRaw = newValue.rawValue }
+    }
+    
+    /// 是否为订阅日历
+    var isSubscription: Bool {
+        category == .subscription
+    }
     
     init(
         eventID: String,
@@ -50,7 +60,7 @@ final class CachedEvent {
         calendarID: String,
         calendarTitle: String,
         calendarColorHex: String,
-        isSubscription: Bool
+        category: EventCategory = .system
     ) {
         self.eventID = eventID
         self.title = title
@@ -60,7 +70,7 @@ final class CachedEvent {
         self.calendarID = calendarID
         self.calendarTitle = calendarTitle
         self.calendarColorHex = calendarColorHex
-        self.isSubscription = isSubscription
+        self.categoryRaw = category.rawValue
         self.lastUpdated = Date()
     }
 }
@@ -225,7 +235,7 @@ final class EventCacheService {
                     calendarID: calendarID,
                     calendarTitle: event.calendarTitle,
                     calendarColorHex: event.calendarColorHex,
-                    isSubscription: event.isSubscription
+                    category: event.category
                 )
                 context.insert(cached)
             }

@@ -203,7 +203,7 @@ final class CalendarService {
     // MARK: - Helpers
 
     private func mapToCalendarEvent(_ ekEvent: EKEvent) -> CalendarEvent {
-        let isSubscription = ekEvent.calendar.type == .subscription
+        let category: EventCategory = ekEvent.calendar.type == .subscription ? .subscription : .system
         return CalendarEvent(
             id: ekEvent.eventIdentifier,
             title: ekEvent.title ?? "",
@@ -212,8 +212,7 @@ final class CalendarService {
             isAllDay: ekEvent.isAllDay,
             calendarTitle: ekEvent.calendar.title,
             calendarColorHex: ekEvent.calendar.cgColor?.hexString ?? "#007AFF",
-            source: .system,
-            isSubscription: isSubscription
+            category: category
         )
     }
     
@@ -226,8 +225,7 @@ final class CalendarService {
             isAllDay: cached.isAllDay,
             calendarTitle: cached.calendarTitle,
             calendarColorHex: cached.calendarColorHex,
-            source: .system,
-            isSubscription: cached.isSubscription
+            category: cached.category
         )
     }
 

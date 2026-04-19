@@ -17,14 +17,39 @@ struct SwallowCalendarApp: App {
             CustomCalendarSource.self,
             CachedEvent.self,
         ])
+        
+        // 尝试迁移旧数据
+        DatabaseMigrator.migrateIfNeeded()
+        
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            let container = try ModelContainer(for: schema, configurations: [modelConfiguration])
+            // 恢复迁移的数据
+            DatabaseMigrator.restoreMigratedData(to: container)
+            return container
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            // 迁移失败，尝试清理后重建
+            print("[SwiftData] 创建容器失败，清理后重试: \(error)")
+            Self.cleanupAndRetry()
+            let memoryConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            return try! ModelContainer(for: schema, configurations: [memoryConfig])
         }
     }()
+    
+    private static func cleanupAndRetry() {
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let dbFolder = appSupport.appendingPathComponent("SwallowCalendar")
+        
+        let storeFile = dbFolder.appendingPathComponent("Store.sqlite")
+        let shmFile = dbFolder.appendingPathComponent("Store.sqlite-shm")
+        let walFile = dbFolder.appendingPathComponent("Store.sqlite-wal")
+        
+        try? FileManager.default.removeItem(at: storeFile)
+        try? FileManager.default.removeItem(at: shmFile)
+        try? FileManager.default.removeItem(at: walFile)
+        print("[SwiftData] 已清理损坏的数据库")
+    }
 
     var body: some Scene {
         MenuBarExtra {

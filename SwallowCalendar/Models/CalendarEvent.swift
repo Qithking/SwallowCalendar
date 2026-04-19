@@ -60,6 +60,15 @@ enum EventColor: String, CaseIterable {
     }
 }
 
+// MARK: - Event Category
+
+/// 事件分类
+enum EventCategory: String, CaseIterable {
+    case system = "系统"       // 系统日历
+    case subscription = "订阅" // 订阅日历
+    case user = "用户"         // 用户创建的事件
+}
+
 // MARK: - CalendarEvent
 
 /// 统一事件展示模型，用于 UI 展示
@@ -71,13 +80,12 @@ struct CalendarEvent: Identifiable {
     let isAllDay: Bool
     let calendarTitle: String
     let calendarColorHex: String
-    let source: EventSource
+    /// 事件分类：系统、订阅、用户
+    let category: EventCategory
+    
     /// 是否为订阅日历（订阅日历不在用户事件列表中显示）
-    let isSubscription: Bool
-
-    enum EventSource {
-        case system       // 系统日历
-        case customICS    // 自定义ICS
+    var isSubscription: Bool {
+        category == .subscription
     }
 
     /// 是否有明确的开始时间（非全天事件）
