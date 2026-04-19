@@ -45,11 +45,7 @@ struct AboutSettingsView: View {
             }
 
             // 作者与项目信息
-            VStack(spacing: 4) {
-                Text("作者: Qithking")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-
+            VStack(spacing: 4) {               
                 HStack(spacing: 16) {
                     Button {
                         if let url = URL(string: "https://github.com/Qithking") {
@@ -59,7 +55,7 @@ struct AboutSettingsView: View {
                         HStack(spacing: 4) {
                             Image(systemName: "person.circle.fill")
                                 .font(.system(size: 12))
-                            Text("作者主页")
+                            Text("Qithking")
                                 .font(.system(size: 12))
                         }
                         .foregroundColor(.accentColor)
@@ -87,9 +83,6 @@ struct AboutSettingsView: View {
                 }
             }
 
-            Divider()
-                .frame(width: 200)
-
             // 检查更新按钮
             Button {
                 checkForUpdates()
@@ -107,6 +100,33 @@ struct AboutSettingsView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(updateChecker.isChecking)
+
+            // 新版本信息
+            if updateChecker.updateAvailable {
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("新版本: v\(updateChecker.latestVersion)")
+                            .font(.system(size: 12, weight: .medium))
+
+                        if !updateChecker.releaseNotes.isEmpty {
+                            Text(updateChecker.releaseNotes)
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11))
+                        Text("发现新版本: v\(updateChecker.latestVersion)")
+                            .font(.system(size: 12))
+                    }
+                    .foregroundColor(.green)
+                }
+            }
 
             Spacer()
         }
@@ -143,7 +163,7 @@ struct AboutSettingsView: View {
             // 检查完成后处理结果
             try? await Task.sleep(nanoseconds: 500_000_000) // 等待状态更新
 
-            if let error = updateChecker.errorMessage {
+            if updateChecker.errorMessage != nil {
                 showErrorAlert = true
             } else if updateChecker.updateAvailable {
                 showUpdateAlert = true

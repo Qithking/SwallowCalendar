@@ -181,21 +181,38 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         closeDownloadWindow()
     }
 
+    func retryDownload() {
+        downloadLatestRelease()
+    }
+
+    func copyDownloadUrl() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(releaseUrl, forType: .string)
+    }
+
     private func showDownloadWindowPanel() {
         let progressView = NSHostingView(rootView: DownloadProgressView(updateChecker: self))
-        progressView.frame = NSRect(x: 0, y: 0, width: 340, height: 160)
+        progressView.frame = NSRect(x: 0, y: 0, width: 360, height: 120)
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: 160),
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
         window.title = "下载更新"
         window.contentView = progressView
-        window.center()
-        window.isReleasedWhenClosed = false
 
+        // 在当前前台窗口所在屏幕居中显示
+        if let keyWindow = NSApp.keyWindow, let screen = keyWindow.screen {
+            window.setFrameOrigin(screen.frame.origin)
+            window.center()
+        } else {
+            window.center()
+        }
+
+        window.isReleasedWhenClosed = false
         window.delegate = self
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -212,7 +229,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
 
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         Task { @MainActor in
-            guard let originalUrl = downloadTask.originalRequest?.url else { return }
+            guard downloadTask.originalRequest?.url != nil else { return }
 
             do {
                 let fileManager = FileManager.default
@@ -256,7 +273,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
             if let error = error {
                 downloadError = "下载失败: \(error.localizedDescription)"
                 isDownloading = false
-                closeDownloadWindow()
+                // 不关闭窗口，保留错误信息让用户选择重试或复制链接
             }
         }
     }
@@ -278,32 +295,68 @@ struct DownloadProgressView: View {
     @ObservedObject var updateChecker: UpdateChecker
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text("正在下载 SwallowCalendar v\(updateChecker.latestVersion)")
-                .font(.headline)
+        VStack(spacing: 12) {
+            // 第一行：图标 + 标题
+            HStack(spacing: 12) {
+                Image("AppIcon")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 32, height: 32)
 
-            ProgressView(value: updateChecker.downloadProgress)
-                .progressViewStyle(.linear)
-                .frame(width: 280)
+                Text("正在下载 SwallowCalendar v\(updateChecker.latestVersion)")
+                    .font(.system(size: 13, weight: .medium))
 
-            Text("\(Int(updateChecker.downloadProgress * 100))%")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                Spacer()
+            }
 
+            // 第二行：进度条 + 百分比
+            HStack(spacing: 12) {
+                ProgressView(value: updateChecker.downloadProgress)
+                    .progressViewStyle(.linear)
+                    .frame(maxWidth: .infinity)
+
+                Text("\(Int(updateChecker.downloadProgress * 100))%")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .frame(width: 40, alignment: .trailing)
+            }
+
+            // 第三行：错误信息（如果有）
             if let error = updateChecker.downloadError {
                 Text(error)
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundColor(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            HStack(spacing: 12) {
-                Button("取消") {
-                    updateChecker.cancelDownload()
+            // 第四行：按钮组（靠右）
+            HStack {
+                Spacer()
+
+                if updateChecker.downloadError != nil {
+                    Button("重试") {
+                        updateChecker.downloadLatestRelease()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("复制链接") {
+                        updateChecker.copyDownloadUrl()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("取消") {
+                        updateChecker.cancelDownload()
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    Button("取消") {
+                        updateChecker.cancelDownload()
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.bordered)
             }
         }
-        .padding(24)
-        .frame(width: 340)
+        .padding(16)
+        .frame(width: 360, height: 120)
     }
 }
