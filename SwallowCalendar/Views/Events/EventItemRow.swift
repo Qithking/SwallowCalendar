@@ -97,7 +97,7 @@ struct EventItemRow: View {
             Spacer()
 
             // 悬停时显示操作按钮
-            if isHovered && !event.isCompleted {
+            if isHovered {
                 HStack(spacing: 4) {
                     if onEdit != nil {
                         Button {
