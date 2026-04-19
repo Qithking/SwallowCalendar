@@ -13,7 +13,7 @@ struct CalendarDayCell: View {
     let isToday: Bool
     let isCurrentMonth: Bool
     let lunarText: String
-    let holidayNames: [String]
+    let subscriptionTitles: [String]
     let eventCount: Int
     let isHovered: Bool
     var eventTitles: [String] = []
@@ -29,17 +29,17 @@ struct CalendarDayCell: View {
                 .font(.system(size: 12, weight: isSelected ? .bold : .regular))
                 .foregroundColor(dayTextColor)
 
-            // 农历/节假日
-            if appSettings.showLunarCalendar {
-                Text(holidayNames.first ?? lunarText)
-                    .font(.system(size: 7))
-                    .foregroundColor(holidayTextColor)
-                    .lineLimit(1)
-            } else if !holidayNames.isEmpty {
-                Text(holidayNames.first ?? "")
-                    .font(.system(size: 7))
-                    .foregroundColor(holidayTextColor)
-                    .lineLimit(1)
+                // 农历/订阅事件
+                if appSettings.showLunarCalendar {
+                    Text(subscriptionTitles.first ?? lunarText)
+                        .font(.system(size: 7))
+                        .foregroundColor(subscriptionTextColor)
+                        .lineLimit(1)
+                } else if !subscriptionTitles.isEmpty {
+                    Text(subscriptionTitles.first ?? "")
+                        .font(.system(size: 7))
+                        .foregroundColor(subscriptionTextColor)
+                        .lineLimit(1)
             } else {
                 Text("")
                     .font(.system(size: 7))
@@ -74,7 +74,7 @@ struct CalendarDayCell: View {
     // MARK: - Popover
 
     private var hasPopoverContent: Bool {
-        !holidayNames.isEmpty || !eventTitles.isEmpty
+        !subscriptionTitles.isEmpty || !eventTitles.isEmpty
     }
 
     private var popoverContent: some View {
@@ -83,10 +83,10 @@ struct CalendarDayCell: View {
             Text(dateString)
                 .font(.system(size: 12, weight: .semibold))
 
-            // 节假日（去重，保持顺序）
-            let uniqueHolidays = holidayNames.uniqued()
-            if !uniqueHolidays.isEmpty {
-                ForEach(Array(uniqueHolidays.enumerated()), id: \.offset) { _, name in
+            // 订阅事件（去重，保持顺序）
+            let uniqueSubscriptions = subscriptionTitles.uniqued()
+            if !uniqueSubscriptions.isEmpty {
+                ForEach(Array(uniqueSubscriptions.enumerated()), id: \.offset) { _, name in
                     HStack(spacing: 4) {
                         Circle()
                             .fill(.red)
@@ -132,9 +132,9 @@ struct CalendarDayCell: View {
         return .primary
     }
 
-    private var holidayTextColor: Color {
+    private var subscriptionTextColor: Color {
         if !isCurrentMonth { return .secondary.opacity(0.3) }
-        if !holidayNames.isEmpty { return .red }
+        if !subscriptionTitles.isEmpty { return .red }
         return .secondary
     }
 

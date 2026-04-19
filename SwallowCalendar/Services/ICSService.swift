@@ -9,8 +9,8 @@ import Foundation
 final class ICSService {
     static let shared = ICSService()
 
-    /// 缓存：日期 -> 节假日名称列表
-    private var holidayCache: [String: [String]] = [:]
+    /// 缓存：日期 -> [(来源URL, 事件名称)]
+    private var subscriptionCache: [String: [(sourceURL: String, eventName: String)]] = [:]
     private var lastFetchDate: Date?
 
     private init() {}
@@ -83,18 +83,18 @@ final class ICSService {
         return events
     }
 
-    // MARK: - Holiday Lookup
+    // MARK: - Subscription Lookup
 
-    /// 获取某天的节假日信息
-    func holidayName(for date: Date, sources: [CustomCalendarSource]) async -> [String] {
+    /// 获取某天的订阅日历事件
+    func subscriptionEvents(for date: Date, sources: [CustomCalendarSource]) async -> [String] {
         let dateKey = formatDateKey(date)
 
         // 如果缓存有效且来源未变，直接返回
-        if let cached = holidayCache[dateKey] {
-            return cached
+        if let cached = subscriptionCache[dateKey], !cached.isEmpty {
+            return cached.map { $0.eventName }
         }
 
-        var holidays: [String] = []
+        var subscriptions: [(sourceURL: String, eventName: String)] = []
 
         for source in sources where source.isEnabled {
             let events: [ICSEvent]
@@ -112,29 +112,33 @@ final class ICSService {
                 if let eventStart = event.startDate {
                     let eventKey = formatDateKey(eventStart)
                     if eventKey == dateKey {
-                        holidays.append(event.summary)
+                        subscriptions.append((sourceURL: source.icsURL, eventName: event.summary))
                     }
                 }
             }
         }
 
-        holidayCache[dateKey] = holidays
-        return holidays
+        subscriptionCache[dateKey] = subscriptions
+        return subscriptions.map { $0.eventName }
     }
 
-    /// 同步版本：基于已缓存数据查询
-    func holidayNameSync(for date: Date) -> [String] {
+    /// 同步版本：基于已缓存数据查询，根据启用的源过滤
+    func subscriptionEventsSync(for date: Date, sources: [CustomCalendarSource]) -> [String] {
         let dateKey = formatDateKey(date)
-        let holidays = holidayCache[dateKey] ?? []
-        if !holidays.isEmpty {
-            print("[ICSService] holidayNameSync(\(dateKey)): \(holidays)")
+        let allEvents = subscriptionCache[dateKey] ?? []
+        // 只返回启用的日历源的事件
+        let enabledSourceURLs = Set(sources.filter { $0.isEnabled }.map { $0.icsURL })
+        let filtered = allEvents.filter { enabledSourceURLs.contains($0.sourceURL) }
+        let events = filtered.map { $0.eventName }
+        if !events.isEmpty {
+            print("[ICSService] subscriptionEventsSync(\(dateKey)): \(events)")
         }
-        return holidays
+        return events
     }
 
-    /// 预加载节假日数据
-    func preloadHolidays(sources: [CustomCalendarSource]) async {
-        print("[ICSService] 开始预加载节假日数据, sources=\(sources.count)")
+    /// 预加载订阅日历数据
+    func preloadSubscriptions(sources: [CustomCalendarSource]) async {
+        print("[ICSService] 开始预加载订阅日历数据, sources=\(sources.count)")
         for source in sources where source.isEnabled {
             print("[ICSService] 加载日历源: \(source.name), URL: \(source.icsURL)")
             let events: [ICSEvent]
@@ -154,11 +158,11 @@ final class ICSService {
             for event in events {
                 if let start = event.startDate {
                     let key = formatDateKey(start)
-                    holidayCache[key, default: []].append(event.summary)
+                    subscriptionCache[key, default: []].append((sourceURL: source.icsURL, eventName: event.summary))
                 }
             }
         }
-        print("[ICSService] 预加载完成, 缓存条目数: \(holidayCache.count)")
+        print("[ICSService] 预加载完成, 缓存条目数: \(subscriptionCache.count)")
     }
 
     // MARK: - ICS Date Parsing

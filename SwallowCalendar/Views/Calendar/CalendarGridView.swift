@@ -16,7 +16,7 @@ struct CalendarGridView: View {
 
     @State private var currentMonth = Date()
     @State private var hoveredDate: Date?
-    @State private var holidaysLoaded = false  // 用于触发节假日数据刷新
+    @State private var subscriptionsLoaded = false  // 用于触发订阅日历数据刷新
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     private let calendar = Calendar.current
@@ -55,10 +55,10 @@ struct CalendarGridView: View {
         .padding(.vertical, 4)
         .tint(Color(hex: appSettings.accentColorHex))
         .task {
-            // 预加载节假日数据
-            await icsService.preloadHolidays(sources: customSources)
-            holidaysLoaded = true
-            print("[CalendarGridView] 节假日数据预加载完成")
+            // 预加载订阅日历数据
+            await icsService.preloadSubscriptions(sources: customSources)
+            subscriptionsLoaded = true
+            print("[CalendarGridView] 订阅日历数据预加载完成")
         }
     }
 
@@ -81,8 +81,8 @@ struct CalendarGridView: View {
     private var dateGrid: some View {
         let days = daysInMonth()
         let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
-        // 使用 holidaysLoaded 触发节假日数据重新计算
-        _ = holidaysLoaded
+        // 使用 subscriptionsLoaded 触发订阅日历数据重新计算
+        _ = subscriptionsLoaded
 
         return LazyVGrid(columns: columns, spacing: 2) {
             ForEach(days, id: \.self) { date in
@@ -92,7 +92,7 @@ struct CalendarGridView: View {
                     isToday: calendar.isDateInToday(date),
                     isCurrentMonth: calendar.isDate(date, equalTo: currentMonth, toGranularity: .month),
                     lunarText: LunarCalendarHelper.lunarString(for: date),
-                    holidayNames: icsService.holidayNameSync(for: date),
+                    subscriptionTitles: icsService.subscriptionEventsSync(for: date, sources: customSources),
                     eventCount: eventCount(for: date),
                     isHovered: hoveredDate.flatMap { calendar.isDate(date, inSameDayAs: $0) } ?? false,
                     eventTitles: allEventTitles(for: date),

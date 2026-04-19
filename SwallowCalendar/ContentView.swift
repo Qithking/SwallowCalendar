@@ -134,7 +134,7 @@ struct ContentView: View {
         }
 
         // 预加载节假日数据
-        await icsService.preloadHolidays(sources: customSources)
+        await icsService.preloadSubscriptions(sources: customSources)
     }
     
     /// 后台同步日历事件到本地缓存
