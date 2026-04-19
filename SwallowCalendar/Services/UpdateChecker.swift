@@ -200,22 +200,28 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     }
 
     private func showDownloadWindowPanel() {
+        // 关闭已有窗口
+        closeDownloadWindow()
+        
         let progressView = NSHostingView(rootView: DownloadProgressView(updateChecker: self))
-        progressView.frame = NSRect(x: 0, y: 0, width: 400, height: 80)
+        progressView.frame = NSRect(x: 0, y: 0, width: 420, height: 140)
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 80),
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 140),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
         window.title = "下载更新"
         window.contentView = progressView
+        window.level = .floating // 确保窗口在最前面
 
         // 在当前前台窗口所在屏幕居中显示
         if let keyWindow = NSApp.keyWindow, let screen = keyWindow.screen {
-            window.setFrameOrigin(screen.frame.origin)
-            window.center()
+            let screenFrame = screen.visibleFrame
+            let windowX = screenFrame.origin.x + (screenFrame.width - 420) / 2
+            let windowY = screenFrame.origin.y + (screenFrame.height - 140) / 2
+            window.setFrameOrigin(NSPoint(x: windowX, y: windowY))
         } else {
             window.center()
         }
@@ -241,10 +247,25 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
 
             do {
                 let fileManager = FileManager.default
-                let downloadsFolder = fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+                
+                // 检查临时文件是否存在
+                guard fileManager.fileExists(atPath: location.path) else {
+                    downloadError = "下载文件不存在，请重试"
+                    isDownloading = false
+                    return
+                }
+                
+                // 获取下载目录
+                guard let downloadsFolder = fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
+                    downloadError = "无法访问下载文件夹"
+                    isDownloading = false
+                    return
+                }
+                
                 let fileName = "SwallowCalendar-\(latestVersion).zip"
                 let destinationUrl = downloadsFolder.appendingPathComponent(fileName)
 
+                // 删除已存在的同名文件
                 if fileManager.fileExists(atPath: destinationUrl.path) {
                     try fileManager.removeItem(at: destinationUrl)
                 }
@@ -261,9 +282,9 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
                 // 打开下载文件夹
                 NSWorkspace.shared.selectFile(destinationUrl.path, inFileViewerRootedAtPath: downloadsFolder.path)
             } catch {
-                downloadError = "保存文件失败: \(error.localizedDescription)"
+                downloadError = "保存失败: \(error.localizedDescription)"
                 isDownloading = false
-                closeDownloadWindow()
+                // 不关闭窗口，保留错误信息让用户选择重试或复制链接
             }
         }
     }
@@ -301,65 +322,109 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
 
 struct DownloadProgressView: View {
     @ObservedObject var updateChecker: UpdateChecker
+    @State private var showErrorPopover = false
 
     var body: some View {
         VStack(spacing: 0) {
             // 上面一行：图标 + 进度条（内嵌百分比）
-            HStack(spacing: 12) {
+            HStack(spacing: 16) {
                 if let appIcon = NSImage(named: "AppIcon") {
                     Image(nsImage: appIcon)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 40, height: 40)
                 } else {
                     Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 28))
+                        .font(.system(size: 36))
                         .foregroundColor(.accentColor)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 40, height: 40)
                 }
 
                 ProgressView(value: updateChecker.downloadProgress) {
                     Text("正在下载 SwallowCalendar v\(updateChecker.latestVersion)")
-                        .font(.system(size: 12))
+                        .font(.system(size: 13))
                 }
                 .progressViewStyle(.linear)
                 .frame(maxWidth: .infinity)
 
                 Text("\(Int(updateChecker.downloadProgress * 100))%")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.secondary)
-                    .frame(width: 44, alignment: .trailing)
+                    .frame(width: 48, alignment: .trailing)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
 
             Divider()
 
-            // 下面一行：错误信息/成功提示 + 取消按钮
+            // 下面一行：错误信息/成功提示 + 操作按钮
             HStack {
                 if let error = updateChecker.downloadError {
-                    Text(error)
-                        .font(.system(size: 11))
-                        .foregroundColor(.red)
+                    ErrorTextView(message: error, showPopover: $showErrorPopover)
                 } else if updateChecker.downloadProgress >= 1.0 {
                     Text("下载完成")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundColor(.green)
                 } else {
                     Text("")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                 }
 
                 Spacer()
+
+                if updateChecker.downloadError != nil {
+                    Button("重试") {
+                        updateChecker.retryDownload()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+
+                    Button("复制链接") {
+                        updateChecker.copyDownloadUrl()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
 
                 Button("取消") {
                     updateChecker.cancelDownload()
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.small)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
         }
-        .frame(width: 400, height: 80)
+        .frame(width: 420, height: 140)
+    }
+}
+
+// MARK: - Error Text View with Popover
+
+struct ErrorTextView: View {
+    let message: String
+    @Binding var showPopover: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        Text(message)
+            .font(.system(size: 12))
+            .foregroundColor(.red)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .help(message)
+            .onHover { hovering in
+                isHovering = hovering
+            }
+            .popover(isPresented: $isHovering, arrowEdge: .bottom) {
+                ScrollView {
+                    Text(message)
+                        .font(.system(size: 12))
+                        .foregroundColor(.primary)
+                        .padding(8)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: 300, maxHeight: 150)
+            }
     }
 }
