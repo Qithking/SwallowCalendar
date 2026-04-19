@@ -31,17 +31,12 @@ struct CalendarDayCell: View {
                 .font(.system(size: 12, weight: isSelected ? .bold : .regular))
                 .foregroundColor(dayTextColor)
 
-                // 农历/订阅事件
-                if appSettings.showLunarCalendar {
-                    Text(subscriptionTitles.first ?? lunarText)
-                        .font(.system(size: 7))
-                        .foregroundColor(subscriptionTextColor)
-                        .lineLimit(1)
-                } else if !subscriptionTitles.isEmpty {
-                    Text(subscriptionTitles.first ?? "")
-                        .font(.system(size: 7))
-                        .foregroundColor(subscriptionTextColor)
-                        .lineLimit(1)
+            // 农历（仅显示农历，不显示订阅事件名称）
+            if appSettings.showLunarCalendar {
+                Text(lunarText)
+                    .font(.system(size: 7))
+                    .foregroundColor(lunarTextColor)
+                    .lineLimit(1)
             } else {
                 Text("")
                     .font(.system(size: 7))
@@ -49,18 +44,18 @@ struct CalendarDayCell: View {
             }
 
             // 事件标记
-            HStack(spacing: 2) {
+            HStack(spacing: 3) {
                 // 系统日历事件小圆点
                 if eventCount > 0 {
                     Circle()
                         .fill(systemCalendarColor)
-                        .frame(width: 3, height: 3)
+                        .frame(width: 5, height: 5)
                 }
                 // 订阅日历事件小圆点
                 if !subscriptionTitles.isEmpty {
                     Circle()
                         .fill(subscriptionCalendarColor)
-                        .frame(width: 3, height: 3)
+                        .frame(width: 5, height: 5)
                 }
             }
         }
@@ -143,9 +138,8 @@ struct CalendarDayCell: View {
         return .primary
     }
 
-    private var subscriptionTextColor: Color {
+    private var lunarTextColor: Color {
         if !isCurrentMonth { return .secondary.opacity(0.3) }
-        if !subscriptionTitles.isEmpty { return .red }
         return .secondary
     }
 
