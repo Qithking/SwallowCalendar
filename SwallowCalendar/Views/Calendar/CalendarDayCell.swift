@@ -18,6 +18,8 @@ struct CalendarDayCell: View {
     let isHovered: Bool
     var eventTitles: [String] = []
     var eventColors: [String] = []
+    var systemCalendarColor: Color = Color(hex: "#007AFF")
+    var subscriptionCalendarColor: Color = Color(hex: "#FF9500")
 
     @State private var showPopover = false
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
@@ -47,10 +49,19 @@ struct CalendarDayCell: View {
             }
 
             // 事件标记
-            if eventCount > 0 {
-                Circle()
-                    .fill(accentColor)
-                    .frame(width: 3, height: 3)
+            HStack(spacing: 2) {
+                // 系统日历事件小圆点
+                if eventCount > 0 {
+                    Circle()
+                        .fill(systemCalendarColor)
+                        .frame(width: 3, height: 3)
+                }
+                // 订阅日历事件小圆点
+                if !subscriptionTitles.isEmpty {
+                    Circle()
+                        .fill(subscriptionCalendarColor)
+                        .frame(width: 3, height: 3)
+                }
             }
         }
         .frame(height: 38)
@@ -89,7 +100,7 @@ struct CalendarDayCell: View {
                 ForEach(Array(uniqueSubscriptions.enumerated()), id: \.offset) { _, name in
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(.red)
+                            .fill(subscriptionCalendarColor)
                             .frame(width: 6, height: 6)
                         Text(name)
                             .font(.system(size: 11))
@@ -103,7 +114,7 @@ struct CalendarDayCell: View {
                 ForEach(Array(uniqueEvents.enumerated()), id: \.offset) { _, title in
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(accentColor)
+                            .fill(systemCalendarColor)
                             .frame(width: 6, height: 6)
                         Text(title)
                             .font(.system(size: 11))

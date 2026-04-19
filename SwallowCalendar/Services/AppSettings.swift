@@ -61,6 +61,20 @@ final class AppSettings {
         }
     }
 
+    /// 系统日历分类颜色
+    var systemCalendarColorHex: String {
+        didSet {
+            UserDefaults.standard.set(systemCalendarColorHex, forKey: "systemCalendarColorHex")
+        }
+    }
+
+    /// 自定义日历分类颜色
+    var subscriptionCalendarColorHex: String {
+        didSet {
+            UserDefaults.standard.set(subscriptionCalendarColorHex, forKey: "subscriptionCalendarColorHex")
+        }
+    }
+
     var colorScheme: ColorScheme? {
         switch themeMode {
         case .light: return .light
@@ -91,6 +105,8 @@ final class AppSettings {
         self.weekdayStart = UserDefaults.standard.object(forKey: "weekdayStart") as? Int ?? 2
         self.showLunarCalendar = UserDefaults.standard.object(forKey: "showLunarCalendar") as? Bool ?? true
         self.accentColorHex = UserDefaults.standard.string(forKey: "accentColorHex") ?? "#007AFF"
+        self.systemCalendarColorHex = UserDefaults.standard.string(forKey: "systemCalendarColorHex") ?? "#007AFF"
+        self.subscriptionCalendarColorHex = UserDefaults.standard.string(forKey: "subscriptionCalendarColorHex") ?? "#FF9500"
     }
 
     private func updateLaunchAtLogin() {

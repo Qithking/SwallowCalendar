@@ -96,7 +96,9 @@ struct CalendarGridView: View {
                     eventCount: eventCount(for: date),
                     isHovered: hoveredDate.flatMap { calendar.isDate(date, inSameDayAs: $0) } ?? false,
                     eventTitles: allEventTitles(for: date),
-                    eventColors: allEventColors(for: date)
+                    eventColors: allEventColors(for: date),
+                    systemCalendarColor: systemCalendarColor(),
+                    subscriptionCalendarColor: subscriptionCalendarColor()
                 )
                 .onTapGesture {
                     withAnimation(.easeInOut(duration: 0.15)) {
@@ -198,5 +200,15 @@ struct CalendarGridView: View {
         // 优先从缓存获取
         let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
         return events.filter { !$0.isSubscription }.map { $0.calendarColorHex }
+    }
+
+    /// 获取系统日历分类颜色
+    private func systemCalendarColor() -> Color {
+        return Color(hex: appSettings.systemCalendarColorHex)
+    }
+
+    /// 获取自定义日历分类颜色
+    private func subscriptionCalendarColor() -> Color {
+        return Color(hex: appSettings.subscriptionCalendarColorHex)
     }
 }

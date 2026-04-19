@@ -29,6 +29,14 @@ struct CalendarSettingsView: View {
             // 日历分类
             // 日历分类
             Section("系统日历分类") {
+                ColorPicker("分类颜色", selection: Binding(
+                    get: { Color(hex: settings.systemCalendarColorHex) },
+                    set: { settings.systemCalendarColorHex = $0.toHex() ?? settings.systemCalendarColorHex }
+                ))
+                    .font(.system(size: 12))
+
+                Divider()
+
                 if calendarService.calendars.isEmpty {
                     Text("暂无可用的日历")
                         .foregroundColor(.secondary)
@@ -58,6 +66,14 @@ struct CalendarSettingsView: View {
 
             // 自定义日历
             Section("自定义日历 (ICS)") {
+                ColorPicker("分类颜色", selection: Binding(
+                    get: { Color(hex: settings.subscriptionCalendarColorHex) },
+                    set: { settings.subscriptionCalendarColorHex = $0.toHex() ?? settings.subscriptionCalendarColorHex }
+                ))
+                    .font(.system(size: 12))
+
+                Divider()
+
                 ForEach(customSources, id: \.id) { source in
                     HStack(spacing: 6) {
                         Toggle("", isOn: Binding(
