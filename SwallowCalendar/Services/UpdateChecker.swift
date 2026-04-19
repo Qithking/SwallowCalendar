@@ -158,16 +158,22 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     }
 
     func downloadLatestRelease() {
-        guard let url = URL(string: releaseUrl) else {
+        guard URL(string: releaseUrl) != nil else {
             downloadError = "无效的下载链接"
             return
         }
-        pendingDownloadUrl = url
         downloadProgress = 0
         downloadError = nil
         isDownloading = true
         showDownloadWindow = true
         showDownloadWindowPanel()
+        startDownload()
+    }
+
+    private func startDownload() {
+        guard let url = URL(string: releaseUrl) else { return }
+        pendingDownloadUrl = url
+        downloadTask?.cancel()
         downloadTask = downloadSession?.downloadTask(with: url)
         downloadTask?.resume()
     }
@@ -182,7 +188,9 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     }
 
     func retryDownload() {
-        downloadLatestRelease()
+        downloadError = nil
+        isDownloading = true
+        startDownload()
     }
 
     func copyDownloadUrl() {
@@ -193,10 +201,10 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
 
     private func showDownloadWindowPanel() {
         let progressView = NSHostingView(rootView: DownloadProgressView(updateChecker: self))
-        progressView.frame = NSRect(x: 0, y: 0, width: 360, height: 120)
+        progressView.frame = NSRect(x: 0, y: 0, width: 400, height: 80)
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 80),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -295,68 +303,63 @@ struct DownloadProgressView: View {
     @ObservedObject var updateChecker: UpdateChecker
 
     var body: some View {
-        VStack(spacing: 12) {
-            // 第一行：图标 + 标题
+        VStack(spacing: 0) {
+            // 上面一行：图标 + 进度条（内嵌百分比）
             HStack(spacing: 12) {
-                Image("AppIcon")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 32, height: 32)
+                if let appIcon = NSImage(named: "AppIcon") {
+                    Image(nsImage: appIcon)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 32, height: 32)
+                } else {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 28))
+                        .foregroundColor(.accentColor)
+                        .frame(width: 32, height: 32)
+                }
 
-                Text("正在下载 SwallowCalendar v\(updateChecker.latestVersion)")
-                    .font(.system(size: 13, weight: .medium))
-
-                Spacer()
-            }
-
-            // 第二行：进度条 + 百分比
-            HStack(spacing: 12) {
-                ProgressView(value: updateChecker.downloadProgress)
-                    .progressViewStyle(.linear)
-                    .frame(maxWidth: .infinity)
+                ProgressView(value: updateChecker.downloadProgress) {
+                    Text("正在下载 SwallowCalendar v\(updateChecker.latestVersion)")
+                        .font(.system(size: 12))
+                }
+                .progressViewStyle(.linear)
+                .frame(maxWidth: .infinity)
 
                 Text("\(Int(updateChecker.downloadProgress * 100))%")
-                    .font(.system(size: 11))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.secondary)
-                    .frame(width: 40, alignment: .trailing)
+                    .frame(width: 44, alignment: .trailing)
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
 
-            // 第三行：错误信息（如果有）
-            if let error = updateChecker.downloadError {
-                Text(error)
-                    .font(.system(size: 11))
-                    .foregroundColor(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            Divider()
 
-            // 第四行：按钮组（靠右）
+            // 下面一行：错误信息/成功提示 + 取消按钮
             HStack {
+                if let error = updateChecker.downloadError {
+                    Text(error)
+                        .font(.system(size: 11))
+                        .foregroundColor(.red)
+                } else if updateChecker.downloadProgress >= 1.0 {
+                    Text("下载完成")
+                        .font(.system(size: 11))
+                        .foregroundColor(.green)
+                } else {
+                    Text("")
+                        .font(.system(size: 11))
+                }
+
                 Spacer()
 
-                if updateChecker.downloadError != nil {
-                    Button("重试") {
-                        updateChecker.downloadLatestRelease()
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("复制链接") {
-                        updateChecker.copyDownloadUrl()
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("取消") {
-                        updateChecker.cancelDownload()
-                    }
-                    .buttonStyle(.bordered)
-                } else {
-                    Button("取消") {
-                        updateChecker.cancelDownload()
-                    }
-                    .buttonStyle(.borderedProminent)
+                Button("取消") {
+                    updateChecker.cancelDownload()
                 }
+                .buttonStyle(.bordered)
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
         }
-        .padding(16)
-        .frame(width: 360, height: 120)
+        .frame(width: 400, height: 80)
     }
 }
