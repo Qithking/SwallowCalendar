@@ -78,6 +78,7 @@ struct DataExportSettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .tint(Color(hex: appSettings.accentColorHex))
         .alert("导出成功", isPresented: $showExportSuccess) {
             Button("确定") {}
         } message: {

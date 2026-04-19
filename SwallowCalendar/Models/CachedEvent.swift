@@ -169,12 +169,13 @@ final class EventCacheService {
         
         print("[EventCache] 开始同步 \(calendars.count) 个日历的事件")
         
-        // 同步未来2年的事件
+        // 同步过去1年和未来2年的事件
         let now = Date()
-        let endDate = Calendar.current.date(byAdding: .year, value: 2, to: now)!
+        let startDate = Calendar.current.date(byAdding: .year, value: -1, to: now)!
+        let endDate = Calendar.current.date(byAdding: .year, value: 2, to:now)!
         
         // 从系统日历获取事件
-        let systemEvents = calendarService.fetchEvents(from: now, to: endDate, calendars: calendars)
+        let systemEvents = calendarService.fetchEvents(from: startDate, to: endDate, calendars: calendars)
         print("[EventCache] 从系统获取到 \(systemEvents.count) 个事件")
         
         // 获取现有的缓存事件ID

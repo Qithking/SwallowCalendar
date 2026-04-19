@@ -108,6 +108,7 @@ struct CalendarSettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .tint(Color(hex: appSettings.accentColorHex))
         .task {
             calendarService.loadCalendars()
         }

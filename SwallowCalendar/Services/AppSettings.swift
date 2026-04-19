@@ -57,6 +57,7 @@ final class AppSettings {
     var accentColorHex: String {
         didSet {
             UserDefaults.standard.set(accentColorHex, forKey: "accentColorHex")
+            StatusBarIconManager.shared.updateIcon()
         }
     }
 

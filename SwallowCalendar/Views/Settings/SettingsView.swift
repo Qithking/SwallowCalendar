@@ -6,6 +6,8 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @Environment(AppSettings.self) private var appSettings
+    
     var body: some View {
         TabView {
             GeneralSettingsView()
@@ -29,5 +31,6 @@ struct SettingsView: View {
                 }
         }
         .frame(minWidth: 450, minHeight: 400)
+        .tint(Color(hex: appSettings.accentColorHex))
     }
 }

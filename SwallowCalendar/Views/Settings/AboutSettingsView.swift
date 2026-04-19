@@ -7,6 +7,7 @@ import SwiftUI
 import AppKit
 
 struct AboutSettingsView: View {
+    @Environment(AppSettings.self) private var appSettings
     @StateObject private var updateChecker = UpdateChecker.shared
 
     var body: some View {
@@ -122,6 +123,7 @@ struct AboutSettingsView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
+        .tint(Color(hex: appSettings.accentColorHex))
     }
 
     private func checkForUpdates() {

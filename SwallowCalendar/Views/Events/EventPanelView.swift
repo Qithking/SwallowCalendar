@@ -12,7 +12,7 @@ struct EventPanelView: View {
     let calendarPreferences: [CalendarPreference]
     var externalRefreshTrigger: Bool = false
 
-    @State private var filterMode: EventFilterMode = .all
+    @State private var filterMode: EventFilterMode = .thisMonth
     @State private var showDeleteConfirmation = false
     @State private var eventToDelete: CalendarEvent?
     @State private var refreshTrigger = false
