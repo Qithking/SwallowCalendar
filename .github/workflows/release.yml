@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 env:
-  PRODUCT_BUNDLE_IDENTIFIER: com.swallowscreen.app
-  MACOSX_DEPLOYMENT_TARGET: "14.0"
+  PRODUCT_BUNDLE_IDENTIFIER: com.swallowcalendar.app
+  MACOSX_DEPLOYMENT_TARGET: "13.0"
 
 jobs:
   build:
@@ -80,16 +80,16 @@ jobs:
           mkdir -p "$ICONSET_DIR"
 
           # 复制各种尺寸的图标到 iconset
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/16x16.png" "$ICONSET_DIR/icon_16x16.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/16x16@2x.png" "$ICONSET_DIR/icon_16x16@2x.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/32x32.png" "$ICONSET_DIR/icon_32x32.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/32x32@2x.png" "$ICONSET_DIR/icon_32x32@2x.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/128x128.png" "$ICONSET_DIR/icon_128x128.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/128x128@2x.png" "$ICONSET_DIR/icon_128x128@2x.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/256x256.png" "$ICONSET_DIR/icon_256x256.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/256x256@2x.png" "$ICONSET_DIR/icon_256x256@2x.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/512x512.png" "$ICONSET_DIR/icon_512x512.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/512x512@2x.png" "$ICONSET_DIR/icon_512x512@2x.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-16.png" "$ICONSET_DIR/icon_16x16.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-16@2x.png" "$ICONSET_DIR/icon_16x16@2x.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-32.png" "$ICONSET_DIR/icon_32x32.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-32@2x.png" "$ICONSET_DIR/icon_32x32@2x.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-128.png" "$ICONSET_DIR/icon_128x128.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-128@2x.png" "$ICONSET_DIR/icon_128x128@2x.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-256.png" "$ICONSET_DIR/icon_256x256.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-256@2x.png" "$ICONSET_DIR/icon_256x256@2x.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-512.png" "$ICONSET_DIR/icon_512x512.png" 2>/dev/null || true
+          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png" "$ICONSET_DIR/icon_512x512@2x.png" 2>/dev/null || true
 
           # 使用 iconutil 生成 .icns 文件
           iconutil -c icns "$ICONSET_DIR" -o "SwallowCalendar.app/Contents/Resources/AppIcon.icns"
