@@ -70,7 +70,7 @@ struct DataExportSettingsView: View {
                     HStack {
                         Text("上次同步")
                         Spacer()
-                        Text(lastSync, style: .relative)
+                        Text(lastSync, formatter: dateFormatter)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -93,6 +93,12 @@ struct DataExportSettingsView: View {
     private var cachedEventCount: Int {
         let descriptor = FetchDescriptor<CachedEvent>()
         return (try? modelContext.fetch(descriptor).count) ?? 0
+    }
+
+    private var dateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter
     }
     
     private func exportToICS() {

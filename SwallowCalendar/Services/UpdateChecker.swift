@@ -25,7 +25,7 @@ struct ReleaseInfo: Decodable {
 }
 
 @MainActor
-final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegate {
+final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegate, NSWindowDelegate {
     static let shared = UpdateChecker()
 
     @Published var isChecking = false
@@ -44,6 +44,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     private var downloadSession: URLSession?
     private var downloadTask: URLSessionDownloadTask?
     private var pendingDownloadUrl: URL?
+    private var downloadWindow: NSWindow?
 
     private let repoOwner = "Qithking"
     private let repoName = "SwallowCalendar"
@@ -166,6 +167,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         downloadError = nil
         isDownloading = true
         showDownloadWindow = true
+        showDownloadWindowPanel()
         downloadTask = downloadSession?.downloadTask(with: url)
         downloadTask?.resume()
     }
@@ -176,6 +178,34 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         isDownloading = false
         showDownloadWindow = false
         downloadProgress = 0
+        closeDownloadWindow()
+    }
+
+    private func showDownloadWindowPanel() {
+        let progressView = NSHostingView(rootView: DownloadProgressView(updateChecker: self))
+        progressView.frame = NSRect(x: 0, y: 0, width: 340, height: 160)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 160),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "下载更新"
+        window.contentView = progressView
+        window.center()
+        window.isReleasedWhenClosed = false
+
+        window.delegate = self
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        downloadWindow = window
+    }
+
+    private func closeDownloadWindow() {
+        downloadWindow?.close()
+        downloadWindow = nil
     }
 
     // MARK: - URLSessionDownloadDelegate
@@ -199,11 +229,16 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
                 downloadProgress = 1.0
                 isDownloading = false
 
+                // 延迟关闭窗口，让用户看到完成状态
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                closeDownloadWindow()
+
                 // 打开下载文件夹
                 NSWorkspace.shared.selectFile(destinationUrl.path, inFileViewerRootedAtPath: downloadsFolder.path)
             } catch {
                 downloadError = "保存文件失败: \(error.localizedDescription)"
                 isDownloading = false
+                closeDownloadWindow()
             }
         }
     }
@@ -221,6 +256,17 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
             if let error = error {
                 downloadError = "下载失败: \(error.localizedDescription)"
                 isDownloading = false
+                closeDownloadWindow()
+            }
+        }
+    }
+
+    // MARK: - NSWindowDelegate
+
+    nonisolated func windowWillClose(_ notification: Notification) {
+        Task { @MainActor in
+            if isDownloading {
+                cancelDownload()
             }
         }
     }

@@ -16,10 +16,18 @@ struct AboutSettingsView: View {
             Spacer()
 
             // 应用图标
-            Image("AppIcon")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 64, height: 64)
+            Group {
+                if let appIcon = NSImage(named: "AppIcon") {
+                    Image(nsImage: appIcon)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 64, height: 64)
+                } else {
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.system(size: 48))
+                        .foregroundColor(.accentColor)
+                }
+            }
 
             // 应用名称
             Text("SwallowCalendar")
@@ -36,43 +44,48 @@ struct AboutSettingsView: View {
                     .foregroundColor(.secondary)
             }
 
-            // 作者信息
+            // 作者与项目信息
             VStack(spacing: 4) {
                 Text("作者: Qithking")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
 
-                Button {
-                    if let url = URL(string: "https://github.com/Qithking") {
-                        NSWorkspace.shared.open(url)
+                HStack(spacing: 16) {
+                    Button {
+                        if let url = URL(string: "https://github.com/Qithking") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "person.circle.fill")
+                                .font(.system(size: 12))
+                            Text("作者主页")
+                                .font(.system(size: 12))
+                        }
+                        .foregroundColor(.accentColor)
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "person.circle.fill")
-                            .font(.system(size: 12))
-                        Text("GitHub: @Qithking | macOS 菜单栏日历")
-                            .font(.system(size: 12))
-                    }
-                    .foregroundColor(.accentColor)
-                }
-                .buttonStyle(.plain)
-            }
+                    .buttonStyle(.plain)
 
-            // 项目链接
-            Button {
-                if let url = URL(string: "https://github.com/Qithking/SwallowCalendar") {
-                    NSWorkspace.shared.open(url)
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "link.circle.fill")
+                    Text("|")
                         .font(.system(size: 12))
-                    Text("项目地址")
-                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+
+                    Button {
+                        if let url = URL(string: "https://github.com/Qithking/SwallowCalendar") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "link.circle.fill")
+                                .font(.system(size: 12))
+                            Text("项目地址")
+                                .font(.system(size: 12))
+                        }
+                        .foregroundColor(.accentColor)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .foregroundColor(.accentColor)
             }
-            .buttonStyle(.plain)
 
             Divider()
                 .frame(width: 200)
