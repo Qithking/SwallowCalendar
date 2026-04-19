@@ -371,7 +371,8 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
 
 struct DownloadProgressView: View {
     @ObservedObject var updateChecker: UpdateChecker
-    @State private var showCopied = false
+    @State private var linkCopied = false
+    @State private var errorCopied = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -411,12 +412,12 @@ struct DownloadProgressView: View {
                 if let error = updateChecker.downloadError {
                     HStack(spacing: 4) {
                         ErrorTextView(message: error) {
-                            showCopied = true
+                            errorCopied = true
                             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                showCopied = false
+                                errorCopied = false
                             }
                         }
-                        if showCopied {
+                        if errorCopied {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 10))
                                 .foregroundColor(.green)
@@ -442,19 +443,19 @@ struct DownloadProgressView: View {
 
                     Button {
                         updateChecker.copyDownloadUrl()
-                        showCopied = true
+                        linkCopied = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                            showCopied = false
+                            linkCopied = false
                         }
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
-                            Text(showCopied ? "已复制" : "复制链接")
+                            Image(systemName: linkCopied ? "checkmark" : "doc.on.doc")
+                            Text(linkCopied ? "已复制" : "复制链接")
                         }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .disabled(showCopied)
+                    .disabled(linkCopied)
                 }
 
                 Button("取消") {
