@@ -19,9 +19,9 @@ struct CalendarGridView: View {
     @State private var subscriptionsLoaded = false  // 用于触发订阅日历数据刷新
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
     @State private var importantDatesCache: Set<String> = []  // 缓存重要日期
-
-    // 用于监听数据变化并刷新缓存
-    @State private var refreshCacheTrigger = false
+    @State private var subscriptionTitlesCache: [String: [String]] = [:]  // 缓存订阅事件标题
+    @State private var eventTitlesCache: [String: [String]] = [:]  // 缓存事件标题
+    @State private var eventColorsCache: [String: [String]] = [:]  // 缓存事件颜色
 
     private let calendar = Calendar.current
     private let weekDaySymbols: [String] = {
@@ -62,28 +62,28 @@ struct CalendarGridView: View {
             // 预加载订阅日历数据
             await icsService.preloadSubscriptions(sources: customSources)
             subscriptionsLoaded = true
-            // 预计算重要日期
-            await computeImportantDates()
+            // 预计算重要日期和事件缓存
+            await computeAllCaches()
             print("[CalendarGridView] 订阅日历数据预加载完成")
         }
         .onChange(of: calendarPreferences.map { "\($0.calendarID):\($0.isEnabled):\($0.isImportant)" }.joined()) { _, _ in
             // 日历偏好改变时刷新缓存
-            print("[CalendarGridView] 检测到日历偏好变化，刷新重要日期缓存")
+            print("[CalendarGridView] 检测到日历偏好变化，刷新所有缓存")
             Task {
-                await computeImportantDates()
+                await computeAllCaches()
             }
         }
         .onChange(of: customSources.map { "\($0.icsURL):\($0.isEnabled):\($0.isImportant)" }.joined()) { _, _ in
             // 订阅源改变时刷新缓存
-            print("[CalendarGridView] 检测到订阅源变化，刷新重要日期缓存")
+            print("[CalendarGridView] 检测到订阅源变化，刷新所有缓存")
             Task {
-                await computeImportantDates()
+                await computeAllCaches()
             }
         }
         .onChange(of: currentMonth) { _, _ in
             // 月份改变时刷新缓存
             Task {
-                await computeImportantDates()
+                await computeAllCaches()
             }
         }
     }
@@ -107,7 +107,10 @@ struct CalendarGridView: View {
     private var dateGrid: some View {
         let days = daysInMonth()
         let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
-        // 使用 subscriptionsLoaded 触发订阅日历数据重新计算
+        // 使用缓存的订阅事件数据，不再实时计算
+        let cachedSubscriptions = subscriptionTitlesCache
+        let cachedEventTitles = eventTitlesCache
+        let cachedEventColors = eventColorsCache
         _ = subscriptionsLoaded
 
         return LazyVGrid(columns: columns, spacing: 2) {
@@ -118,11 +121,11 @@ struct CalendarGridView: View {
                     isToday: calendar.isDateInToday(date),
                     isCurrentMonth: calendar.isDate(date, equalTo: currentMonth, toGranularity: .month),
                     lunarText: LunarCalendarHelper.lunarString(for: date),
-                    subscriptionTitles: icsService.subscriptionEventsSync(for: date, sources: customSources),
+                    subscriptionTitles: cachedSubscriptions[formatDateKey(date)] ?? [],
                     eventCount: eventCount(for: date),
                     isHovered: hoveredDate.flatMap { calendar.isDate(date, inSameDayAs: $0) } ?? false,
-                    eventTitles: allEventTitles(for: date),
-                    eventColors: allEventColors(for: date),
+                    eventTitles: cachedEventTitles[formatDateKey(date)] ?? [],
+                    eventColors: cachedEventColors[formatDateKey(date)] ?? [],
                     systemCalendarColor: systemCalendarColor(),
                     subscriptionCalendarColor: subscriptionCalendarColor(),
                     isImportant: isImportantDate(for: date)
@@ -237,6 +240,44 @@ struct CalendarGridView: View {
     /// 获取自定义日历分类颜色
     private func subscriptionCalendarColor() -> Color {
         return Color(hex: appSettings.subscriptionCalendarColorHex)
+    }
+    
+    /// 预计算所有缓存（重要日期、订阅事件、事件标题、事件颜色）
+    func computeAllCaches() async {
+        // 预计算订阅事件和事件标题/颜色的缓存
+        var subCache: [String: [String]] = [:]
+        var titlesCache: [String: [String]] = [:]
+        var colorsCache: [String: [String]] = [:]
+        
+        let days = daysInMonth()
+        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
+        
+        for date in days {
+            let dateKey = formatDateKey(date)
+            
+            // 订阅事件（只计算有启用订阅源的日期）
+            let subTitles = icsService.subscriptionEventsSync(for: date, sources: customSources)
+            if !subTitles.isEmpty {
+                subCache[dateKey] = subTitles
+            }
+            
+            // 系统日历事件
+            let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
+            let eventTitles = events.map { $0.title }
+            let eventColors = events.map { $0.calendarColorHex }
+            if !eventTitles.isEmpty {
+                titlesCache[dateKey] = eventTitles
+                colorsCache[dateKey] = eventColors
+            }
+        }
+        
+        subscriptionTitlesCache = subCache
+        eventTitlesCache = titlesCache
+        eventColorsCache = colorsCache
+        print("[CalendarGridView] 事件缓存已更新，订阅事件: \(subCache.count) 天，事件: \(titlesCache.count) 天")
+        
+        // 预计算重要日期
+        await computeImportantDates()
     }
     
     /// 预计算重要日期集合

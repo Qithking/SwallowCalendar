@@ -13,6 +13,7 @@ import AppKit
 struct ContentView: View {
     @Environment(AppSettings.self) private var appSettings
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @Query private var customSources: [CustomCalendarSource]
     @Query private var calendarPreferences: [CalendarPreference]
 
@@ -21,6 +22,8 @@ struct ContentView: View {
     @State private var icsService = ICSService.shared
     @State private var refreshTrigger = false  // 用于触发视图刷新
     @State private var isSyncing = false  // 同步状态
+    @State private var shouldSyncOnAppear = false  // 是否在显示时同步
+    @State private var hasInitialized = false  // 是否已初始化
     
     // 用于强制视图响应主题色变化
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
@@ -56,9 +59,20 @@ struct ContentView: View {
         .onChange(of: appSettings.accentColorHex) { _, newColor in
             accentColor = Color(hex: newColor)
         }
-        .task(id: "initialSync") {
-            await initializeServices()
-            await syncCalendarEvents()
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            // 从非活跃状态切换到活跃状态时，说明是用户点击了菜单栏图标
+            if oldPhase != .active && newPhase == .active {
+                shouldSyncOnAppear = true
+            }
+        }
+        .task(id: "syncTrigger") {
+            // 首次启动或点击菜单栏图标时同步
+            if !hasInitialized || shouldSyncOnAppear {
+                await initializeServices()
+                await syncCalendarEvents()
+                hasInitialized = true
+                shouldSyncOnAppear = false
+            }
         }
     }
 
@@ -75,25 +89,6 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .help("设置")
-
-            // 同步按钮
-            Button {
-                Task {
-                    await manualSyncCalendarEvents()
-                }
-            } label: {
-                if isSyncing {
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .frame(width: 13, height: 13)
-                } else {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 13))
-                }
-            }
-            .buttonStyle(.plain)
-            .disabled(isSyncing)
-            .help("同步日历")
 
             Spacer()
 
