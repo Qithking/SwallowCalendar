@@ -111,7 +111,7 @@ struct EventPanelView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .frame(maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .overlay {
             if showDeleteConfirmation, let event = eventToDelete {
