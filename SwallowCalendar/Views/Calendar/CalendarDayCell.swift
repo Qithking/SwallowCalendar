@@ -50,12 +50,14 @@ struct CalendarDayCell: View {
                     Circle()
                         .fill(systemCalendarColor)
                         .frame(width: 5, height: 5)
+                        .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: 0.5))
                 }
                 // 订阅日历事件小圆点
                 if !subscriptionTitles.isEmpty {
                     Circle()
                         .fill(subscriptionCalendarColor)
                         .frame(width: 5, height: 5)
+                        .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: 0.5))
                 }
             }
         }
@@ -150,21 +152,12 @@ struct CalendarDayCell: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(accentColor)
         } else if isSelected {
-            // 选中日期：只有边框，无填充
+            // 选中日期：主题色边框
             RoundedRectangle(cornerRadius: 6)
                 .stroke(accentColor, lineWidth: 2)
         } else if isHovered {
             RoundedRectangle(cornerRadius: 6)
-                .fill(accentColor.opacity(0.1))
-        } else if eventCount > 1 {
-            // 多事件日期使用第一个事件的颜色作为背景提示
-            if let firstColorHex = eventColors.first {
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color(hex: firstColorHex).opacity(0.5), lineWidth: 1)
-            } else {
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-            }
+                .fill(accentColor.opacity(0.08))
         } else {
             Color.clear
         }
