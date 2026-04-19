@@ -29,8 +29,8 @@ struct EventReminderListView: View {
             to: range.end,
             calendars: enabledCals
         )
-        // 过滤订阅日历事件，只显示用户自定义事件
-        return events.filter { !$0.isSubscription }
+        // 只显示用户创建的事件
+        return events.filter { $0.category == .user }
     }
 
     var body: some View {
