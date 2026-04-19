@@ -18,6 +18,8 @@ struct CalendarSettingsView: View {
     @State private var newSourceURL = ""
     @State private var saveStatus: String = "就绪"
     @State private var showingSaveConfirmation = false
+    @State private var isRefreshing = false
+    @State private var refreshSuccess = false
 
     var body: some View {
         @Bindable var settings = appSettings
@@ -52,7 +54,7 @@ struct CalendarSettingsView: View {
             }
 
             // 日历分类
-            Section("系统日历") {
+            Section {
                 if calendarPreferences.isEmpty && calendarService.calendars.isEmpty {
                     Text("正在加载...")
                         .foregroundColor(.secondary)
@@ -65,6 +67,21 @@ struct CalendarSettingsView: View {
                     ForEach(calendarService.calendars, id: \.calendarIdentifier) { cal in
                         calendarPreferenceRow(for: cal)
                     }
+                }
+            } header: {
+                HStack {
+                    Text("系统日历")
+                    Spacer()
+                    Button {
+                        refreshSystemCalendars()
+                    } label: {
+                        Image(systemName: refreshSuccess ? "checkmark.circle.fill" : "arrow.clockwise")
+                            .font(.system(size: 12))
+                            .foregroundColor(refreshSuccess ? .green : .primary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isRefreshing || refreshSuccess)
+                    .help("刷新日历数据")
                 }
             }
 
@@ -104,6 +121,11 @@ struct CalendarSettingsView: View {
         .onDisappear {
             // 窗口关闭时确保保存所有更改
             saveAllChanges()
+        }
+        .alert("刷新失败", isPresented: $showingSaveConfirmation) {
+            Button("确定", role: .cancel) {}
+        } message: {
+            Text("刷新失败请重启应用后再试")
         }
     }
 
@@ -309,6 +331,27 @@ struct CalendarSettingsView: View {
 
     private func saveAllChanges() {
         try? modelContext.save()
+    }
+
+    private func refreshSystemCalendars() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        refreshSuccess = false
+
+        calendarService.manualSync(preferences: calendarPreferences) { success, message in
+            isRefreshing = false
+            if success {
+                refreshSuccess = true
+                calendarService.loadCalendars()
+                // 3秒后恢复
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    refreshSuccess = false
+                }
+            } else {
+                saveStatus = message
+                showingSaveConfirmation = true
+            }
+        }
     }
 }
 

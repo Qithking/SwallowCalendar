@@ -11,6 +11,7 @@ struct EventItemRow: View {
     let onDelete: ((CalendarEvent) -> Void)?
     let onComplete: ((CalendarEvent) -> Void)?
     let onUncomplete: ((CalendarEvent) -> Void)?
+    var isOverdue: Bool = false
 
     @State private var isHovered = false
 
@@ -19,13 +20,15 @@ struct EventItemRow: View {
         onEdit: ((CalendarEvent) -> Void)? = nil,
         onDelete: ((CalendarEvent) -> Void)? = nil,
         onComplete: ((CalendarEvent) -> Void)? = nil,
-        onUncomplete: ((CalendarEvent) -> Void)? = nil
+        onUncomplete: ((CalendarEvent) -> Void)? = nil,
+        isOverdue: Bool = false
     ) {
         self.event = event
         self.onEdit = onEdit
         self.onDelete = onDelete
         self.onComplete = onComplete
         self.onUncomplete = onUncomplete
+        self.isOverdue = isOverdue
     }
 
     var body: some View {
@@ -59,11 +62,18 @@ struct EventItemRow: View {
                 .frame(width: 3, height: 28)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(event.title)
-                    .font(.system(size: 12))
-                    .lineLimit(1)
-                    .strikethrough(event.isCompleted, color: .secondary)
-                    .foregroundColor(event.isCompleted ? .secondary : .primary)
+                HStack(spacing: 4) {
+                    if isOverdue {
+                        Text("已过期")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.red)
+                    }
+                    Text(event.title)
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                        .strikethrough(event.isCompleted, color: .secondary)
+                        .foregroundColor(event.isCompleted ? .secondary : .primary)
+                }
 
                 HStack(spacing: 4) {
                     if event.hasTime {
@@ -71,9 +81,11 @@ struct EventItemRow: View {
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
 
-                        Text(event.countdownText)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(countdownColor)
+                        if !isOverdue {
+                            Text(event.countdownText)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(countdownColor)
+                        }
                     } else {
                         Text(formattedDate)
                             .font(.system(size: 10))

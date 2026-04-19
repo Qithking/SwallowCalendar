@@ -214,6 +214,24 @@ final class CalendarService {
         try eventStore.save(event, span: .thisEvent)
     }
 
+    // MARK: - Sync
+
+    /// 手动同步日历事件到本地缓存
+    func manualSync(preferences: [CalendarPreference], completion: ((Bool, String) -> Void)? = nil) {
+        guard authorizationStatus == .fullAccess else {
+            completion?(false, "日历权限不足，请在系统设置中授权")
+            return
+        }
+
+        let enabledCals = enabledCalendars(preferences: preferences)
+        Task {
+            await cacheService.syncEvents(from: self, calendars: enabledCals)
+            await MainActor.run {
+                completion?(true, "同步成功")
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func mapToCalendarEvent(_ ekEvent: EKEvent) -> CalendarEvent {
@@ -227,7 +245,8 @@ final class CalendarService {
             calendarTitle: ekEvent.calendar.title,
             calendarColorHex: ekEvent.calendar.cgColor?.hexString ?? "#007AFF",
             category: category,
-            isCompleted: false
+            isCompleted: false,
+            priority: 0  // 系统日历事件没有优先级
         )
     }
     
@@ -241,7 +260,8 @@ final class CalendarService {
             calendarTitle: cached.calendarTitle,
             calendarColorHex: cached.calendarColorHex,
             category: cached.category,
-            isCompleted: cached.isCompleted
+            isCompleted: cached.isCompleted,
+            priority: cached.priority
         )
     }
 

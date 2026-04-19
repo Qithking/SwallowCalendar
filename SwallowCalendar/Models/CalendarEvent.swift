@@ -84,6 +84,8 @@ struct CalendarEvent: Identifiable {
     let category: EventCategory
     /// 是否已完成
     var isCompleted: Bool
+    /// 优先级 (0=无, 1-9, 9最高)，只有用户分类的事件才有优先级
+    let priority: Int
     
     /// 是否为订阅日历（订阅日历不在用户事件列表中显示）
     var isSubscription: Bool {

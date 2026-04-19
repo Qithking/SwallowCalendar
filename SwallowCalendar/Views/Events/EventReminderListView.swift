@@ -20,7 +20,6 @@ struct EventReminderListView: View {
     private var events: [CalendarEvent] {
         // 依赖 refreshTrigger 以触发重新计算
         _ = refreshTrigger
-        guard calendarService.authorizationStatus == .fullAccess else { return [] }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let range = filterMode.dateRange(from: selectedDate)
         // 优先从缓存获取全天事件

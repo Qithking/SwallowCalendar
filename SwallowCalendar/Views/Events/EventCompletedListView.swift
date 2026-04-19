@@ -18,22 +18,23 @@ struct EventCompletedListView: View {
     let onEditEvent: ((CalendarEvent) -> Void)?
     let onUncompleteEvent: ((CalendarEvent) -> Void)?
     let onDeleteEvent: ((CalendarEvent) -> Void)?
-    var refreshTrigger: Bool = false
+    @Binding var refreshTrigger: Bool
 
     private var events: [CalendarEvent] {
         _ = refreshTrigger
-        guard calendarService.authorizationStatus == .fullAccess else { return [] }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let range = filterMode.dateRange(from: selectedDate)
         
-        // 获取所有事件并筛选已完成的非订阅日历事件
+        // 获取所有已完成的事件并排序
         var result: [CalendarEvent] = []
         
-        // 倒计时事件
-        let timedEvents = calendarService.fetchUpcomingTimedEvents(calendars: enabledCals)
-        for event in timedEvents {
-            guard let start = event.startDate, start >= range.start && start < range.end else { continue }
-            // 排除订阅日历的事件
+        // 从缓存读取事件
+        let cachedEvents = calendarService.fetchCachedEvents(
+            from: range.start,
+            to: range.end,
+            calendars: enabledCals
+        )
+        for event in cachedEvents {
             if !event.isSubscription && event.isCompleted {
                 result.append(event)
             }
@@ -46,13 +47,26 @@ struct EventCompletedListView: View {
             calendars: enabledCals
         )
         for event in dayEvents {
-            // 排除订阅日历的事件
             if !event.isSubscription && event.isCompleted {
                 result.append(event)
             }
         }
         
-        return result
+        // 排序：优先级降序，时间降序（只有 user 分类才有优先级）
+        return result.sorted {
+            // 用户分类按优先级降序
+            if $0.category == .user && $1.category == .user {
+                if $0.priority != $1.priority {
+                    return $0.priority > $1.priority
+                }
+            } else if $0.category == .user {
+                return true
+            } else if $1.category == .user {
+                return false
+            }
+            // 再按时间降序
+            return ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
+        }
     }
 
     var body: some View {

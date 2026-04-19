@@ -20,12 +20,21 @@ struct EventCountdownListView: View {
     private var events: [CalendarEvent] {
         // 依赖 refreshTrigger 以触发重新计算
         _ = refreshTrigger
-        guard calendarService.authorizationStatus == .fullAccess else { return [] }
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        var events = calendarService.fetchUpcomingTimedEvents(calendars: enabledCals)
+        let range = filterMode.dateRange(from: selectedDate)
+        
+        var events: [CalendarEvent] = []
+        
+        // 无授权时使用缓存
+        if calendarService.authorizationStatus == .fullAccess {
+            events = calendarService.fetchUpcomingTimedEvents(calendars: enabledCals)
+        } else {
+            // 无授权时从缓存读取
+            events = calendarService.fetchCachedEvents(from: range.start, to: range.end, calendars: enabledCals)
+            events = events.filter { $0.hasTime }
+        }
 
         // 应用过滤
-        let range = filterMode.dateRange(from: selectedDate)
         events = events.filter { event in
             guard let start = event.startDate else { return false }
             return start >= range.start && start < range.end

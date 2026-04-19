@@ -188,46 +188,40 @@ struct CalendarGridView: View {
     }
 
     private func eventCount(for date: Date) -> Int {
-        guard calendarService.authorizationStatus == .fullAccess else { return 0 }
+        // 无授权时也从缓存读取
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        // 优先从缓存获取，加快显示速度
         let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
-        // 显示所有事件（包括订阅日历）
         return events.count
     }
 
     /// 获取所有事件标题（包括订阅日历）- 用于弹出列表显示
     private func allEventTitles(for date: Date) -> [String] {
-        guard calendarService.authorizationStatus == .fullAccess else { return [] }
+        // 无授权时也从缓存读取
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        // 优先从缓存获取
         let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
         return events.map { $0.title }
     }
 
     /// 获取所有事件颜色（包括订阅日历）- 用于弹出列表显示
     private func allEventColors(for date: Date) -> [String] {
-        guard calendarService.authorizationStatus == .fullAccess else { return [] }
+        // 无授权时也从缓存读取
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        // 优先从缓存获取
         let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
         return events.map { $0.calendarColorHex }
     }
 
     /// 获取用户事件标题（不包含订阅日历）- 用于提醒列表
     private func eventTitles(for date: Date) -> [String] {
-        guard calendarService.authorizationStatus == .fullAccess else { return [] }
+        // 无授权时也从缓存读取
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        // 优先从缓存获取
         let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
         return events.filter { !$0.isSubscription }.map { $0.title }
     }
 
     /// 获取用户事件颜色（不包含订阅日历）- 用于提醒列表
     private func eventColors(for date: Date) -> [String] {
-        guard calendarService.authorizationStatus == .fullAccess else { return [] }
+        // 无授权时也从缓存读取
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        // 优先从缓存获取
         let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
         return events.filter { !$0.isSubscription }.map { $0.calendarColorHex }
     }

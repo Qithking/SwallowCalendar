@@ -74,7 +74,7 @@ struct EventPanelView: View {
                             eventToDelete = event
                             showDeleteConfirmation = true
                         },
-                        refreshTrigger: refreshTrigger
+                        refreshTrigger: $refreshTrigger
                     )
 
                     // 已办事项
@@ -107,7 +107,7 @@ struct EventPanelView: View {
                             eventToDelete = event
                             showDeleteConfirmation = true
                         },
-                        refreshTrigger: refreshTrigger
+                        refreshTrigger: $refreshTrigger
                     )
                 }
                 .padding(.horizontal, 8)

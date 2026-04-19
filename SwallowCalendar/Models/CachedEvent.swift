@@ -41,6 +41,9 @@ final class CachedEvent {
     /// 是否已完成（仅对用户事件有效）
     var isCompleted: Bool = false
     
+    /// 优先级 (0=无, 1-9, 9最高)
+    var priority: Int = 0
+    
     /// 缓存更新时间
     var lastUpdated: Date
     
@@ -64,7 +67,8 @@ final class CachedEvent {
         calendarTitle: String,
         calendarColorHex: String,
         category: EventCategory = .system,
-        isCompleted: Bool = false
+        isCompleted: Bool = false,
+        priority: Int = 0
     ) {
         self.eventID = eventID
         self.title = title
@@ -76,6 +80,7 @@ final class CachedEvent {
         self.calendarColorHex = calendarColorHex
         self.categoryRaw = category.rawValue
         self.isCompleted = isCompleted
+        self.priority = priority
         self.lastUpdated = Date()
     }
 }
@@ -131,8 +136,8 @@ final class EventCacheService {
                 event.startDate < endOfDay && event.endDate >= startOfDay
             }
             
-            // 如果指定了日历，进一步过滤
-            if let calendars = calendars {
+            // 如果指定了日历且非空，进一步过滤
+            if let calendars = calendars, !calendars.isEmpty {
                 let calendarIDs = Set(calendars.map { $0.calendarIdentifier })
                 events = events.filter { calendarIDs.contains($0.calendarID) }
             }
@@ -161,7 +166,7 @@ final class EventCacheService {
                 event.startDate < endDate && event.endDate >= startDate
             }
             
-            if let calendars = calendars {
+            if let calendars = calendars, !calendars.isEmpty {
                 let calendarIDs = Set(calendars.map { $0.calendarIdentifier })
                 events = events.filter { calendarIDs.contains($0.calendarID) }
             }
