@@ -14,6 +14,7 @@ struct ReleaseInfo: Decodable {
     let body: String?
     let htmlUrl: String
     let publishedAt: String?
+    let assets: [ReleaseAsset]?
 
     enum CodingKeys: String, CodingKey {
         case tagName = "tag_name"
@@ -21,6 +22,17 @@ struct ReleaseInfo: Decodable {
         case body
         case htmlUrl = "html_url"
         case publishedAt = "published_at"
+        case assets
+    }
+}
+
+struct ReleaseAsset: Decodable {
+    let name: String
+    let browserDownloadUrl: String
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case browserDownloadUrl = "browser_download_url"
     }
 }
 
@@ -55,12 +67,42 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     private override init() {
         self.currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
         super.init()
-        self.downloadSession = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
+        
+        // 使用临时目录配置 session，避免沙盒限制
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 60
+        config.timeoutIntervalForResource = 300
+        self.downloadSession = URLSession(configuration: config, delegate: self, delegateQueue: .main)
     }
 
     func checkOnStartup() {
         Task {
-            await checkForUpdates()
+            await checkForUpdatesWithNotification()
+        }
+    }
+
+    func checkForUpdatesWithNotification() async {
+        await checkForUpdates()
+        
+        await MainActor.run {
+            if updateAvailable {
+                showUpdateNotification()
+            }
+        }
+    }
+
+    private func showUpdateNotification() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "发现新版本"
+        alert.informativeText = "最新版本: v\(latestVersion)\n当前版本: v\(currentVersion)"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "下载安装包")
+        alert.addButton(withTitle: "稍后")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            downloadLatestRelease()
         }
     }
 
@@ -117,9 +159,17 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
 
             let latestTag = release.tagName.hasPrefix("v") ? String(release.tagName.dropFirst()) : release.tagName
 
+            // 优先获取 dmg 文件，其次是 zip 文件
+            var directDownloadUrl = release.htmlUrl
+            if let dmgAsset = release.assets?.first(where: { $0.name.lowercased().contains(".dmg") }) {
+                directDownloadUrl = dmgAsset.browserDownloadUrl
+            } else if let zipAsset = release.assets?.first(where: { $0.name.lowercased().contains(".zip") }) {
+                directDownloadUrl = zipAsset.browserDownloadUrl
+            }
+
             await MainActor.run {
                 self.latestVersion = latestTag
-                self.releaseUrl = release.htmlUrl
+                self.releaseUrl = directDownloadUrl
                 self.releaseNotes = release.body ?? ""
                 self.updateAvailable = self.isNewerVersion(latestTag)
             }
@@ -174,6 +224,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         guard let url = URL(string: releaseUrl) else { return }
         pendingDownloadUrl = url
         downloadTask?.cancel()
+        
         downloadTask = downloadSession?.downloadTask(with: url)
         downloadTask?.resume()
     }
@@ -243,48 +294,47 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
 
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         Task { @MainActor in
-            guard downloadTask.originalRequest?.url != nil else { return }
-
+            // 下载完成，立即保存文件
             do {
                 let fileManager = FileManager.default
                 
-                // 检查临时文件是否存在
                 guard fileManager.fileExists(atPath: location.path) else {
-                    downloadError = "下载文件不存在，请重试"
-                    isDownloading = false
+                    self.downloadError = "下载文件不存在，请重试"
+                    self.isDownloading = false
                     return
                 }
                 
-                // 获取下载目录
                 guard let downloadsFolder = fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
-                    downloadError = "无法访问下载文件夹"
-                    isDownloading = false
+                    self.downloadError = "无法访问下载文件夹"
+                    self.isDownloading = false
                     return
                 }
                 
-                let fileName = "SwallowCalendar-\(latestVersion).zip"
+                let urlString = self.releaseUrl.lowercased()
+                let fileName: String
+                if urlString.contains(".dmg") {
+                    fileName = "SwallowCalendar-\(self.latestVersion).dmg"
+                } else {
+                    fileName = "SwallowCalendar-\(self.latestVersion).zip"
+                }
                 let destinationUrl = downloadsFolder.appendingPathComponent(fileName)
 
-                // 删除已存在的同名文件
                 if fileManager.fileExists(atPath: destinationUrl.path) {
                     try fileManager.removeItem(at: destinationUrl)
                 }
 
-                try fileManager.moveItem(at: location, to: destinationUrl)
+                try fileManager.copyItem(at: location, to: destinationUrl)
 
-                downloadProgress = 1.0
-                isDownloading = false
+                self.downloadProgress = 1.0
+                self.isDownloading = false
 
-                // 延迟关闭窗口，让用户看到完成状态
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
-                closeDownloadWindow()
+                self.closeDownloadWindow()
 
-                // 打开下载文件夹
                 NSWorkspace.shared.selectFile(destinationUrl.path, inFileViewerRootedAtPath: downloadsFolder.path)
             } catch {
-                downloadError = "保存失败: \(error.localizedDescription)"
-                isDownloading = false
-                // 不关闭窗口，保留错误信息让用户选择重试或复制链接
+                self.downloadError = "保存失败: \(error.localizedDescription)"
+                self.isDownloading = false
             }
         }
     }
@@ -292,17 +342,16 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
         Task { @MainActor in
             if totalBytesExpectedToWrite > 0 {
-                downloadProgress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+                self.downloadProgress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
             }
         }
     }
 
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         Task { @MainActor in
-            if let error = error {
-                downloadError = "下载失败: \(error.localizedDescription)"
-                isDownloading = false
-                // 不关闭窗口，保留错误信息让用户选择重试或复制链接
+            if let nsError = error as NSError?, nsError.code != NSURLErrorCancelled {
+                self.downloadError = "下载失败: \(error?.localizedDescription ?? "未知错误")"
+                self.isDownloading = false
             }
         }
     }
@@ -322,7 +371,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
 
 struct DownloadProgressView: View {
     @ObservedObject var updateChecker: UpdateChecker
-    @State private var showErrorPopover = false
+    @State private var showCopied = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -360,7 +409,19 @@ struct DownloadProgressView: View {
             // 下面一行：错误信息/成功提示 + 操作按钮
             HStack {
                 if let error = updateChecker.downloadError {
-                    ErrorTextView(message: error, showPopover: $showErrorPopover)
+                    HStack(spacing: 4) {
+                        ErrorTextView(message: error) {
+                            showCopied = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                showCopied = false
+                            }
+                        }
+                        if showCopied {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.green)
+                        }
+                    }
                 } else if updateChecker.downloadProgress >= 1.0 {
                     Text("下载完成")
                         .font(.system(size: 12))
@@ -379,11 +440,21 @@ struct DownloadProgressView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
 
-                    Button("复制链接") {
+                    Button {
                         updateChecker.copyDownloadUrl()
+                        showCopied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            showCopied = false
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
+                            Text(showCopied ? "已复制" : "复制链接")
+                        }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .disabled(showCopied)
                 }
 
                 Button("取消") {
@@ -395,16 +466,15 @@ struct DownloadProgressView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
-        .frame(width: 420, height: 140)
+        .frame(width: 420, height: 120)
     }
 }
 
-// MARK: - Error Text View with Popover
+// MARK: - Error Text View with Tooltip
 
 struct ErrorTextView: View {
     let message: String
-    @Binding var showPopover: Bool
-    @State private var isHovering = false
+    var onCopied: (() -> Void)?
 
     var body: some View {
         Text(message)
@@ -413,18 +483,10 @@ struct ErrorTextView: View {
             .lineLimit(1)
             .truncationMode(.tail)
             .help(message)
-            .onHover { hovering in
-                isHovering = hovering
-            }
-            .popover(isPresented: $isHovering, arrowEdge: .bottom) {
-                ScrollView {
-                    Text(message)
-                        .font(.system(size: 12))
-                        .foregroundColor(.primary)
-                        .padding(8)
-                        .textSelection(.enabled)
-                }
-                .frame(maxWidth: 300, maxHeight: 150)
+            .onTapGesture {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(message, forType: .string)
+                onCopied?()
             }
     }
 }
