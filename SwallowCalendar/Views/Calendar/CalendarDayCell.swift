@@ -142,6 +142,7 @@ struct CalendarDayCell: View {
     }
 
     private var lunarTextColor: Color {
+        if isToday { return .white }
         if !isCurrentMonth { return .secondary.opacity(0.3) }
         return .secondary
     }
