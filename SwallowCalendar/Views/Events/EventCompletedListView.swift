@@ -25,7 +25,6 @@ struct EventCompletedListView: View {
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let range = filterMode.dateRange(from: selectedDate)
         
-        // 获取所有已完成的事件并排序
         var result: [CalendarEvent] = []
         
         // 从缓存读取事件
@@ -54,7 +53,6 @@ struct EventCompletedListView: View {
         
         // 排序：优先级降序，时间降序（只有 user 分类才有优先级）
         return result.sorted {
-            // 用户分类按优先级降序
             if $0.category == .user && $1.category == .user {
                 if $0.priority != $1.priority {
                     return $0.priority > $1.priority
@@ -64,13 +62,13 @@ struct EventCompletedListView: View {
             } else if $1.category == .user {
                 return false
             }
-            // 再按时间降序
             return ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
         }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(spacing: 0) {
+            // 固定标题
             Button {
                 onToggle()
             } label: {
@@ -88,22 +86,30 @@ struct EventCompletedListView: View {
             }
             .buttonStyle(.plain)
 
+            // 可滚动的内容区域
             if isExpanded {
-                if events.isEmpty {
-                    Text("暂无已办事项")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .padding(.leading, 16)
-                } else {
-                    ForEach(events) { event in
-                        EventItemRow(
-                            event: event,
-                            onEdit: onEditEvent,
-                            onDelete: onDeleteEvent,
-                            onUncomplete: onUncompleteEvent
-                        )
+                ScrollView {
+                    if events.isEmpty {
+                        Text("暂无已办事项")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.leading, 16)
+                    } else {
+                        LazyVStack(spacing: 4) {
+                            ForEach(events) { event in
+                                EventItemRow(
+                                    event: event,
+                                    onEdit: onEditEvent,
+                                    onDelete: onDeleteEvent,
+                                    onUncomplete: onUncompleteEvent
+                                )
+                            }
+                        }
                     }
                 }
+                .padding(.top, 6)
+                .frame(maxHeight: 200)
             }
         }
     }

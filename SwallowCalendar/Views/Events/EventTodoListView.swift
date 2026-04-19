@@ -2,7 +2,7 @@
 //  EventTodoListView.swift
 //  SwallowCalendar
 //
-//  合并的待办事项列表：倒计时在前，提醒在后，只显示未完成
+//  待办事项列表：倒计时在前，提醒在后，只显示未完成
 //
 
 import SwiftUI
@@ -75,7 +75,6 @@ struct EventTodoListView: View {
         // 3. 无时间的全天事件 - 优先级降序
         
         let sortedOverdue = overdueTimed.sorted {
-            // 用户分类按优先级降序，再按时间降序
             if $0.category == .user && $1.category == .user {
                 if $0.priority != $1.priority {
                     return $0.priority > $1.priority
@@ -89,7 +88,6 @@ struct EventTodoListView: View {
         }
         
         let sortedFuture = futureTimed.sorted {
-            // 用户分类按优先级降序，再按时间升序
             if $0.category == .user && $1.category == .user {
                 if $0.priority != $1.priority {
                     return $0.priority > $1.priority
@@ -103,7 +101,6 @@ struct EventTodoListView: View {
         }
         
         let sortedAllDay = allDayEvents.sorted {
-            // 用户分类按优先级降序
             if $0.category == .user && $1.category == .user {
                 if $0.priority != $1.priority {
                     return $0.priority > $1.priority
@@ -120,7 +117,8 @@ struct EventTodoListView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(spacing: 0) {
+            // 固定标题
             Button {
                 onToggle()
             } label: {
@@ -138,23 +136,31 @@ struct EventTodoListView: View {
             }
             .buttonStyle(.plain)
 
+            // 可滚动的内容区域
             if isExpanded {
-                if sortedEvents.isEmpty {
-                    Text("暂无待办事项")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .padding(.leading, 16)
-                } else {
-                    ForEach(sortedEvents) { event in
-                        EventItemRow(
-                            event: event,
-                            onEdit: onEditEvent,
-                            onDelete: onDeleteEvent,
-                            onComplete: onCompleteEvent,
-                            isOverdue: event.startDate != nil && event.startDate! < Date()
-                        )
+                ScrollView {
+                    if sortedEvents.isEmpty {
+                        Text("暂无待办事项")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.leading, 16)
+                    } else {
+                        LazyVStack(spacing: 4) {
+                            ForEach(sortedEvents) { event in
+                                EventItemRow(
+                                    event: event,
+                                    onEdit: onEditEvent,
+                                    onDelete: onDeleteEvent,
+                                    onComplete: onCompleteEvent,
+                                    isOverdue: event.startDate != nil && event.startDate! < Date()
+                                )
+                            }
+                        }
                     }
                 }
+                .padding(.top, 6)
+                .frame(maxHeight: 200)
             }
         }
     }

@@ -41,78 +41,76 @@ struct EventPanelView: View {
             EventFilterBar(selectedFilter: $filterMode)
                 .padding(.horizontal, 8)
 
-            // 可滚动的待办和已办列表（占满剩余空间）
-            ScrollView {
-                VStack(spacing: 8) {
-                    // 待办事项（倒计时 + 提醒合并）
-                    EventTodoListView(
-                        selectedDate: selectedDate,
-                        calendarService: calendarService,
-                        calendarPreferences: calendarPreferences,
-                        filterMode: filterMode,
-                        isExpanded: $todoExpanded,
-                        onToggle: {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                todoExpanded.toggle()
-                                if todoExpanded {
-                                    completedExpanded = false
-                                }
+            // 待办和已办列表（各自独立滚动）
+            VStack(spacing: 8) {
+                // 待办事项（倒计时 + 提醒合并）
+                EventTodoListView(
+                    selectedDate: selectedDate,
+                    calendarService: calendarService,
+                    calendarPreferences: calendarPreferences,
+                    filterMode: filterMode,
+                    isExpanded: $todoExpanded,
+                    onToggle: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            todoExpanded.toggle()
+                            if todoExpanded {
+                                completedExpanded = false
                             }
-                        },
-                        onEditEvent: { event in
-                            EditEventWindowManager.shared.openEditWindow(
-                                event: event,
-                                calendarService: calendarService,
-                                onDismiss: {}
-                            )
-                        },
-                        onCompleteEvent: { event in
-                            calendarService.toggleEventCompleted(eventID: event.id, isCompleted: true)
-                            refreshTrigger.toggle()
-                        },
-                        onDeleteEvent: { event in
-                            eventToDelete = event
-                            showDeleteConfirmation = true
-                        },
-                        refreshTrigger: $refreshTrigger
-                    )
+                        }
+                    },
+                    onEditEvent: { event in
+                        EditEventWindowManager.shared.openEditWindow(
+                            event: event,
+                            calendarService: calendarService,
+                            onDismiss: {}
+                        )
+                    },
+                    onCompleteEvent: { event in
+                        calendarService.toggleEventCompleted(eventID: event.id, isCompleted: true)
+                        refreshTrigger.toggle()
+                    },
+                    onDeleteEvent: { event in
+                        eventToDelete = event
+                        showDeleteConfirmation = true
+                    },
+                    refreshTrigger: $refreshTrigger
+                )
 
-                    // 已办事项
-                    EventCompletedListView(
-                        selectedDate: selectedDate,
-                        calendarService: calendarService,
-                        calendarPreferences: calendarPreferences,
-                        filterMode: filterMode,
-                        isExpanded: $completedExpanded,
-                        onToggle: {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                completedExpanded.toggle()
-                                if completedExpanded {
-                                    todoExpanded = false
-                                }
+                // 已办事项
+                EventCompletedListView(
+                    selectedDate: selectedDate,
+                    calendarService: calendarService,
+                    calendarPreferences: calendarPreferences,
+                    filterMode: filterMode,
+                    isExpanded: $completedExpanded,
+                    onToggle: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            completedExpanded.toggle()
+                            if completedExpanded {
+                                todoExpanded = false
                             }
-                        },
-                        onEditEvent: { event in
-                            EditEventWindowManager.shared.openEditWindow(
-                                event: event,
-                                calendarService: calendarService,
-                                onDismiss: {}
-                            )
-                        },
-                        onUncompleteEvent: { event in
-                            calendarService.toggleEventCompleted(eventID: event.id, isCompleted: false)
-                            refreshTrigger.toggle()
-                        },
-                        onDeleteEvent: { event in
-                            eventToDelete = event
-                            showDeleteConfirmation = true
-                        },
-                        refreshTrigger: $refreshTrigger
-                    )
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                        }
+                    },
+                    onEditEvent: { event in
+                        EditEventWindowManager.shared.openEditWindow(
+                            event: event,
+                            calendarService: calendarService,
+                            onDismiss: {}
+                        )
+                    },
+                    onUncompleteEvent: { event in
+                        calendarService.toggleEventCompleted(eventID: event.id, isCompleted: false)
+                        refreshTrigger.toggle()
+                    },
+                    onDeleteEvent: { event in
+                        eventToDelete = event
+                        showDeleteConfirmation = true
+                    },
+                    refreshTrigger: $refreshTrigger
+                )
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
             .frame(maxHeight: .infinity)
         }
         .overlay {
