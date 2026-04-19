@@ -7,7 +7,6 @@ import SwiftUI
 
 struct GeneralSettingsView: View {
     @Environment(AppSettings.self) private var appSettings
-    @State private var customColor: Color = Color(hex: AppSettings.shared.iconColorHex)
     @State private var customAccentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     var body: some View {
@@ -25,41 +24,6 @@ struct GeneralSettingsView: View {
                 Picker("菜单栏图标", selection: $settings.iconStyle) {
                     ForEach(IconStyle.allCases, id: \.self) { style in
                         Text(style.displayName).tag(style)
-                    }
-                }
-
-                // 颜色选择（仅实心日期和描边日期显示）
-                if appSettings.iconStyle == .solidDate || appSettings.iconStyle == .strokeDate {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            Text("图标颜色")
-                                .font(.system(size: 12))
-                            Spacer()
-                            ForEach(iconColors, id: \.self) { colorHex in
-                                Circle()
-                                    .fill(Color(hex: colorHex))
-                                    .frame(width: 18, height: 18)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(appSettings.iconColorHex == colorHex ? Color.primary : Color.clear, lineWidth: 1.5)
-                                    )
-                                    .onTapGesture {
-                                        settings.iconColorHex = colorHex
-                                    }
-                            }
-                        }
-                        
-                        HStack {
-                            Text("自定义颜色")
-                                .font(.system(size: 12))
-                            Spacer()
-                            ColorPicker("", selection: $customColor)
-                                .labelsHidden()
-                                .frame(width: 30)
-                                .onChange(of: customColor) { _, newColor in
-                                    settings.iconColorHex = newColor.toHex() ?? settings.iconColorHex
-                                }
-                        }
                     }
                 }
 

@@ -42,9 +42,13 @@ struct SwallowCalendarApp: App {
         // 设置 SettingsWindowManager 的依赖
         SettingsWindowManager.shared.modelContainer = sharedModelContainer
         SettingsWindowManager.shared.appSettings = appSettings
-        
+
         // 配置事件缓存服务
         EventCacheService.shared.configure(with: sharedModelContainer)
+
+        // 检查更新
+        UpdateChecker.shared.checkOnStartup()
+        UpdateChecker.shared.startPeriodicCheck()
     }
 }
 

@@ -15,14 +15,14 @@ final class StatusBarIconManager {
     private var refreshTimer: Timer?
 
     private init() {
-        let iconColor = NSColor(hexString: AppSettings.shared.iconColorHex) ?? .systemBlue
+        let iconColor = NSColor(hexString: AppSettings.shared.accentColorHex) ?? .systemBlue
         currentIcon = Self.generateIcon(style: .solidDate, customFormat: "d", iconColor: iconColor)
         startDayChangeTimer()
     }
 
     func updateIcon() {
         let settings = AppSettings.shared
-        let iconColor = NSColor(hexString: settings.iconColorHex) ?? .systemBlue
+        let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
         let icon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, iconColor: iconColor)
         currentIcon = icon
     }

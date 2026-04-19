@@ -53,14 +53,6 @@ final class AppSettings {
         }
     }
 
-    /// 菜单栏图标颜色（用于实心日期和描边日期）
-    var iconColorHex: String {
-        didSet {
-            UserDefaults.standard.set(iconColorHex, forKey: "iconColorHex")
-            StatusBarIconManager.shared.updateIcon()
-        }
-    }
-    
     /// 应用主题色
     var accentColorHex: String {
         didSet {
@@ -97,7 +89,6 @@ final class AppSettings {
         self.themeMode = ThemeMode(rawValue: UserDefaults.standard.string(forKey: "themeModeRaw") ?? "") ?? .system
         self.weekdayStart = UserDefaults.standard.object(forKey: "weekdayStart") as? Int ?? 2
         self.showLunarCalendar = UserDefaults.standard.object(forKey: "showLunarCalendar") as? Bool ?? true
-        self.iconColorHex = UserDefaults.standard.string(forKey: "iconColorHex") ?? "#007AFF"
         self.accentColorHex = UserDefaults.standard.string(forKey: "accentColorHex") ?? "#007AFF"
     }
 
