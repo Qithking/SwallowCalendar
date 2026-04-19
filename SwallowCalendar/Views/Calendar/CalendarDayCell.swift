@@ -20,6 +20,7 @@ struct CalendarDayCell: View {
     var eventColors: [String] = []
     var systemCalendarColor: Color = Color(hex: "#007AFF")
     var subscriptionCalendarColor: Color = Color(hex: "#FF9500")
+    var isImportant: Bool = false
 
     @State private var showPopover = false
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
@@ -151,10 +152,22 @@ struct CalendarDayCell: View {
             // 今天：主题色实心背景
             RoundedRectangle(cornerRadius: 6)
                 .fill(accentColor)
+        } else if isSelected && isImportant {
+            // 选中+重要：半透明背景 + 边框
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(accentColor, lineWidth: 1)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(accentColor.opacity(0.15))
+                )
         } else if isSelected {
-            // 选中日期：主题色边框
+            // 选中（无重要标记）：主题色边框
             RoundedRectangle(cornerRadius: 6)
                 .stroke(accentColor, lineWidth: 2)
+        } else if isImportant {
+            // 重要日期默认：仅半透明背景，无边框
+            RoundedRectangle(cornerRadius: 6)
+                .fill(accentColor.opacity(0.15))
         } else if isHovered {
             RoundedRectangle(cornerRadius: 6)
                 .fill(accentColor.opacity(0.08))

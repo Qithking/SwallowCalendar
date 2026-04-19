@@ -36,7 +36,7 @@ final class CachedEvent {
     var calendarColorHex: String
     
     /// 事件分类
-    var categoryRaw: String
+    var categoryRaw: String = EventCategory.system.rawValue
     
     /// 缓存更新时间
     var lastUpdated: Date

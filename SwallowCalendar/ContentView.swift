@@ -57,7 +57,6 @@ struct ContentView: View {
             accentColor = Color(hex: newColor)
         }
         .task(id: "initialSync") {
-            // 只在初始化时同步一次
             await initializeServices()
             await syncCalendarEvents()
         }
@@ -123,17 +122,19 @@ struct ContentView: View {
 
         calendarService.loadCalendars()
 
-        // 初始化默认自定义日历（中国节假日）
+        // 初始化默认自定义日历
         if customSources.isEmpty {
             let defaultSource = CustomCalendarSource(
-                name: "中国节假日",
+                name: "重要日历",
                 icsURL: "https://yangh9.github.io/ChinaCalendar/cal_holiday.ics",
-                isEnabled: true
+                isEnabled: false,
+                isImportant: false
             )
             modelContext.insert(defaultSource)
+            try? modelContext.save()
         }
 
-        // 预加载节假日数据
+        // 预加载订阅日历数据
         await icsService.preloadSubscriptions(sources: customSources)
     }
     

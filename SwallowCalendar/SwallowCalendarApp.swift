@@ -18,38 +18,14 @@ struct SwallowCalendarApp: App {
             CachedEvent.self,
         ])
         
-        // 尝试迁移旧数据
-        DatabaseMigrator.migrateIfNeeded()
-        
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
         do {
-            let container = try ModelContainer(for: schema, configurations: [modelConfiguration])
-            // 恢复迁移的数据
-            DatabaseMigrator.restoreMigratedData(to: container)
-            return container
+            return try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
-            // 迁移失败，尝试清理后重建
-            print("[SwiftData] 创建容器失败，清理后重试: \(error)")
-            Self.cleanupAndRetry()
-            let memoryConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-            return try! ModelContainer(for: schema, configurations: [memoryConfig])
+            fatalError("创建 ModelContainer 失败: \(error)")
         }
     }()
-    
-    private static func cleanupAndRetry() {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-        let dbFolder = appSupport.appendingPathComponent("SwallowCalendar")
-        
-        let storeFile = dbFolder.appendingPathComponent("Store.sqlite")
-        let shmFile = dbFolder.appendingPathComponent("Store.sqlite-shm")
-        let walFile = dbFolder.appendingPathComponent("Store.sqlite-wal")
-        
-        try? FileManager.default.removeItem(at: storeFile)
-        try? FileManager.default.removeItem(at: shmFile)
-        try? FileManager.default.removeItem(at: walFile)
-        print("[SwiftData] 已清理损坏的数据库")
-    }
 
     var body: some Scene {
         MenuBarExtra {
@@ -64,9 +40,9 @@ struct SwallowCalendarApp: App {
     }
 
     init() {
-        // 设置 SettingsWindowManager 的依赖
-        SettingsWindowManager.shared.modelContainer = sharedModelContainer
-        SettingsWindowManager.shared.appSettings = appSettings
+        // 设置 SettingsWindowManager 的依赖（使用静态引用确保窗口能访问）
+        SettingsWindowManager.sharedModelContainer = sharedModelContainer
+        SettingsWindowManager.sharedAppSettings = appSettings
 
         // 配置事件缓存服务
         EventCacheService.shared.configure(with: sharedModelContainer)
@@ -96,6 +72,10 @@ struct StatusBarLabelView: View {
 final class SettingsWindowManager {
     static let shared = SettingsWindowManager()
 
+    // 存储主应用的 modelContainer 引用
+    static var sharedModelContainer: ModelContainer?
+    static var sharedAppSettings: AppSettings?
+
     var modelContainer: ModelContainer?
     var appSettings: AppSettings?
     private var settingsWindow: NSWindow?
@@ -123,8 +103,9 @@ final class SettingsWindowManager {
         isOpening = true
         defer { isOpening = false }
 
-        let container = modelContainer ?? createFallbackModelContainer()
-        let settings = appSettings ?? AppSettings.shared
+        // 优先使用主应用传入的 container，否则使用共享静态引用，最后才创建新容器
+        let container = modelContainer ?? Self.sharedModelContainer ?? createFallbackModelContainer()
+        let settings = appSettings ?? Self.sharedAppSettings ?? AppSettings.shared
 
         let settingsView = SettingsView()
             .environment(settings)
@@ -156,12 +137,12 @@ final class SettingsWindowManager {
     }
 
     private func createFallbackModelContainer() -> ModelContainer {
-        let schema = Schema([CalendarPreference.self, CustomCalendarSource.self])
+        let schema = Schema([CalendarPreference.self, CustomCalendarSource.self, CachedEvent.self])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         if let container = try? ModelContainer(for: schema, configurations: [config]) {
             return container
         }
-        return try! ModelContainer(for: CalendarPreference.self, CustomCalendarSource.self)
+        return try! ModelContainer(for: CalendarPreference.self, CustomCalendarSource.self, CachedEvent.self)
     }
 }
 

@@ -188,7 +188,7 @@ final class ICSService {
                 formatter.dateFormat = "yyyyMMdd'T'HHmmss"
             }
         } else {
-            // 全天事件（如节假日）- 使用本地时区的日期
+            // 全天事件 - 使用本地时区的日期
             formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
             formatter.dateFormat = "yyyyMMdd"
         }

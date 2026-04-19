@@ -16,6 +16,7 @@ struct GeneralSettingsView: View {
             // 开机启动
             Section("启动") {
                 Toggle("开机自动启动", isOn: $settings.launchAtLogin)
+                Toggle("启动时检查更新", isOn: $settings.checkUpdateOnFirstLaunch)
             }
 
             // 外观

@@ -75,6 +75,13 @@ final class AppSettings {
         }
     }
 
+    /// 启动时检查更新（仅在初次启动时检查）
+    var checkUpdateOnFirstLaunch: Bool {
+        didSet {
+            UserDefaults.standard.set(checkUpdateOnFirstLaunch, forKey: "checkUpdateOnFirstLaunch")
+        }
+    }
+
     var colorScheme: ColorScheme? {
         switch themeMode {
         case .light: return .light
@@ -107,6 +114,7 @@ final class AppSettings {
         self.accentColorHex = UserDefaults.standard.string(forKey: "accentColorHex") ?? "#007AFF"
         self.systemCalendarColorHex = UserDefaults.standard.string(forKey: "systemCalendarColorHex") ?? "#007AFF"
         self.subscriptionCalendarColorHex = UserDefaults.standard.string(forKey: "subscriptionCalendarColorHex") ?? "#FF9500"
+        self.checkUpdateOnFirstLaunch = UserDefaults.standard.object(forKey: "checkUpdateOnFirstLaunch") as? Bool ?? true
     }
 
     private func updateLaunchAtLogin() {

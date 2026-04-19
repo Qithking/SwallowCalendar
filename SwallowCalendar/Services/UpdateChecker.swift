@@ -63,6 +63,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     private let currentVersion: String
     private var checkTimer: Timer?
     private var checkTimerLastRun: Date?
+    private let hasCheckedOnThisLaunchKey = "hasCheckedUpdateOnThisLaunch"
 
     private override init() {
         self.currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
@@ -76,6 +77,16 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     }
 
     func checkOnStartup() {
+        // 检查设置是否开启且是本次启动首次检查
+        guard AppSettings.shared.checkUpdateOnFirstLaunch else { return }
+        
+        // 每次启动只检查一次
+        let hasCheckedThisLaunch = UserDefaults.standard.bool(forKey: hasCheckedOnThisLaunchKey)
+        guard !hasCheckedThisLaunch else { return }
+        
+        // 标记本次启动已检查
+        UserDefaults.standard.set(true, forKey: hasCheckedOnThisLaunchKey)
+        
         Task {
             await checkForUpdatesWithNotification()
         }
