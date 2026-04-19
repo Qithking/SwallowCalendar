@@ -30,7 +30,7 @@ jobs:
         run: |
           mkdir -p build
 
-          # 构建 arm64 版本
+          # 构建 arm64 版本 
           swift build --configuration release --arch arm64 2>&1
 
           # 查找 arm64 二进制文件 (排除 dSYM)
