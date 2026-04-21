@@ -55,65 +55,26 @@ struct EventTodoListView: View {
             }
         }
         
-        // 分离过期和未过期的事件
-        var overdueTimed: [CalendarEvent] = []
-        var futureTimed: [CalendarEvent] = []
+        // 合并所有待办事项，统一按时间降序排列
+        var allEvents: [CalendarEvent] = timedEvents + allDayEvents
         
-        for event in timedEvents {
-            if let start = event.startDate {
-                if start < now {
-                    overdueTimed.append(event)
-                } else {
-                    futureTimed.append(event)
-                }
+        return allEvents.sorted {
+            // 1. 首先按时间降序（最新的在前）
+            let date0 = $0.startDate ?? .distantPast
+            let date1 = $1.startDate ?? .distantPast
+            if date0 != date1 {
+                return date0 > date1
             }
-        }
-        
-        // 排序（只有 user 分类才有优先级，其他分类优先级为 0）：
-        // 1. 已过期有时间的 - 优先级降序，时间降序
-        // 2. 未过期有时间的 - 优先级降序，时间升序
-        // 3. 无时间的全天事件 - 优先级降序
-        
-        let sortedOverdue = overdueTimed.sorted {
+            // 2. 时间相同则按优先级降序（只有 user 分类才有优先级）
             if $0.category == .user && $1.category == .user {
-                if $0.priority != $1.priority {
-                    return $0.priority > $1.priority
-                }
+                return $0.priority > $1.priority
             } else if $0.category == .user {
                 return true
             } else if $1.category == .user {
                 return false
             }
-            return ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
+            return false
         }
-        
-        let sortedFuture = futureTimed.sorted {
-            if $0.category == .user && $1.category == .user {
-                if $0.priority != $1.priority {
-                    return $0.priority > $1.priority
-                }
-            } else if $0.category == .user {
-                return true
-            } else if $1.category == .user {
-                return false
-            }
-            return ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture)
-        }
-        
-        let sortedAllDay = allDayEvents.sorted {
-            if $0.category == .user && $1.category == .user {
-                if $0.priority != $1.priority {
-                    return $0.priority > $1.priority
-                }
-            } else if $0.category == .user {
-                return true
-            } else if $1.category == .user {
-                return false
-            }
-            return ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture)
-        }
-        
-        return sortedOverdue + sortedFuture + sortedAllDay
     }
 
     var body: some View {
