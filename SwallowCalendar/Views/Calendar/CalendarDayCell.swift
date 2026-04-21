@@ -165,13 +165,22 @@ struct CalendarDayCell: View {
             // 选中（无重要标记）：主题色边框
             RoundedRectangle(cornerRadius: 6)
                 .stroke(accentColor, lineWidth: 2)
+        } else if isHovered && isImportant {
+            // 重要日期 + hover：半透明背景 + 边框
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(accentColor, lineWidth: 1)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(accentColor.opacity(0.15))
+                )
+        } else if isHovered {
+            // 普通日期 hover：显示选中边框样式
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(accentColor, lineWidth: 2)
         } else if isImportant {
             // 重要日期默认：仅半透明背景，无边框
             RoundedRectangle(cornerRadius: 6)
                 .fill(accentColor.opacity(0.15))
-        } else if isHovered {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(accentColor.opacity(0.08))
         } else {
             Color.clear
         }
