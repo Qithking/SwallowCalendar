@@ -7,6 +7,7 @@
 
 import SwiftUI
 import EventKit
+import SwiftData
 
 struct EventCompletedListView: View {
     let selectedDate: Date
@@ -24,21 +25,22 @@ struct EventCompletedListView: View {
         _ = refreshTrigger
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let range = filterMode.dateRange(from: selectedDate)
-        
+
         var result: [CalendarEvent] = []
-        
-        // 从缓存读取事件
+
+        // 从缓存读取事件（包括系统提醒，包含无到期时间的）
         let cachedEvents = calendarService.fetchCachedEvents(
             from: range.start,
             to: range.end,
-            calendars: enabledCals
+            calendars: enabledCals,
+            includeNoDateReminders: true
         )
         for event in cachedEvents {
-            if !event.isSubscription && event.isCompleted {
+            if event.category == .user && event.isCompleted {
                 result.append(event)
             }
         }
-        
+
         // 全天事件
         let dayEvents = calendarService.fetchCachedAllDayEvents(
             from: range.start,
@@ -46,21 +48,15 @@ struct EventCompletedListView: View {
             calendars: enabledCals
         )
         for event in dayEvents {
-            if !event.isSubscription && event.isCompleted {
+            if event.category == .user && event.isCompleted {
                 result.append(event)
             }
         }
-        
-        // 排序：优先级降序，时间降序（只有 user 分类才有优先级）
+
+        // 排序：优先级降序，时间降序
         return result.sorted {
-            if $0.category == .user && $1.category == .user {
-                if $0.priority != $1.priority {
-                    return $0.priority > $1.priority
-                }
-            } else if $0.category == .user {
-                return true
-            } else if $1.category == .user {
-                return false
+            if $0.priority != $1.priority {
+                return $0.priority > $1.priority
             }
             return ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
         }

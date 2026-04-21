@@ -28,6 +28,44 @@ struct CalendarSettingsView: View {
             // 显示选项
             Section("显示选项") {
                 Toggle("显示农历", isOn: $settings.showLunarCalendar)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("同步系统提醒", isOn: $settings.syncSystemReminders)
+                        .help("将系统提醒应用中的待办事项同步到待办列表中")
+                    
+                    // 提醒权限状态提示
+                    if settings.syncSystemReminders {
+                        HStack(spacing: 6) {
+                            let status = CalendarService.shared.reminderAuthorizationStatus
+                            switch status {
+                            case .notDetermined:
+                                Text("需要授权访问提醒")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.orange)
+                            case .restricted, .denied:
+                                Text("权限被拒绝，点击前往设置开启")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.red)
+                                Button("前往设置") {
+                                    openReminderSettings()
+                                }
+                                .font(.system(size: 10))
+                                .buttonStyle(.plain)
+                                .foregroundColor(.blue)
+                            case .fullAccess:
+                                Text("已授权")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.green)
+                            case .writeOnly:
+                                Text("仅写入权限")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.orange)
+                            @unknown default:
+                                EmptyView()
+                            }
+                        }
+                    }
+                }
             }
 
             // 日历颜色
@@ -116,7 +154,6 @@ struct CalendarSettingsView: View {
         .tint(Color(hex: appSettings.accentColorHex))
         .task {
             calendarService.loadCalendars()
-            print("[CalendarSettings] 视图加载，日历偏好: \(calendarPreferences.count), 订阅源: \(customSources.count)")
         }
         .onDisappear {
             // 窗口关闭时确保保存所有更改
@@ -226,8 +263,6 @@ struct CalendarSettingsView: View {
     // MARK: - 数据操作
 
     private func updateCalendarEnabled(calendarID: String, isEnabled: Bool) {
-        print("[CalendarSettings] 更新日历启用状态: \(calendarID) = \(isEnabled)")
-        
         if let pref = calendarPreferences.first(where: { $0.calendarID == calendarID }) {
             pref.isEnabled = isEnabled
         } else {
@@ -239,8 +274,6 @@ struct CalendarSettingsView: View {
     }
 
     private func updateCalendarImportant(calendarID: String, isImportant: Bool) {
-        print("[CalendarSettings] 更新日历重要状态: \(calendarID) = \(isImportant)")
-        
         // 如果设置为重点，先取消其他所有日历的重点标识
         if isImportant {
             clearAllImportantSources()
@@ -257,8 +290,6 @@ struct CalendarSettingsView: View {
     }
 
     private func updateSubscriptionEnabled(id: PersistentIdentifier, isEnabled: Bool) {
-        print("[CalendarSettings] 更新订阅源启用状态: \(id) = \(isEnabled)")
-        
         if let source = customSources.first(where: { $0.id == id }) {
             source.isEnabled = isEnabled
         }
@@ -267,8 +298,6 @@ struct CalendarSettingsView: View {
     }
 
     private func updateSubscriptionImportant(id: PersistentIdentifier, isImportant: Bool) {
-        print("[CalendarSettings] 更新订阅源重要状态: \(id) = \(isImportant)")
-        
         // 如果设置为重点，先取消其他所有日历的重点标识
         if isImportant {
             clearAllImportantSources()
@@ -282,8 +311,6 @@ struct CalendarSettingsView: View {
     }
 
     private func clearAllImportantSources() {
-        print("[CalendarSettings] 清除所有重要标记")
-        
         for pref in calendarPreferences {
             pref.isImportant = false
         }
@@ -293,8 +320,6 @@ struct CalendarSettingsView: View {
     }
 
     private func addCustomSource() {
-        print("[CalendarSettings] 添加新订阅源: \(newSourceName)")
-        
         let source = CustomCalendarSource(
             name: newSourceName,
             icsURL: newSourceURL,
@@ -310,8 +335,6 @@ struct CalendarSettingsView: View {
     }
 
     private func deleteCustomSource(id: PersistentIdentifier) {
-        print("[CalendarSettings] 删除订阅源: \(id)")
-        
         if let source = customSources.first(where: { $0.id == id }) {
             modelContext.delete(source)
         }
@@ -352,6 +375,14 @@ struct CalendarSettingsView: View {
                 showingSaveConfirmation = true
             }
         }
+    }
+
+    /// 打开系统设置中的提醒权限页面
+    private func openReminderSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 }
 

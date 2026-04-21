@@ -66,8 +66,10 @@ struct EventPanelView: View {
                         )
                     },
                     onCompleteEvent: { event in
-                        calendarService.toggleEventCompleted(eventID: event.id, isCompleted: true)
-                        refreshTrigger.toggle()
+                        Task { @MainActor in
+                            await calendarService.toggleEventCompleted(eventID: event.id, isCompleted: true, isReminder: event.isReminder)
+                            refreshTrigger.toggle()
+                        }
                     },
                     onDeleteEvent: { event in
                         eventToDelete = event
@@ -99,8 +101,10 @@ struct EventPanelView: View {
                         )
                     },
                     onUncompleteEvent: { event in
-                        calendarService.toggleEventCompleted(eventID: event.id, isCompleted: false)
-                        refreshTrigger.toggle()
+                        Task { @MainActor in
+                            await calendarService.toggleEventCompleted(eventID: event.id, isCompleted: false, isReminder: event.isReminder)
+                            refreshTrigger.toggle()
+                        }
                     },
                     onDeleteEvent: { event in
                         eventToDelete = event
@@ -142,7 +146,7 @@ struct EventPanelView: View {
 
     private func deleteEvent(_ event: CalendarEvent) {
         do {
-            try calendarService.deleteEvent(eventID: event.id)
+            try calendarService.deleteEvent(eventID: event.id, isReminder: event.isReminder)
         } catch {
             print("Failed to delete event: \(error)")
         }

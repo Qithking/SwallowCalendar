@@ -142,17 +142,20 @@ struct EditEventSheet: View {
 
     private func saveEvent() {
         isProcessing = true
-        do {
-            try calendarService.updateEvent(
-                eventID: event.id,
-                title: title,
-                startDate: isAllDay ? startDate : startDate,
-                endDate: isAllDay ? nil : startDate.addingTimeInterval(3600)
-            )
-            onDismiss?()
-        } catch {
-            print("Failed to update event: \(error)")
+        Task { @MainActor in
+            do {
+                try calendarService.updateEvent(
+                    eventID: event.id,
+                    title: title,
+                    startDate: startDate,
+                    endDate: isAllDay ? nil : startDate.addingTimeInterval(3600),
+                    isReminder: event.isReminder
+                )
+                onDismiss?()
+            } catch {
+                print("Failed to update event: \(error)")
+            }
+            isProcessing = false
         }
-        isProcessing = false
     }
 }

@@ -25,56 +25,54 @@ struct EventTodoListView: View {
         _ = refreshTrigger
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let range = filterMode.dateRange(from: selectedDate)
-        let now = Date()
-        
+
         // 收集所有未完成的事件（有时间和全天）
         var timedEvents: [CalendarEvent] = []
         var allDayEvents: [CalendarEvent] = []
-        
-        // 有时间的事件
+        var noDateEvents: [CalendarEvent] = []  // 无到期时间的提醒
+
+        // 有时间的事件（包括系统提醒，包含无到期时间的）
         let cachedEvents = calendarService.fetchCachedEvents(
             from: range.start,
             to: range.end,
-            calendars: enabledCals
+            calendars: enabledCals,
+            includeNoDateReminders: true
         )
         for event in cachedEvents {
-            if !event.isSubscription && !event.isCompleted && event.hasTime {
+            guard event.category == .user && !event.isCompleted else { continue }
+            
+            if event.startDate == nil {
+                // 无到期时间的提醒
+                noDateEvents.append(event)
+            } else if event.hasTime {
                 timedEvents.append(event)
-            }
-        }
-        
-        // 全天事件
-        let dayEvents = calendarService.fetchCachedAllDayEvents(
-            from: range.start,
-            to: range.end,
-            calendars: enabledCals
-        )
-        for event in dayEvents {
-            if !event.isSubscription && !event.isCompleted {
+            } else {
                 allDayEvents.append(event)
             }
         }
-        
-        // 合并所有待办事项，统一按时间降序排列
+
+        // 合并所有待办事项
+        // 排序规则：
+        // 1. 有时间的按时间降序（最新的在前）
+        // 2. 全天事件按时间降序
+        // 3. 无到期时间的提醒放在最后
         var allEvents: [CalendarEvent] = timedEvents + allDayEvents
         
-        return allEvents.sorted {
+        allEvents.sort {
             // 1. 首先按时间降序（最新的在前）
             let date0 = $0.startDate ?? .distantPast
             let date1 = $1.startDate ?? .distantPast
             if date0 != date1 {
                 return date0 > date1
             }
-            // 2. 时间相同则按优先级降序（只有 user 分类才有优先级）
-            if $0.category == .user && $1.category == .user {
-                return $0.priority > $1.priority
-            } else if $0.category == .user {
-                return true
-            } else if $1.category == .user {
-                return false
-            }
-            return false
+            // 2. 时间相同则按优先级降序
+            return $0.priority > $1.priority
         }
+        
+        // 无到期时间的提醒放在最后
+        allEvents.append(contentsOf: noDateEvents)
+
+        return allEvents
     }
 
     var body: some View {

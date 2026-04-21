@@ -69,7 +69,12 @@ struct EventItemRow: View {
                     .foregroundColor(event.isCompleted ? .secondary : .primary)
 
                 HStack(spacing: 4) {
-                    if event.hasTime {
+                    if event.startDate == nil {
+                        // 无到期时间的提醒
+                        Text("无到期时间")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    } else if event.hasTime {
                         Text(formattedDateTime)
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
@@ -87,6 +92,19 @@ struct EventItemRow: View {
                         Text(formattedDate)
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
+                    }
+
+                    // 系统提醒标签
+                    if event.isReminder {
+                        Text("提醒")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color.orange.opacity(0.15))
+                            )
                     }
                 }
             }

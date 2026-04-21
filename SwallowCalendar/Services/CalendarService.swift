@@ -13,6 +13,7 @@ final class CalendarService {
 
     private let eventStore = EKEventStore()
     var authorizationStatus: EKAuthorizationStatus = .notDetermined
+    var reminderAuthorizationStatus: EKAuthorizationStatus = .notDetermined
     var calendars: [EKCalendar] = []
     var isLoading = false
     
@@ -21,21 +22,32 @@ final class CalendarService {
 
     private init() {
         authorizationStatus = EKEventStore.authorizationStatus(for: .event)
+        reminderAuthorizationStatus = EKEventStore.authorizationStatus(for: .reminder)
     }
 
     // MARK: - Authorization
 
+    /// 请求日历和提醒权限（同时请求，只弹一次授权框）
     @MainActor
     func requestAccess() async -> Bool {
         do {
-            let granted = try await eventStore.requestFullAccessToEvents()
-            authorizationStatus = granted ? .fullAccess : .denied
-            if granted {
+            // 同时请求日历和提醒权限
+            async let eventsGranted = eventStore.requestFullAccessToEvents()
+            async let remindersGranted = eventStore.requestFullAccessToReminders()
+            
+            let (eventResult, reminderResult) = try await (eventsGranted, remindersGranted)
+            
+            authorizationStatus = eventResult ? .fullAccess : .denied
+            reminderAuthorizationStatus = reminderResult ? .fullAccess : .denied
+            
+            if eventResult {
                 loadCalendars()
             }
-            return granted
+            
+            return eventResult
         } catch {
             authorizationStatus = .denied
+            reminderAuthorizationStatus = .denied
             return false
         }
     }
@@ -53,10 +65,7 @@ final class CalendarService {
         let enabledIDs = Set(preferences.filter(\.isEnabled).map(\.calendarID))
 
         if enabledIDs.isEmpty {
-            // 没有配置偏好，返回所有非订阅日历（用户日历）
-            let userCalendars = calendars.filter { $0.type != .subscription }
-            print("[CalendarService] enabledCalendars: no preferences, returning \(userCalendars.count) user calendars")
-            return userCalendars
+            return calendars.filter { $0.type != .subscription }
         }
 
         // 返回配置的日历 + 所有用户日历（确保用户创建的事件能显示）
@@ -64,7 +73,6 @@ final class CalendarService {
         let userCalendars = calendars.filter { $0.type != .subscription && !enabledIDs.contains($0.calendarIdentifier) }
         result.append(contentsOf: userCalendars)
 
-        print("[CalendarService] enabledCalendars: enabledIDs=\(enabledIDs), calendars count=\(calendars.count), result count=\(result.count)")
         return result
     }
 
@@ -82,8 +90,9 @@ final class CalendarService {
     }
     
     /// 从缓存获取指定日期范围的事件（优先使用缓存，加快启动速度）
-    func fetchCachedEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil) -> [CalendarEvent] {
-        let cached = cacheService.getEvents(from: startDate, to: endDate, calendars: calendars)
+    /// - Note: 默认不包含无到期时间的系统提醒（用于日历视图）
+    func fetchCachedEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CalendarEvent] {
+        let cached = cacheService.getEvents(from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
         return cached.map { cachedToCalendarEvent($0) }
     }
 
@@ -94,8 +103,9 @@ final class CalendarService {
     }
     
     /// 从缓存获取某天的事件（优先使用缓存）
-    func fetchCachedEvents(for date: Date, calendars: [EKCalendar]? = nil) -> [CalendarEvent] {
-        let cached = cacheService.getEvents(for: date, calendars: calendars)
+    /// - Note: 默认不包含无到期时间的系统提醒（用于日历视图）
+    func fetchCachedEvents(for date: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CalendarEvent] {
+        let cached = cacheService.getEvents(for: date, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
         return cached.map { cachedToCalendarEvent($0) }
     }
 
@@ -104,16 +114,7 @@ final class CalendarService {
         let now = Date()
         let end = Calendar.current.date(byAdding: .year, value: 2, to: now)!
         var events = fetchEvents(from: now, to: end, calendars: calendars)
-        print("[CalendarService] fetchUpcomingTimedEvents: raw events count=\(events.count)")
-        print("[CalendarService] now=\(now), end=\(end)")
-
-        // 调试：检查前几个事件
-        for (i, event) in events.prefix(5).enumerated() {
-            print("[CalendarService] event[\(i)]: title=\(event.title), isAllDay=\(event.isAllDay), hasTime=\(event.hasTime), startDate=\(String(describing: event.startDate))")
-        }
-
         events = events.filter { $0.hasTime && $0.startDate ?? Date.distantPast > now }
-        print("[CalendarService] fetchUpcomingTimedEvents: filtered events count=\(events.count)")
         events.sort { $0.startDate ?? .distantFuture < $1.startDate ?? .distantFuture }
         return events
     }
@@ -127,18 +128,124 @@ final class CalendarService {
     }
     
     /// 从缓存获取全天事件
+    /// - Note: 包含无到期时间的系统提醒（用于待办列表）
     func fetchCachedAllDayEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil) -> [CalendarEvent] {
-        var events = fetchCachedEvents(from: startDate, to: endDate, calendars: calendars)
+        var events = fetchCachedEvents(from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: true)
         events = events.filter(\.isAllDay)
         events.sort { $0.startDate ?? .distantFuture < $1.startDate ?? .distantFuture }
         return events
     }
 
+    // MARK: - Reminders
+
+    /// 获取系统提醒（待办事项）
+    /// - Parameters:
+    ///   - includeCompleted: 是否包含已完成的提醒，默认 false
+    ///   - from: 可选的开始日期，用于过滤有到期时间的提醒
+    ///   - to: 可选的结束日期，用于过滤有到期时间的提醒
+    /// - Note: 没有到期时间的提醒不受日期范围限制，始终返回
+    func fetchReminders(includeCompleted: Bool = false, from: Date? = nil, to: Date? = nil) async -> [CalendarEvent] {
+        guard reminderAuthorizationStatus == .fullAccess else {
+            return []
+        }
+
+        let predicate = eventStore.predicateForReminders(in: nil)
+
+        return await withCheckedContinuation { continuation in
+            eventStore.fetchReminders(matching: predicate) { reminders in
+                let mappedReminders = reminders?.compactMap { reminder -> CalendarEvent? in
+                    // 过滤已完成项（根据参数决定）
+                    if !includeCompleted && reminder.isCompleted {
+                        return nil
+                    }
+                    
+                    // 判断是否有到期时间
+                    if let dueDate = reminder.dueDateComponents?.date {
+                        // 有到期时间的提醒：按照日期范围过滤
+                        if let start = from, dueDate < start {
+                            return nil
+                        }
+                        if let end = to, dueDate > end {
+                            return nil
+                        }
+                        return self.mapReminderToCalendarEvent(reminder, dueDate: dueDate)
+                    } else {
+                        // 没有到期时间的提醒：不受日期范围限制，直接返回
+                        return self.mapReminderToCalendarEvent(reminder, dueDate: nil)
+                    }
+                } ?? []
+
+                continuation.resume(returning: mappedReminders)
+            }
+        }
+    }
+
+    /// 将 EKReminder 转换为 CalendarEvent
+    private func mapReminderToCalendarEvent(_ reminder: EKReminder, dueDate: Date?) -> CalendarEvent {
+        let isAllDay: Bool
+        if let dueDate = dueDate {
+            isAllDay = reminder.dueDateComponents?.hour == nil && reminder.dueDateComponents?.minute == nil
+        } else {
+            isAllDay = true  // 无到期时间的提醒视为全天事件
+        }
+        return CalendarEvent(
+            id: reminder.calendarItemIdentifier,
+            title: reminder.title ?? "",
+            startDate: dueDate,
+            endDate: dueDate,
+            isAllDay: isAllDay,
+            calendarTitle: reminder.calendar?.title ?? "提醒",
+            calendarColorHex: reminder.calendar?.cgColor?.hexString ?? "#FF9500",
+            category: .user,
+            isCompleted: reminder.isCompleted,
+            priority: 0,
+            isReminder: true
+        )
+    }
+
     // MARK: - CRUD
 
-    /// 创建日历事件
+    /// 创建日历事件或提醒
+    /// - Note: 如果 asReminder 为 true，则创建到系统提醒；否则创建到系统日历
     @MainActor
     func createEvent(
+        title: String,
+        startDate: Date,
+        endDate: Date?,
+        isAllDay: Bool,
+        calendar: EKCalendar?,
+        priority: EventPriority? = nil,
+        recurrence: RecurrenceType? = nil,
+        reminderMinutes: Int? = nil,
+        category: EventCategory = .system,
+        asReminder: Bool = false
+    ) throws {
+        if asReminder {
+            try createReminder(
+                title: title,
+                dueDate: startDate,
+                isAllDay: isAllDay,
+                priority: priority,
+                recurrence: recurrence
+            )
+        } else {
+            try createCalendarEvent(
+                title: title,
+                startDate: startDate,
+                endDate: endDate,
+                isAllDay: isAllDay,
+                calendar: calendar,
+                priority: priority,
+                recurrence: recurrence,
+                reminderMinutes: reminderMinutes,
+                category: category
+            )
+        }
+    }
+    
+    /// 创建系统日历事件
+    @MainActor
+    private func createCalendarEvent(
         title: String,
         startDate: Date,
         endDate: Date?,
@@ -156,7 +263,6 @@ final class CalendarService {
         event.isAllDay = isAllDay
         let targetCalendar = calendar ?? eventStore.defaultCalendarForNewEvents ?? calendars.first
         event.calendar = targetCalendar
-        print("[CalendarService] createEvent: title=\(title), calendar=\(targetCalendar?.title ?? "nil"), calendarID=\(targetCalendar?.calendarIdentifier ?? "nil"), isAllDay=\(isAllDay), category=\(category)")
 
         // 设置重复规则
         if let recurrence = recurrence, recurrence != .none {
@@ -177,22 +283,19 @@ final class CalendarService {
             let alarm = EKAlarm(relativeOffset: TimeInterval(-minutes * 60))
             event.addAlarm(alarm)
         }
-        // 如果 reminderMinutes 为 nil 或 <= 0，不添加提醒
 
         guard event.calendar != nil else {
             throw EventError.noCalendarAvailable
         }
         try eventStore.save(event, span: .thisEvent)
         
-        // 保存到本地缓存，确保能立即显示在列表中
-        if let context = cacheService.context,
-           let start = event.startDate,
-           let end = event.endDate {
+        // 保存到本地缓存
+        if let context = cacheService.context {
             let cached = CachedEvent(
                 eventID: event.eventIdentifier,
                 title: event.title ?? "",
-                startDate: start,
-                endDate: end,
+                startDate: event.startDate,
+                endDate: event.endDate,
                 isAllDay: event.isAllDay,
                 calendarID: event.calendar.calendarIdentifier,
                 calendarTitle: event.calendar.title,
@@ -204,37 +307,135 @@ final class CalendarService {
             try? context.save()
         }
     }
-
-    /// 删除日历事件
-    @MainActor
-    func deleteEvent(eventID: String) throws {
-        guard let event = eventStore.event(withIdentifier: eventID) else { return }
-        try eventStore.remove(event, span: .thisEvent)
-    }
     
-    /// 标记事件完成/未完成（仅影响缓存中的标记，不影响系统事件）
-    func toggleEventCompleted(eventID: String, isCompleted: Bool) {
-        guard let context = cacheService.context else { return }
+    /// 创建系统提醒
+    @MainActor
+    private func createReminder(
+        title: String,
+        dueDate: Date,
+        isAllDay: Bool,
+        priority: EventPriority? = nil,
+        recurrence: RecurrenceType? = nil
+    ) throws {
+        guard reminderAuthorizationStatus == .fullAccess else {
+            throw EventError.noReminderAccess
+        }
         
-        let descriptor = FetchDescriptor<CachedEvent>()
-        if let events = try? context.fetch(descriptor),
-           let cached = events.first(where: { $0.eventID == eventID }) {
-            cached.isCompleted = isCompleted
+        let reminder = EKReminder(eventStore: eventStore)
+        reminder.title = title
+        reminder.calendar = eventStore.defaultCalendarForNewReminders() ?? eventStore.calendars(for: .reminder).first
+        
+        // 设置到期时间
+        var components = Calendar.current.dateComponents([.year, .month, .day], from: dueDate)
+        if !isAllDay {
+            components.hour = Calendar.current.component(.hour, from: dueDate)
+            components.minute = Calendar.current.component(.minute, from: dueDate)
+        }
+        reminder.dueDateComponents = components
+        
+        try eventStore.save(reminder, commit: true)
+        
+        // 保存到本地缓存
+        if let context = cacheService.context {
+            let cached = CachedEvent(
+                eventID: reminder.calendarItemIdentifier,
+                title: reminder.title ?? "",
+                startDate: dueDate,
+                endDate: dueDate,
+                isAllDay: isAllDay,
+                calendarID: "reminder",
+                calendarTitle: "提醒",
+                calendarColorHex: reminder.calendar?.cgColor?.hexString ?? "#FF9500",
+                category: .user,
+                isCompleted: false,
+                priority: priority?.rawValue ?? 0
+            )
+            context.insert(cached)
             try? context.save()
         }
     }
 
-    /// 更新日历事件
+    /// 删除事件（日历事件或提醒）
     @MainActor
-    func updateEvent(eventID: String, title: String?, startDate: Date?, endDate: Date?) throws {
-        guard let event = eventStore.event(withIdentifier: eventID) else { return }
-        if let title { event.title = title }
-        if let startDate { event.startDate = startDate }
-        if let endDate { event.endDate = endDate }
-        try eventStore.save(event, span: .thisEvent)
+    func deleteEvent(eventID: String, isReminder: Bool = false) throws {
+        if isReminder {
+            guard let reminder = eventStore.calendarItem(withIdentifier: eventID) as? EKReminder else { return }
+            try eventStore.remove(reminder, commit: true)
+        } else {
+            guard let event = eventStore.event(withIdentifier: eventID) else { return }
+            try eventStore.remove(event, span: .thisEvent)
+        }
+        
+        // 从本地缓存删除
+        if let cached = findCachedEvent(eventID: eventID) {
+            cacheService.context?.delete(cached)
+            try? cacheService.context?.save()
+        }
+    }
+    
+    /// 标记事件完成/未完成
+    /// - Note: 对于系统提醒，会同步更新到系统；对于日历事件，仅更新本地缓存
+    @MainActor
+    func toggleEventCompleted(eventID: String, isCompleted: Bool, isReminder: Bool = false) {
+        if isReminder {
+            guard let reminder = eventStore.calendarItem(withIdentifier: eventID) as? EKReminder else { return }
+            reminder.isCompleted = isCompleted
+            try? eventStore.save(reminder, commit: true)
+        }
+        
+        // 更新本地缓存
+        if let cached = findCachedEvent(eventID: eventID) {
+            cached.isCompleted = isCompleted
+            try? cacheService.context?.save()
+        }
+    }
+
+    /// 更新事件（日历事件或提醒）
+    @MainActor
+    func updateEvent(eventID: String, title: String?, startDate: Date?, endDate: Date?, isReminder: Bool = false) throws {
+        if isReminder {
+            guard let reminder = eventStore.calendarItem(withIdentifier: eventID) as? EKReminder else { return }
+            if let title { reminder.title = title }
+            if let startDate {
+                var components = Calendar.current.dateComponents([.year, .month, .day], from: startDate)
+                // 如果不是全天事件，添加时间
+                if let end = endDate {
+                    let interval = end.timeIntervalSince(startDate)
+                    if interval < 86400 { // 小于一天，说明有具体时间
+                        components.hour = Calendar.current.component(.hour, from: startDate)
+                        components.minute = Calendar.current.component(.minute, from: startDate)
+                    }
+                }
+                reminder.dueDateComponents = components
+            }
+            try eventStore.save(reminder, commit: true)
+        } else {
+            guard let event = eventStore.event(withIdentifier: eventID) else { return }
+            if let title { event.title = title }
+            if let startDate { event.startDate = startDate }
+            if let endDate { event.endDate = endDate }
+            try eventStore.save(event, span: .thisEvent)
+        }
+        
+        // 更新本地缓存
+        if let cached = findCachedEvent(eventID: eventID) {
+            if let title { cached.title = title }
+            if let startDate { cached.startDate = startDate }
+            if let endDate { cached.endDate = endDate }
+            cached.lastUpdated = Date()
+            try? cacheService.context?.save()
+        }
     }
 
     // MARK: - Sync
+
+    /// 根据 eventID 查找缓存事件
+    private func findCachedEvent(eventID: String) -> CachedEvent? {
+        guard let context = cacheService.context else { return nil }
+        var descriptor = FetchDescriptor<CachedEvent>(predicate: #Predicate { $0.eventID == eventID })
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
+    }
 
     /// 手动同步日历事件到本地缓存
     func manualSync(preferences: [CalendarPreference], completion: ((Bool, String) -> Void)? = nil) {
@@ -266,10 +467,11 @@ final class CalendarService {
             calendarColorHex: ekEvent.calendar.cgColor?.hexString ?? "#007AFF",
             category: category,
             isCompleted: false,
-            priority: 0  // 系统日历事件没有优先级
+            priority: 0,  // 系统日历事件没有优先级
+            isReminder: false
         )
     }
-    
+
     private func cachedToCalendarEvent(_ cached: CachedEvent) -> CalendarEvent {
         return CalendarEvent(
             id: cached.eventID,
@@ -281,10 +483,11 @@ final class CalendarService {
             calendarColorHex: cached.calendarColorHex,
             category: cached.category,
             isCompleted: cached.isCompleted,
-            priority: cached.priority
+            priority: cached.priority,
+            isReminder: cached.calendarTitle == "提醒"
         )
     }
-
+    
     private func dayRange(for date: Date) -> (start: Date, end: Date) {
         let cal = Calendar.current
         let start = cal.startOfDay(for: date)
@@ -297,11 +500,17 @@ final class CalendarService {
 
 enum EventError: LocalizedError {
     case noCalendarAvailable
+    case noReminderAccess
+    case noReminderCalendarAvailable
 
     var errorDescription: String? {
         switch self {
         case .noCalendarAvailable:
             return "没有可用的日历，请先在系统日历中创建一个日历账户"
+        case .noReminderAccess:
+            return "没有提醒权限，请在系统设置中授权访问提醒"
+        case .noReminderCalendarAvailable:
+            return "没有可用的提醒列表，请先在系统提醒中创建一个列表"
         }
     }
 }

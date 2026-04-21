@@ -82,6 +82,17 @@ final class AppSettings {
         }
     }
 
+    /// 是否同步系统提醒
+    var syncSystemReminders: Bool {
+        didSet {
+            UserDefaults.standard.set(syncSystemReminders, forKey: "syncSystemReminders")
+            // 关闭时清除提醒缓存
+            if !syncSystemReminders {
+                EventCacheService.shared.clearRemindersCache()
+            }
+        }
+    }
+
     var colorScheme: ColorScheme? {
         switch themeMode {
         case .light: return .light
@@ -115,6 +126,7 @@ final class AppSettings {
         self.systemCalendarColorHex = UserDefaults.standard.string(forKey: "systemCalendarColorHex") ?? "#007AFF"
         self.subscriptionCalendarColorHex = UserDefaults.standard.string(forKey: "subscriptionCalendarColorHex") ?? "#FF9500"
         self.checkUpdateOnFirstLaunch = UserDefaults.standard.object(forKey: "checkUpdateOnFirstLaunch") as? Bool ?? true
+        self.syncSystemReminders = UserDefaults.standard.object(forKey: "syncSystemReminders") as? Bool ?? false
     }
 
     private func updateLaunchAtLogin() {

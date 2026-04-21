@@ -6,6 +6,8 @@
 	<false/>
 	<key>com.apple.security.calendar</key>
 	<true/>
+	<key>com.apple.security.reminders</key>
+	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
 	<key>com.apple.security.user-selected-read-only</key>

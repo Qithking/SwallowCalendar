@@ -65,7 +65,7 @@ struct ContentView: View {
                 shouldSyncOnAppear = true
             }
         }
-        .task(id: "syncTrigger") {
+        .task(id: shouldSyncOnAppear ? "sync" : "idle") {
             // 首次启动或点击菜单栏图标时同步
             if !hasInitialized || shouldSyncOnAppear {
                 await initializeServices()
@@ -110,7 +110,7 @@ struct ContentView: View {
     // MARK: - Services Init
 
     private func initializeServices() async {
-        // 请求日历权限
+        // 请求日历和提醒权限（同时请求，只弹一次授权框）
         if calendarService.authorizationStatus == .notDetermined {
             _ = await calendarService.requestAccess()
         }
@@ -136,10 +136,15 @@ struct ContentView: View {
     /// 后台同步日历事件到本地缓存
     private func syncCalendarEvents() async {
         guard calendarService.authorizationStatus == .fullAccess else { return }
-        
+
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         await calendarService.cacheService.syncEvents(from: calendarService, calendars: enabledCals)
-        
+
+        // 同步系统提醒（如果开启）
+        if appSettings.syncSystemReminders && calendarService.reminderAuthorizationStatus == .fullAccess {
+            await calendarService.cacheService.syncReminders(from: calendarService)
+        }
+
         // 同步完成后刷新视图
         refreshTrigger.toggle()
     }

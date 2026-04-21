@@ -23,6 +23,7 @@ struct TaskInputView: View {
     @State private var taskReminderMinutes: Int = 10
     @State private var taskIsLunar = false
     @State private var showAttributeEditor = false
+    @State private var createAsReminder = false  // 是否创建为系统提醒
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     var body: some View {
@@ -172,7 +173,7 @@ struct TaskInputView: View {
                 Spacer()
             }
 
-            // 第四行：提醒时间
+            // 第四行：提醒时间 + 创建为提醒开关
             HStack(spacing: 12) {
                 HStack(spacing: 4) {
                     Text("提醒:")
@@ -188,6 +189,18 @@ struct TaskInputView: View {
                     }
                     .labelsHidden()
                     .scaleEffect(0.75)
+                }
+                
+                Divider().frame(height: 16)
+                
+                // 创建为系统提醒开关
+                HStack(spacing: 4) {
+                    Text("添加到提醒:")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    Toggle("", isOn: $createAsReminder)
+                        .toggleStyle(.switch)
+                        .scaleEffect(0.65)
                 }
 
                 Spacer()
@@ -218,7 +231,6 @@ struct TaskInputView: View {
         guard !text.isEmpty else { return }
 
         isProcessing = true
-        print("[TaskInput] 添加任务: title=\(taskTitle.isEmpty ? "待办事项" : taskTitle), date=\(taskDate), reminder=\(taskReminderMinutes)分钟")
 
         let isAllDay = Calendar.current.component(.hour, from: taskDate) == 0
             && Calendar.current.component(.minute, from: taskDate) == 0
@@ -234,7 +246,8 @@ struct TaskInputView: View {
                     priority: taskPriority == .none ? nil : taskPriority,
                     recurrence: taskRecurrence,
                     reminderMinutes: taskReminderMinutes > 0 ? taskReminderMinutes : nil,
-                    category: .user
+                    category: .user,
+                    asReminder: createAsReminder
                 )
                 await MainActor.run {
                     inputText = ""
@@ -242,7 +255,6 @@ struct TaskInputView: View {
                     refreshTrigger.toggle()  // 触发视图刷新
                     onTaskAdded?()
                 }
-                print("[TaskInput] 任务添加成功")
             } catch {
                 print("[TaskInput] 任务添加失败: \(error)")
             }
@@ -260,6 +272,7 @@ struct TaskInputView: View {
         taskRecurrence = .none
         taskReminderMinutes = 10
         taskIsLunar = false
+        createAsReminder = false
         showAttributeEditor = false
     }
 
