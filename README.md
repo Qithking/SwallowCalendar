@@ -1,7 +1,7 @@
 # SwallowCalendar
 
 <p align="center">
-  <img src="https://img.shields.io/badge/macOS-13.0%2B-blue" alt="macOS">
+  <img src="https://img.shields.io/badge/macOS-14.0%2B-blue" alt="macOS">
   <img src="https://img.shields.io/badge/Swift-5.9-orange" alt="Swift">
   <img src="https://img.shields.io/github/license/Qithking/SwallowCalendar" alt="License">
   <img src="https://img.shields.io/github/v/release/Qithking/SwallowCalendar" alt="Release">
@@ -30,13 +30,16 @@
 - **菜单栏图标样式** - 多种图标风格可选（实心日期、描边日期、日历图标）
 
 ### 📝 待办事项
-- **快速添加** - 自然语言输入，智能识别时间和优先级
-- **事件管理** - 创建、编辑、删除日程事件
-- **提醒功能** - 自定义提醒时间
+- **快速添加** - 自然语言输入，智能识别时间、优先级、颜色和循环规则
+- **事件管理** - 创建、编辑、删除日程事件和系统提醒
+- **完成状态** - 支持标记完成/未完成，自动同步到系统提醒
+- **智能过滤** - 按时间范围（今天/本周/本月/本年/全部）过滤待办
+- **提醒功能** - 自定义提醒时间，可创建为系统提醒
 - **循环任务** - 支持每日、每周、每月、每年循环
 
 ### 🔗 数据同步
-- **系统日历集成** - 与 macOS 系统日历无缝同步
+- **系统日历集成** - 与 macOS 系统日历无缝同步，支持双向 CRUD
+- **系统提醒同步** - 与 macOS 提醒应用同步待办事项
 - **ICS 订阅** - 支持订阅外部 ICS 日历（节假日日历等）
 - **本地缓存** - 事件数据本地缓存，快速响应
 
@@ -46,7 +49,7 @@
 
 | 项目 | 要求 |
 |------|------|
-| 系统版本 | macOS 13.0 (Ventura) 及以上 |
+| 系统版本 | macOS 14.0 (Sonoma) 及以上 |
 | 架构 | Apple Silicon / Intel |
 
 ---
@@ -116,7 +119,7 @@ SwallowCalendar/
 
 - Xcode 15.0+
 - Swift 5.9+
-- macOS SDK 13.0+
+- macOS SDK 14.0+
 
 ### 编译运行
 
@@ -155,9 +158,12 @@ open SwallowCalendar.xcodeproj
 
 ### 最近更新
 
-- ✨ 主题色自定义支持
-- 🎨 优化的选中日期样式
-- 📱 窗口自由缩放
+- 🔔 **系统提醒同步** - 支持与 macOS 系统提醒应用双向同步
+- ✅ **待办事项管理** - 完整的待办/已办事项列表，支持标记完成/未完成
+- 📝 **自然语言输入** - 智能识别时间、优先级、颜色和循环规则
+- 🎨 **主题色自定义** - 随心所欲切换应用配色
+- 📅 **日历集成** - 与系统日历无缝同步，支持 ICS 订阅
+- 📱 **窗口自由缩放** - 自适应布局，支持任意尺寸调整
 
 ---
 
