@@ -183,6 +183,26 @@ final class CalendarService {
             throw EventError.noCalendarAvailable
         }
         try eventStore.save(event, span: .thisEvent)
+        
+        // 保存到本地缓存，确保能立即显示在列表中
+        if let context = cacheService.context,
+           let start = event.startDate,
+           let end = event.endDate {
+            let cached = CachedEvent(
+                eventID: event.eventIdentifier,
+                title: event.title ?? "",
+                startDate: start,
+                endDate: end,
+                isAllDay: event.isAllDay,
+                calendarID: event.calendar.calendarIdentifier,
+                calendarTitle: event.calendar.title,
+                calendarColorHex: event.calendar.cgColor?.hexString ?? "#007AFF",
+                category: category,
+                priority: priority?.rawValue ?? 0
+            )
+            context.insert(cached)
+            try? context.save()
+        }
     }
 
     /// 删除日历事件
