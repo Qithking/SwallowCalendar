@@ -10,7 +10,7 @@ permissions:
 
 env:
   PRODUCT_BUNDLE_IDENTIFIER: com.swallowcalendar.app
-  MACOSX_DEPLOYMENT_TARGET: "13.0"
+  MACOSX_DEPLOYMENT_TARGET: "14.0"
 
 jobs:
   build:
@@ -124,8 +124,8 @@ jobs:
               <string>VERSION_PLACEHOLDER</string>
               <key>CFBundleVersion</key>
               <string>BUILD_PLACEHOLDER</string>
-              <key>LSMinimumSystemVersion</key>
-              <string>13.0</string>
+          <key>LSMinimumSystemVersion</key>
+          <string>14.0</string>
               <key>LSUIElement</key>
               <true/>
               <key>NSHumanReadableCopyright</key>
@@ -217,7 +217,7 @@ jobs:
             echo "  3. 如果提示"无法打开"，请在系统设置 > 隐私与安全性中允许运行"
             echo ""
             echo "### 系统要求"
-            echo "  - macOS 13.0 (Ventura) 或更高版本"
+            echo "  - macOS 14.0 (Sonoma) 或更高版本"
           } > release_body.txt
 
           cat release_body.txt
