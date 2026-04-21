@@ -183,7 +183,7 @@ final class CalendarService {
     /// 将 EKReminder 转换为 CalendarEvent
     private func mapReminderToCalendarEvent(_ reminder: EKReminder, dueDate: Date?) -> CalendarEvent {
         let isAllDay: Bool
-        if let dueDate = dueDate {
+        if dueDate != nil {
             isAllDay = reminder.dueDateComponents?.hour == nil && reminder.dueDateComponents?.minute == nil
         } else {
             isAllDay = true  // 无到期时间的提醒视为全天事件

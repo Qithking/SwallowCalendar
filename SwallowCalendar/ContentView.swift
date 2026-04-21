@@ -164,17 +164,11 @@ struct ContentView: View {
             return
         }
 
-        do {
-            let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-            await calendarService.cacheService.syncEvents(from: calendarService, calendars: enabledCals)
-            refreshTrigger.toggle()
-            await MainActor.run {
-                showAlert(title: "同步成功", message: "日历数据同步完成", style: .informational)
-            }
-        } catch {
-            await MainActor.run {
-                showAlert(title: "同步失败", message: error.localizedDescription, style: .critical)
-            }
+        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
+        await calendarService.cacheService.syncEvents(from: calendarService, calendars: enabledCals)
+        refreshTrigger.toggle()
+        await MainActor.run {
+            showAlert(title: "同步成功", message: "日历数据同步完成", style: .informational)
         }
 
         isSyncing = false
