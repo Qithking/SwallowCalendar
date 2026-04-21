@@ -54,6 +54,7 @@ struct CalendarGridView: View {
 
             // 日期网格
             dateGrid
+                .padding(.top, 4)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
