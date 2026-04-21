@@ -62,26 +62,23 @@ struct EventItemRow: View {
                 .frame(width: 3, height: 28)
 
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    if isOverdue {
-                        Text("已过期")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.red)
-                    }
-                    Text(event.title)
-                        .font(.system(size: 12))
-                        .lineLimit(1)
-                        .strikethrough(event.isCompleted, color: .secondary)
-                        .foregroundColor(event.isCompleted ? .secondary : .primary)
-                }
+                Text(event.title)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                    .strikethrough(event.isCompleted, color: .secondary)
+                    .foregroundColor(event.isCompleted ? .secondary : .primary)
 
                 HStack(spacing: 4) {
                     if event.hasTime {
-                        Text(event.startDate ?? Date(), style: .time)
+                        Text(formattedDateTime)
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
 
-                        if !isOverdue {
+                        if isOverdue {
+                            Text("已过期")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.red)
+                        } else {
                             Text(event.countdownText)
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(countdownColor)
@@ -150,7 +147,14 @@ struct EventItemRow: View {
     private var formattedDate: String {
         guard let start = event.startDate else { return "" }
         let formatter = DateFormatter()
-        formatter.dateFormat = "M/d"
+        formatter.dateFormat = "yyyy/MM/dd"
+        return formatter.string(from: start)
+    }
+
+    private var formattedDateTime: String {
+        guard let start = event.startDate else { return "" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy/MM/dd HH:mm"
         return formatter.string(from: start)
     }
 }
