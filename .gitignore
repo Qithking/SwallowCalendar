@@ -1,3 +1,7 @@
 .build/
 .codebuddy/
 .work/
+Package.resolved
+.gitignore
+.vscode/
+.lingma/

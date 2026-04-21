@@ -52,19 +52,153 @@ struct NLPTaskParser {
     private static func parseChineseDate(_ input: String) -> (date: Date, matched: String) {
         let calendar = Calendar.current
         let now = Date()
+        
+        // 首先尝试解析时间部分（如"下午3点"、"20:15"、"20点15分"）
+        var baseDate = calendar.startOfDay(for: now)  // 默认为今天的开始
+        var matchedText = ""
+        
+        // 匹配 HH:MM 格式（如 20:15, 09:30）
+        if let timeMatch = input.range(of: "(\\d{1,2}):(\\d{2})", options: .regularExpression) {
+            let timeStr = String(input[timeMatch])
+            let components = timeStr.split(separator: ":")
+            if components.count == 2,
+               let hour = Int(components[0]),
+               let minute = Int(components[1]),
+               hour >= 0, hour <= 23, minute >= 0, minute <= 59 {
+                var dateComponents = calendar.dateComponents([.year, .month, .day], from: baseDate)
+                dateComponents.hour = hour
+                dateComponents.minute = minute
+                dateComponents.second = 0
+                
+                if let date = calendar.date(from: dateComponents) {
+                    baseDate = date
+                    matchedText = timeStr
+                }
+            }
+        }
+        // 匹配 X点X分 格式（不带上午/下午前缀，如 20点15, 9点30分）
+        else if let timeMatch = input.range(of: "(\\d{1,2})点(\\d{1,2})(分)?", options: .regularExpression) {
+            let timeStr = String(input[timeMatch])
+            
+            // 使用正则提取数字
+            let numberPattern = "(\\d+)"
+            var numbers: [Int] = []
+            var searchRange = timeStr.startIndex..<timeStr.endIndex
+            
+            while let match = timeStr.range(of: numberPattern, options: .regularExpression, range: searchRange) {
+                if let num = Int(timeStr[match]) {
+                    numbers.append(num)
+                }
+                searchRange = match.upperBound..<timeStr.endIndex
+            }
+            
+            if numbers.count >= 2,
+               let hour = numbers.first,
+               let minute = numbers.last,
+               hour >= 0, hour <= 23, minute >= 0, minute <= 59 {
+                var dateComponents = calendar.dateComponents([.year, .month, .day], from: baseDate)
+                dateComponents.hour = hour
+                dateComponents.minute = minute
+                dateComponents.second = 0
+                
+                if let date = calendar.date(from: dateComponents) {
+                    baseDate = date
+                    matchedText = timeStr
+                }
+            }
+        }
+        // 匹配带时间段的时间格式，如"下午3点"、"上午9点"、"晚上8点"
+        else if let timeMatch = input.range(of: "(上午|下午|晚上|凌晨)?(\\d{1,2})点(\\d{1,2}分)?", options: .regularExpression) {
+            let timeStr = String(input[timeMatch])
+            
+            // 提取时间段
+            var hourOffset = 0
+            if timeStr.contains("下午") || timeStr.contains("晚上") {
+                hourOffset = 12
+            } else if timeStr.contains("凌晨") {
+                hourOffset = 0
+            } else if timeStr.contains("上午") {
+                hourOffset = 0
+            }
+            
+            // 提取小时和分钟
+            let timePattern = "(\\d{1,2})点(\\d{1,2}分)?"
+            if let timeRange = timeStr.range(of: timePattern, options: .regularExpression) {
+                let extractedTime = String(timeStr[timeRange])
+                let numbers = extractedTime.filter { $0.isNumber }
+                let parts = numbers.split(separator: " ")
+                
+                if let hour = Int(parts[0]) {
+                    var finalHour = hour + hourOffset
+                    if hour == 12 && (timeStr.contains("下午") || timeStr.contains("晚上")) {
+                        finalHour = 12 // 下午12点就是12点
+                    } else if hour == 12 && timeStr.contains("凌晨") {
+                        finalHour = 0 // 凌晨12点是0点
+                    } else if hour < 12 && (timeStr.contains("下午") || timeStr.contains("晚上")) {
+                        finalHour = hour + 12
+                    }
+                    
+                    let minute = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+                    
+                    var components = calendar.dateComponents([.year, .month, .day], from: baseDate)
+                    components.hour = finalHour
+                    components.minute = minute
+                    components.second = 0
+                    
+                    if let date = calendar.date(from: components) {
+                        baseDate = date
+                        matchedText = timeStr
+                    }
+                }
+            }
+        }
 
         // 优先匹配精确词
         if input.contains("大后天") {
             let date = calendar.date(byAdding: .day, value: 3, to: calendar.startOfDay(for: now))
+            if let d = date {
+                // 如果已经有时间信息，则更新日期部分但保留时间
+                var components = calendar.dateComponents([.hour, .minute, .second], from: baseDate)
+                components.year = calendar.component(.year, from: d)
+                components.month = calendar.component(.month, from: d)
+                components.day = calendar.component(.day, from: d)
+                if let finalDate = calendar.date(from: components) {
+                    return (finalDate, "大后天" + matchedText)
+                }
+            }
             return (date ?? now, "大后天")
         }
         if input.contains("后天") {
             let date = calendar.date(byAdding: .day, value: 2, to: calendar.startOfDay(for: now))
+            if let d = date {
+                var components = calendar.dateComponents([.hour, .minute, .second], from: baseDate)
+                components.year = calendar.component(.year, from: d)
+                components.month = calendar.component(.month, from: d)
+                components.day = calendar.component(.day, from: d)
+                if let finalDate = calendar.date(from: components) {
+                    return (finalDate, "后天" + matchedText)
+                }
+            }
             return (date ?? now, "后天")
         }
         if input.contains("明天") {
             let date = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))
+            if let d = date {
+                var components = calendar.dateComponents([.hour, .minute, .second], from: baseDate)
+                components.year = calendar.component(.year, from: d)
+                components.month = calendar.component(.month, from: d)
+                components.day = calendar.component(.day, from: d)
+                if let finalDate = calendar.date(from: components) {
+                    return (finalDate, "明天" + matchedText)
+                }
+            }
             return (date ?? now, "明天")
+        }
+        if input.contains("今天") {
+            if !matchedText.isEmpty {
+                return (baseDate, "今天" + matchedText)
+            }
+            return (calendar.startOfDay(for: now), "今天")
         }
 
         // 匹配 X天后/小时/分钟后
@@ -73,6 +207,15 @@ struct NLPTaskParser {
             let numbers = matched.filter { $0.isNumber }
             if let days = Int(numbers) {
                 let date = calendar.date(byAdding: .day, value: days, to: now)
+                if let d = date {
+                    var components = calendar.dateComponents([.hour, .minute, .second], from: baseDate)
+                    components.year = calendar.component(.year, from: d)
+                    components.month = calendar.component(.month, from: d)
+                    components.day = calendar.component(.day, from: d)
+                    if let finalDate = calendar.date(from: components) {
+                        return (finalDate, matched + matchedText)
+                    }
+                }
                 return (date ?? now, matched)
             }
         }
@@ -109,8 +252,24 @@ struct NLPTaskParser {
                     components.year = (components.year ?? 2026) + 1
                     date = calendar.date(from: components)
                 }
+                
+                // 如果已经有时间信息，合并日期和时间
+                if let d = date {
+                    var timeComponents = calendar.dateComponents([.hour, .minute, .second], from: baseDate)
+                    timeComponents.year = calendar.component(.year, from: d)
+                    timeComponents.month = calendar.component(.month, from: d)
+                    timeComponents.day = calendar.component(.day, from: d)
+                    if let finalDate = calendar.date(from: timeComponents) {
+                        return (finalDate, matched + matchedText)
+                    }
+                }
                 return (date ?? now, matched)
             }
+        }
+
+        // 如果没有找到特定日期但有时间，返回今天的时间
+        if !matchedText.isEmpty {
+            return (baseDate, matchedText)
         }
 
         // 默认今天
@@ -167,6 +326,58 @@ struct NLPTaskParser {
     // MARK: - 提醒时间解析
 
     private static func parseReminder(from input: String) -> Int? {
+        // 匹配 "提前X分钟" 或 "X分钟前"
+        if let match = input.range(of: "提前(\\d+)分钟", options: .regularExpression) {
+            let matched = String(input[match])
+            let numbers = matched.filter { $0.isNumber }
+            if let minutes = Int(numbers) {
+                return minutes
+            }
+        }
+        
+        if let match = input.range(of: "(\\d+)分钟前", options: .regularExpression) {
+            let matched = String(input[match])
+            let numbers = matched.filter { $0.isNumber }
+            if let minutes = Int(numbers) {
+                return minutes
+            }
+        }
+        
+        // 匹配 "提前X小时" 或 "X小时前"
+        if let match = input.range(of: "提前(\\d+)小时", options: .regularExpression) {
+            let matched = String(input[match])
+            let numbers = matched.filter { $0.isNumber }
+            if let hours = Int(numbers) {
+                return hours * 60
+            }
+        }
+        
+        if let match = input.range(of: "(\\d+)小时前", options: .regularExpression) {
+            let matched = String(input[match])
+            let numbers = matched.filter { $0.isNumber }
+            if let hours = Int(numbers) {
+                return hours * 60
+            }
+        }
+        
+        // 匹配 "提前X天" 或 "X天前"
+        if let match = input.range(of: "提前(\\d+)天", options: .regularExpression) {
+            let matched = String(input[match])
+            let numbers = matched.filter { $0.isNumber }
+            if let days = Int(numbers) {
+                return days * 1440
+            }
+        }
+        
+        if let match = input.range(of: "(\\d+)天前", options: .regularExpression) {
+            let matched = String(input[match])
+            let numbers = matched.filter { $0.isNumber }
+            if let days = Int(numbers) {
+                return days * 1440
+            }
+        }
+        
+        // 兼容原有的固定格式
         if input.contains("提前10分钟") || input.contains("10分钟前") {
             return 10
         }
@@ -218,11 +429,37 @@ struct NLPTaskParser {
         result = result.replacingOccurrences(of: "农历", with: "")
         result = result.replacingOccurrences(of: "阴历", with: "")
 
-        // 移除提醒关键词
+        // 移除提醒关键词（包括通用模式）
         let reminderKeywords = ["提前10分钟", "提前30分钟", "提前1小时", "提前1天", "提前5分钟",
                                "10分钟前", "30分钟前", "1小时前", "1天前", "5分钟前", "提醒"]
         for kw in reminderKeywords {
             result = result.replacingOccurrences(of: kw, with: "")
+        }
+        
+        // 移除时间表达式，如"下午3点"、"上午9点"、"20:15"、"20点15分"等
+        // 先移除 HH:MM 格式
+        if let timeRange = result.range(of: "\\d{1,2}:\\d{2}", options: .regularExpression) {
+            result.removeSubrange(timeRange)
+        }
+        // 再移除 X点X分 格式（不带时间段前缀）
+        else if let timeRange = result.range(of: "\\d{1,2}点\\d{1,2}(分)?", options: .regularExpression) {
+            result.removeSubrange(timeRange)
+        }
+        // 最后移除带时间段的时间格式
+        else if let timeRange = result.range(of: "(上午|下午|晚上|凌晨)?\\d{1,2}点(\\d{1,2}分)?", options: .regularExpression) {
+            result.removeSubrange(timeRange)
+        }
+        
+        // 移除相对时间表达式，如"3天后"、"2小时后"、"30分钟后"
+        let relativeTimePatterns = [
+            "\\d+天后",
+            "\\d+小时后", 
+            "\\d+分钟后"
+        ]
+        for pattern in relativeTimePatterns {
+            if let range = result.range(of: pattern, options: .regularExpression) {
+                result.removeSubrange(range)
+            }
         }
 
         // 清理空白
