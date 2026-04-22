@@ -207,6 +207,7 @@ final class CalendarService {
 
     /// 创建日历事件或提醒
     /// - Note: 如果 asReminder 为 true，则创建到系统提醒；否则创建到系统日历
+    /// - Note: 如果是周期任务，会生成5个实例
     @MainActor
     func createEvent(
         title: String,
@@ -218,28 +219,136 @@ final class CalendarService {
         recurrence: RecurrenceType? = nil,
         reminderMinutes: Int? = nil,
         category: EventCategory = .system,
-        asReminder: Bool = false
+        asReminder: Bool = false,
+        isLunar: Bool = false
     ) throws {
-        if asReminder {
-            try createReminder(
+        let recurrenceType = recurrence ?? .none
+        
+        // 调试日志
+        print("[DEBUG] createEvent - startDate: \(startDate), endDate: \(endDate?.description ?? "nil"), isAllDay: \(isAllDay), recurrence: \(recurrenceType)")
+        
+        // 周期任务需要确保时间在当前时间之后
+        var finalStartDate = startDate
+        var finalEndDate = endDate
+        if recurrenceType != .none && startDate <= Date() {
+            // 周期任务：如果时间已过，推进到下一个周期
+            finalStartDate = CalendarService.advanceRecurrenceDate(startDate, recurrenceType: recurrenceType)
+            
+            // 同时推进 endDate（如果有）
+            if let ed = endDate {
+                let timeDiff = ed.timeIntervalSince(startDate)
+                finalEndDate = finalStartDate.addingTimeInterval(timeDiff)
+            }
+            
+            print("[DEBUG] After advancement - finalStartDate: \(finalStartDate), finalEndDate: \(finalEndDate?.description ?? "nil")")
+        }
+        
+        // 如果是周期任务，生成5个实例
+        if recurrenceType != .none {
+            try createRecurringEvents(
                 title: title,
-                dueDate: startDate,
-                isAllDay: isAllDay,
-                priority: priority,
-                recurrence: recurrence
-            )
-        } else {
-            try createCalendarEvent(
-                title: title,
-                startDate: startDate,
-                endDate: endDate,
+                baseDate: finalStartDate,
+                endDate: finalEndDate,
                 isAllDay: isAllDay,
                 calendar: calendar,
                 priority: priority,
-                recurrence: recurrence,
+                recurrenceType: recurrenceType,
                 reminderMinutes: reminderMinutes,
-                category: category
+                category: category,
+                asReminder: asReminder,
+                isLunar: isLunar
             )
+        } else {
+            // 非周期任务，创建一个（允许过去时间）
+            if asReminder {
+                try createReminder(
+                    title: title,
+                    dueDate: startDate,
+                    isAllDay: isAllDay,
+                    priority: priority,
+                    recurrence: nil
+                )
+            } else {
+                try createCalendarEvent(
+                    title: title,
+                    startDate: startDate,
+                    endDate: endDate,
+                    isAllDay: isAllDay,
+                    calendar: calendar,
+                    priority: priority,
+                    recurrence: nil,
+                    reminderMinutes: reminderMinutes,
+                    category: category
+                )
+            }
+        }
+    }
+    
+    /// 创建周期任务的5个实例
+    @MainActor
+    private func createRecurringEvents(
+        title: String,
+        baseDate: Date,
+        endDate: Date?,
+        isAllDay: Bool,
+        calendar: EKCalendar?,
+        priority: EventPriority? = nil,
+        recurrenceType: RecurrenceType,
+        reminderMinutes: Int? = nil,
+        category: EventCategory,
+        asReminder: Bool,
+        isLunar: Bool
+    ) throws {
+        // 生成5个日期
+        let dates = generateRecurringDates(
+            baseDate: baseDate,
+            recurrenceType: recurrenceType,
+            isLunar: isLunar
+        )
+        
+        guard !dates.isEmpty else { return }
+        
+        // 生成组ID
+        let groupId = UUID().uuidString
+        
+        // 创建每个实例
+        for (index, date) in dates.enumerated() {
+            // 全天事件的结束日期是第二天
+            let eventEndDate: Date? = {
+                if isAllDay {
+                    return Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: date))
+                } else {
+                    return endDate ?? date.addingTimeInterval(3600)
+                }
+            }()
+            
+            if asReminder {
+                try createReminderWithGroupInfo(
+                    title: title,
+                    dueDate: date,
+                    isAllDay: isAllDay,
+                    priority: priority,
+                    groupId: groupId,
+                    groupIndex: index,
+                    recurrenceType: recurrenceType,
+                    isLunar: isLunar
+                )
+            } else {
+                try createCalendarEventWithGroupInfo(
+                    title: title,
+                    startDate: date,
+                    endDate: eventEndDate,
+                    isAllDay: isAllDay,
+                    calendar: calendar,
+                    priority: priority,
+                    reminderMinutes: reminderMinutes,
+                    category: category,
+                    groupId: groupId,
+                    groupIndex: index,
+                    recurrenceType: recurrenceType,
+                    isLunar: isLunar
+                )
+            }
         }
     }
     
@@ -259,7 +368,19 @@ final class CalendarService {
         let event = EKEvent(eventStore: eventStore)
         event.title = title
         event.startDate = startDate
-        event.endDate = endDate ?? startDate.addingTimeInterval(3600)
+        // 全天事件的结束日期必须是第二天，否则EventKit会报错
+        if isAllDay {
+            event.endDate = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: startDate)) ?? startDate.addingTimeInterval(86400)
+        } else {
+            let calculatedEndDate = endDate ?? startDate.addingTimeInterval(3600)
+            // 确保 endDate > startDate
+            if calculatedEndDate <= startDate {
+                print("[ERROR] endDate (\(calculatedEndDate)) <= startDate (\(startDate))! Auto-fixing to startDate + 1h")
+                event.endDate = startDate.addingTimeInterval(3600)
+            } else {
+                event.endDate = calculatedEndDate
+            }
+        }
         event.isAllDay = isAllDay
         let targetCalendar = calendar ?? eventStore.defaultCalendarForNewEvents ?? calendars.first
         event.calendar = targetCalendar
@@ -304,7 +425,11 @@ final class CalendarService {
                 priority: priority?.rawValue ?? 0
             )
             context.insert(cached)
-            try? context.save()
+            do {
+                try context.save()
+            } catch {
+                print("[CalendarService] 缓存同步失败 (createCalendarEvent): \(error)")
+            }
         }
     }
     
@@ -351,7 +476,143 @@ final class CalendarService {
                 priority: priority?.rawValue ?? 0
             )
             context.insert(cached)
-            try? context.save()
+            do {
+                try context.save()
+            } catch {
+                print("[CalendarService] 缓存同步失败 (createReminder): \(error)")
+            }
+        }
+    }
+    
+    /// 创建带组信息的系统日历事件（用于周期任务）
+    @MainActor
+    private func createCalendarEventWithGroupInfo(
+        title: String,
+        startDate: Date,
+        endDate: Date?,
+        isAllDay: Bool,
+        calendar: EKCalendar?,
+        priority: EventPriority? = nil,
+        reminderMinutes: Int? = nil,
+        category: EventCategory,
+        groupId: String,
+        groupIndex: Int,
+        recurrenceType: RecurrenceType,
+        isLunar: Bool
+    ) throws {
+        let event = EKEvent(eventStore: eventStore)
+        event.title = title
+        event.startDate = startDate
+        // 全天事件的结束日期必须是第二天，否则EventKit会报错
+        if isAllDay {
+            event.endDate = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: startDate)) ?? startDate.addingTimeInterval(86400)
+        } else {
+            let calculatedEndDate = endDate ?? startDate.addingTimeInterval(3600)
+            // 确保 endDate > startDate
+            if calculatedEndDate <= startDate {
+                print("[ERROR] endDate (\(calculatedEndDate)) <= startDate (\(startDate))! Auto-fixing to startDate + 1h")
+                event.endDate = startDate.addingTimeInterval(3600)
+            } else {
+                event.endDate = calculatedEndDate
+            }
+        }
+        event.isAllDay = isAllDay
+        let targetCalendar = calendar ?? eventStore.defaultCalendarForNewEvents ?? calendars.first
+        event.calendar = targetCalendar
+
+        // 设置提醒（仅当用户指定时才添加）
+        if let minutes = reminderMinutes, minutes > 0 {
+            let alarm = EKAlarm(relativeOffset: TimeInterval(-minutes * 60))
+            event.addAlarm(alarm)
+        }
+
+        guard event.calendar != nil else {
+            throw EventError.noCalendarAvailable
+        }
+        try eventStore.save(event, span: .thisEvent)
+        
+        // 保存到本地缓存（带组信息）
+        if let context = cacheService.context {
+            let cached = CachedEvent(
+                eventID: event.eventIdentifier,
+                title: event.title ?? "",
+                startDate: event.startDate,
+                endDate: event.endDate,
+                isAllDay: event.isAllDay,
+                calendarID: event.calendar.calendarIdentifier,
+                calendarTitle: event.calendar.title,
+                calendarColorHex: event.calendar.cgColor?.hexString ?? "#007AFF",
+                category: category,
+                priority: priority?.rawValue ?? 0,
+                groupId: groupId,
+                groupIndex: groupIndex,
+                recurrenceType: recurrenceType,
+                isLunar: isLunar
+            )
+            context.insert(cached)
+            do {
+                try context.save()
+            } catch {
+                print("[CalendarService] 缓存同步失败 (createCalendarEventWithGroupInfo): \(error)")
+            }
+        }
+    }
+    
+    /// 创建带组信息的系统提醒（用于周期任务）
+    @MainActor
+    private func createReminderWithGroupInfo(
+        title: String,
+        dueDate: Date,
+        isAllDay: Bool,
+        priority: EventPriority? = nil,
+        groupId: String,
+        groupIndex: Int,
+        recurrenceType: RecurrenceType,
+        isLunar: Bool
+    ) throws {
+        guard reminderAuthorizationStatus == .fullAccess else {
+            throw EventError.noReminderAccess
+        }
+        
+        let reminder = EKReminder(eventStore: eventStore)
+        reminder.title = title
+        reminder.calendar = eventStore.defaultCalendarForNewReminders() ?? eventStore.calendars(for: .reminder).first
+        
+        // 设置到期时间
+        var components = Calendar.current.dateComponents([.year, .month, .day], from: dueDate)
+        if !isAllDay {
+            components.hour = Calendar.current.component(.hour, from: dueDate)
+            components.minute = Calendar.current.component(.minute, from: dueDate)
+        }
+        reminder.dueDateComponents = components
+        
+        try eventStore.save(reminder, commit: true)
+        
+        // 保存到本地缓存（带组信息）
+        if let context = cacheService.context {
+            let cached = CachedEvent(
+                eventID: reminder.calendarItemIdentifier,
+                title: reminder.title ?? "",
+                startDate: dueDate,
+                endDate: dueDate,
+                isAllDay: isAllDay,
+                calendarID: "reminder",
+                calendarTitle: "提醒",
+                calendarColorHex: reminder.calendar?.cgColor?.hexString ?? "#FF9500",
+                category: .user,
+                isCompleted: false,
+                priority: priority?.rawValue ?? 0,
+                groupId: groupId,
+                groupIndex: groupIndex,
+                recurrenceType: recurrenceType,
+                isLunar: isLunar
+            )
+            context.insert(cached)
+            do {
+                try context.save()
+            } catch {
+                print("[CalendarService] 缓存同步失败 (createReminderWithGroupInfo): \(error)")
+            }
         }
     }
 
@@ -369,12 +630,17 @@ final class CalendarService {
         // 从本地缓存删除
         if let cached = findCachedEvent(eventID: eventID) {
             cacheService.context?.delete(cached)
-            try? cacheService.context?.save()
+            do {
+                try cacheService.context?.save()
+            } catch {
+                print("[CalendarService] 删除缓存失败 (eventID: \(eventID)): \(error)")
+            }
         }
     }
     
     /// 标记事件完成/未完成
     /// - Note: 对于系统提醒，会同步更新到系统；对于日历事件，仅更新本地缓存
+    /// - Note: 如果是周期任务，完成时会自动追加新的实例
     @MainActor
     func toggleEventCompleted(eventID: String, isCompleted: Bool, isReminder: Bool = false) {
         if isReminder {
@@ -386,7 +652,16 @@ final class CalendarService {
         // 更新本地缓存
         if let cached = findCachedEvent(eventID: eventID) {
             cached.isCompleted = isCompleted
-            try? cacheService.context?.save()
+            do {
+                try cacheService.context?.save()
+            } catch {
+                print("[CalendarService] 更新缓存失败 (eventID: \(eventID)): \(error)")
+            }
+            
+            // 如果是完成操作且是周期任务，追加新实例
+            if isCompleted && cached.groupId != nil && cached.recurrenceType != .none {
+                appendNextRecurringInstance(completedEventID: eventID)
+            }
         }
     }
 
@@ -426,6 +701,38 @@ final class CalendarService {
             try? cacheService.context?.save()
         }
     }
+    
+    /// 更新事件周期类型（用于将周期任务改为一次，或删除周期任务的未完成实例）
+    @MainActor
+    func updateEventRecurrence(eventID: String, newRecurrenceType: RecurrenceType) {
+        guard let context = cacheService.context,
+              let cached = findCachedEvent(eventID: eventID) else {
+            return
+        }
+        
+        let oldRecurrenceType = cached.recurrenceType
+        let groupId = cached.groupId
+        
+        // 如果从周期改为一次，删除同组其他未完成事项
+        if oldRecurrenceType != .none && newRecurrenceType == .none {
+            if let groupId = groupId {
+                deleteUncompletedInGroup(groupId: groupId)
+            }
+        }
+        
+        // 更新当前事件的周期类型
+        cached.recurrenceType = newRecurrenceType
+        if newRecurrenceType == .none {
+            cached.groupId = nil
+            cached.groupIndex = -1
+        }
+        
+        do {
+            try context.save()
+        } catch {
+            print("[CalendarService] 更新周期类型失败 (eventID: \(eventID)): \(error)")
+        }
+    }
 
     // MARK: - Sync
 
@@ -454,6 +761,256 @@ final class CalendarService {
     }
 
     // MARK: - Helpers
+
+    /// 生成周期任务的5个实例日期
+    /// - Parameters:
+    ///   - baseDate: 基准日期（第一个待办的日期）
+    ///   - recurrenceType: 周期类型
+    ///   - isLunar: 是否农历
+    /// - Returns: 5个日期数组
+    private func generateRecurringDates(baseDate: Date, recurrenceType: RecurrenceType, isLunar: Bool) -> [Date] {
+        var dates: [Date] = [baseDate]
+        
+        for _ in 1..<5 {
+            guard let lastDate = dates.last else { break }
+            
+            if isLunar {
+                // 农历周期任务：需要特殊处理
+                if let nextDate = getNextLunarDate(from: lastDate, recurrenceType: recurrenceType) {
+                    dates.append(nextDate)
+                } else {
+                    break
+                }
+            } else {
+                // 公历周期任务：直接计算
+                if let nextDate = getNextGregorianDate(from: lastDate, recurrenceType: recurrenceType) {
+                    dates.append(nextDate)
+                } else {
+                    break
+                }
+            }
+        }
+        
+        return dates
+    }
+    
+    /// 获取下一个公历日期
+    private func getNextGregorianDate(from date: Date, recurrenceType: RecurrenceType) -> Date? {
+        let calendar = Calendar.current
+        
+        switch recurrenceType {
+        case .daily:
+            return calendar.date(byAdding: .day, value: 1, to: date)
+        case .weekly:
+            return calendar.date(byAdding: .weekOfYear, value: 1, to: date)
+        case .monthly:
+            return calendar.date(byAdding: .month, value: 1, to: date)
+        case .yearly:
+            return calendar.date(byAdding: .year, value: 1, to: date)
+        default:
+            return nil
+        }
+    }
+    
+    /// 获取下一个农历日期
+    /// - Note: 当前实现使用 Calendar(identifier: .chinese) 直接计算，对于农历闰月（如闰七月）的处理依赖于系统 Calendar 的实现。
+    ///         在大多数情况下能正确工作，但在极端边界场景下可能需要额外验证。
+    private func getNextLunarDate(from date: Date, recurrenceType: RecurrenceType) -> Date? {
+        let chineseCalendar = Calendar(identifier: .chinese)
+        
+        // 将公历日期转为农历
+        var lunarComponents = chineseCalendar.dateComponents([.year, .month, .day], from: date)
+        
+        guard let lunarYear = lunarComponents.year,
+              let lunarMonth = lunarComponents.month,
+              let lunarDay = lunarComponents.day else {
+            return nil
+        }
+        
+        // 根据周期类型增加农历时间
+        switch recurrenceType {
+        case .daily:
+            // 农历每天：加1天
+            lunarComponents.day = lunarDay + 1
+        case .weekly:
+            // 农历每周：加7天
+            lunarComponents.day = lunarDay + 7
+        case .monthly:
+            // 农历每月：加1个月
+            lunarComponents.month = lunarMonth + 1
+        case .yearly:
+            // 农历每年：加1年
+            lunarComponents.year = lunarYear + 1
+        default:
+            return nil
+        }
+        
+        // 将农历组件转回公历日期
+        return chineseCalendar.date(from: lunarComponents)
+    }
+    
+    /// 查找周期任务组中未完成的实例数量
+    func countUncompletedInGroup(groupId: String) -> Int {
+        guard let context = cacheService.context else { return 0 }
+        
+        let descriptor = FetchDescriptor<CachedEvent>(
+            predicate: #Predicate<CachedEvent> { $0.groupId == groupId && !$0.isCompleted }
+        )
+        
+        do {
+            let events = try context.fetch(descriptor)
+            return events.count
+        } catch {
+            print("[CalendarService] 查询周期任务组失败: \(error)")
+            return 0
+        }
+    }
+    
+    /// 删除周期任务组中所有未完成的事件
+    func deleteUncompletedInGroup(groupId: String) {
+        guard let context = cacheService.context else { return }
+        
+        let descriptor = FetchDescriptor<CachedEvent>(
+            predicate: #Predicate<CachedEvent> { $0.groupId == groupId && !$0.isCompleted }
+        )
+        
+        do {
+            let events = try context.fetch(descriptor)
+            for event in events {
+                // 如果是系统提醒，也删除系统提醒
+                if event.calendarTitle == "提醒" {
+                    if let reminder = eventStore.calendarItem(withIdentifier: event.eventID) as? EKReminder {
+                        try? eventStore.remove(reminder, commit: true)
+                    }
+                }
+                context.delete(event)
+            }
+            try context.save()
+        } catch {
+            print("[CalendarService] 删除周期任务组失败: \(error)")
+        }
+    }
+    
+    /// 完成事件时追加新的周期任务实例
+    @MainActor
+    func appendNextRecurringInstance(completedEventID: String) {
+        guard let context = cacheService.context else { return }
+        
+        // 查找已完成的事件
+        guard let completedEvent = findCachedEvent(eventID: completedEventID),
+              let groupId = completedEvent.groupId,
+              completedEvent.recurrenceType != .none else {
+            return
+        }
+        
+        // 检查当前组内未完成数量
+        let uncompletedCount = countUncompletedInGroup(groupId: groupId)
+        
+        // 如果少于5个，追加新的
+        if uncompletedCount < 5 {
+            // 找到最大的 groupIndex
+            let descriptor = FetchDescriptor<CachedEvent>(
+                predicate: #Predicate<CachedEvent> { $0.groupId == groupId }
+            )
+            
+            do {
+                let allEvents = try context.fetch(descriptor)
+                guard let maxIndexEvent = allEvents.max(by: { $0.groupIndex < $1.groupIndex }) else { return }
+                
+                let nextIndex = maxIndexEvent.groupIndex + 1
+                
+                // 生成下一个日期
+                guard let lastDate = maxIndexEvent.startDate else {
+                    return
+                }
+                
+                // 计算下一个日期
+                var nextDate = completedEvent.isLunar
+                    ? getNextLunarDate(from: lastDate, recurrenceType: completedEvent.recurrenceType)
+                    : getNextGregorianDate(from: lastDate, recurrenceType: completedEvent.recurrenceType)
+                
+                // 如果生成的日期仍在过去，使用公共函数推进到下一个周期
+                if let date = nextDate {
+                    nextDate = CalendarService.advanceRecurrenceDate(date, recurrenceType: completedEvent.recurrenceType)
+                }
+                
+                guard let finalDate = nextDate else {
+                    return
+                }
+                
+                // 创建新的事件
+                let newEventID = UUID().uuidString
+                let isAllDay = Calendar.current.component(.hour, from: lastDate) == 0
+                    && Calendar.current.component(.minute, from: lastDate) == 0
+                
+                // 全天事件的结束日期是第二天
+                let cachedEndDate: Date? = {
+                    if isAllDay {
+                        return Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: finalDate))
+                    } else {
+                        return finalDate.addingTimeInterval(3600)
+                    }
+                }()
+                
+                // 保存到本地缓存
+                let cached = CachedEvent(
+                    eventID: newEventID,
+                    title: completedEvent.title,
+                    startDate: finalDate,
+                    endDate: cachedEndDate,
+                    isAllDay: isAllDay,
+                    calendarID: completedEvent.calendarID,
+                    calendarTitle: completedEvent.calendarTitle,
+                    calendarColorHex: completedEvent.calendarColorHex,
+                    category: .user,
+                    isCompleted: false,
+                    priority: completedEvent.priority,
+                    groupId: groupId,
+                    groupIndex: nextIndex,
+                    recurrenceType: completedEvent.recurrenceType,
+                    isLunar: completedEvent.isLunar
+                )
+                context.insert(cached)
+                try context.save()
+                
+                // 同步到系统日历/提醒
+                if completedEvent.calendarTitle == "提醒" {
+                    // 创建系统提醒
+                    try createReminder(
+                        title: completedEvent.title,
+                        dueDate: finalDate,
+                        isAllDay: isAllDay,
+                        priority: completedEvent.priority > 0 ? EventPriority(rawValue: completedEvent.priority) : nil,
+                        recurrence: nil  // 每个实例都是独立的
+                    )
+                } else {
+                    // 全天事件的结束日期是第二天
+                    let calendarEndDate: Date? = {
+                        if isAllDay {
+                            return Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: finalDate))
+                        } else {
+                            return finalDate.addingTimeInterval(3600)
+                        }
+                    }()
+                    
+                    // 创建系统日历事件
+                    try createCalendarEvent(
+                        title: completedEvent.title,
+                        startDate: finalDate,
+                        endDate: calendarEndDate,
+                        isAllDay: isAllDay,
+                        calendar: calendars.first { $0.calendarIdentifier == completedEvent.calendarID },
+                        priority: completedEvent.priority > 0 ? EventPriority(rawValue: completedEvent.priority) : nil,
+                        recurrence: nil,
+                        reminderMinutes: nil,
+                        category: .user
+                    )
+                }
+            } catch {
+                print("[CalendarService] 追加周期任务失败: \(error)")
+            }
+        }
+    }
 
     private func mapToCalendarEvent(_ ekEvent: EKEvent) -> CalendarEvent {
         let category: EventCategory = ekEvent.calendar.type == .subscription ? .subscription : .system
@@ -524,5 +1081,41 @@ extension CGColor {
         let g = Int(components[1] * 255)
         let b = Int(components[2] * 255)
         return String(format: "#%02X%02X%02X", r, g, b)
+    }
+}
+
+// MARK: - Recurrence Helper
+
+extension CalendarService {
+    /// 将日期推进到下一个周期，确保结果 > 当前时间
+    /// - Parameters:
+    ///   - date: 原始日期
+    ///   - recurrenceType: 周期类型
+    /// - Returns: 推进后的日期（保证 > Date()）
+    static func advanceRecurrenceDate(_ date: Date, recurrenceType: RecurrenceType) -> Date {
+        let now = Date()
+        
+        // 如果日期已经在未来，直接返回
+        guard date <= now else { return date }
+        
+        var currentDate = date
+        
+        // 循环推进直到时间在未来
+        while currentDate <= now {
+            switch recurrenceType {
+            case .daily:
+                currentDate = Calendar.current.date(byAdding: .day, value: 1, to: currentDate) ?? currentDate
+            case .weekly:
+                currentDate = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: currentDate) ?? currentDate
+            case .monthly:
+                currentDate = Calendar.current.date(byAdding: .month, value: 1, to: currentDate) ?? currentDate
+            case .yearly:
+                currentDate = Calendar.current.date(byAdding: .year, value: 1, to: currentDate) ?? currentDate
+            case .none, .custom:
+                break
+            }
+        }
+        
+        return currentDate
     }
 }

@@ -40,6 +40,11 @@ struct NLPTaskParser {
             result.recurrence = recurrence
         }
 
+        // 对于周期任务，如果时间已经过去，推进到下一个周期
+        if let recurrence = result.recurrence, recurrence != .none && result.date < Date() {
+            result.date = advanceToNextPeriod(date: result.date, recurrence: recurrence)
+        }
+
         // 标记是否为循环农历
         if result.recurrence == .yearly && (trimmed.contains("农历") || trimmed.contains("阴历")) {
             result.isRecurringLunar = true
@@ -126,16 +131,6 @@ struct NLPTaskParser {
         else if let timeMatch = input.range(of: "(上午|下午|晚上|凌晨)?(\\d{1,2})点(\\d{1,2}分)?", options: .regularExpression) {
             let timeStr = String(input[timeMatch])
             
-            // 提取时间段
-            var hourOffset = 0
-            if timeStr.contains("下午") || timeStr.contains("晚上") {
-                hourOffset = 12
-            } else if timeStr.contains("凌晨") {
-                hourOffset = 0
-            } else if timeStr.contains("上午") {
-                hourOffset = 0
-            }
-            
             // 提取小时和分钟
             let timePattern = "(\\d{1,2})点(\\d{1,2}分)?"
             if let timeRange = timeStr.range(of: timePattern, options: .regularExpression) {
@@ -144,14 +139,17 @@ struct NLPTaskParser {
                 let parts = numbers.split(separator: " ")
                 
                 if let hour = Int(parts[0]) {
-                    var finalHour = hour + hourOffset
-                    if hour == 12 && (timeStr.contains("下午") || timeStr.contains("晚上")) {
-                        finalHour = 12 // 下午12点就是12点
-                    } else if hour == 12 && timeStr.contains("凌晨") {
-                        finalHour = 0 // 凌晨12点是0点
-                    } else if hour < 12 && (timeStr.contains("下午") || timeStr.contains("晚上")) {
+                    var finalHour = hour
+                    let isAfternoon = timeStr.contains("下午") || timeStr.contains("晚上")
+                    
+                    if hour >= 12 {
+                        // 如果小时 >= 12，说明已经是24小时制，直接使用
+                        finalHour = hour
+                    } else if isAfternoon {
+                        // 小时 < 12 且有下午/晚上标识，加12小时
                         finalHour = hour + 12
                     }
+                    // 其他情况（上午/凌晨或无标识）直接使用原始小时数
                     
                     let minute = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
                     
@@ -282,6 +280,64 @@ struct NLPTaskParser {
             }
         }
 
+        // 匹配星期X 或 周X 格式（如"周五"、"星期三"）
+        // 使用固定周日=1的Calendar，不受用户firstWeekday设置影响
+        var gregorianForWeekday = Calendar(identifier: .gregorian)
+        gregorianForWeekday.firstWeekday = 1  // 周日=1
+        
+        let weekdayKeywords: [(keyword: String, targetWeekday: Int)] = [
+            ("周日", 1), ("星期日", 1),
+            ("周一", 2), ("星期一", 2),
+            ("周二", 3), ("星期二", 3),
+            ("周三", 4), ("星期三", 4),
+            ("周四", 5), ("星期四", 5),
+            ("周五", 6), ("星期五", 6),
+            ("周六", 7), ("星期六", 7)
+        ]
+        
+        for item in weekdayKeywords {
+            if input.contains(item.keyword) {
+                // 找到最近的该星期几
+                let currentWeekday = gregorianForWeekday.component(.weekday, from: now)
+                var daysToAdd = item.targetWeekday - currentWeekday
+                
+                if daysToAdd < 0 {
+                    // 目标星期几已经过去，加7天到下周
+                    daysToAdd += 7
+                } else if daysToAdd == 0 {
+                    // 今天就是目标星期几，检查时间是否已过
+                    if !matchedText.isEmpty {
+                        let timeComponents = gregorianForWeekday.dateComponents([.hour, .minute], from: baseDate)
+                        if let hour = timeComponents.hour, let minute = timeComponents.minute {
+                            var timeDateComponents = gregorianForWeekday.dateComponents([.year, .month, .day], from: now)
+                            timeDateComponents.hour = hour
+                            timeDateComponents.minute = minute
+                            if let timeDate = gregorianForWeekday.date(from: timeDateComponents),
+                               timeDate < now {
+                                // 时间已过，加7天到下周
+                                daysToAdd += 7
+                            }
+                        }
+                    }
+                    // 如果没时间信息或时间还没到，daysToAdd 保持 0（今天）
+                }
+                
+                let targetDate = gregorianForWeekday.date(byAdding: .day, value: daysToAdd, to: gregorianForWeekday.startOfDay(for: now))
+                
+                if let d = targetDate {
+                    var timeComponents = gregorianForWeekday.dateComponents([.hour, .minute, .second], from: baseDate)
+                    timeComponents.year = gregorianForWeekday.component(.year, from: d)
+                    timeComponents.month = gregorianForWeekday.component(.month, from: d)
+                    timeComponents.day = gregorianForWeekday.component(.day, from: d)
+                    if let finalDate = gregorianForWeekday.date(from: timeComponents) {
+                        return (finalDate, item.keyword + matchedText, false)
+                    }
+                }
+                
+                return (targetDate ?? now, item.keyword, false)
+            }
+        }
+
         // 如果没有找到特定日期但有时间，返回今天的时间
         if !matchedText.isEmpty {
             return (baseDate, matchedText, false)
@@ -292,6 +348,8 @@ struct NLPTaskParser {
     }
 
     /// 解析农历日期
+    /// 注意：农历Calendar使用佛历纪元，year不是公历年份
+    /// 策略：从今年开始，逐天搜索，找到第一个匹配的农历日期
     private static func parseLunarDate(_ input: String, now: Date) -> (date: Date, matched: String, isLunar: Bool)? {
         // 匹配"农历X月X日"或"阴历X月X日"格式
         let lunarPattern = "(?:农历|阴历)(\\d+)月(\\d+)[日号]?"
@@ -300,40 +358,41 @@ struct NLPTaskParser {
         }
         
         let matched = String(input[match])
-        let numbers = matched.filter { $0.isNumber }
-        let parts = numbers.split(separator: " ")
-        
-        guard parts.count >= 2,
-              let lunarMonth = Int(parts[0]),
-              let lunarDay = Int(parts[1]),
+        // 提取月份和日期数字
+        let lunarRegex = try! NSRegularExpression(pattern: "(?:农历|阴历)(\\d+)月(\\d+)[日号]?")
+        guard let fullMatch = lunarRegex.firstMatch(in: input, range: NSRange(match, in: input)),
+              fullMatch.numberOfRanges >= 3,
+              let monthRange = Range(fullMatch.range(at: 1), in: input),
+              let dayRange = Range(fullMatch.range(at: 2), in: input),
+              let lunarMonth = Int(String(input[monthRange])),
+              let lunarDay = Int(String(input[dayRange])),
               lunarMonth >= 1, lunarMonth <= 12,
               lunarDay >= 1, lunarDay <= 30 else {
             return nil
         }
         
-        // 使用农历日历转换
         let chineseCalendar = Calendar(identifier: .chinese)
-        var components = DateComponents()
-        components.month = lunarMonth
-        components.day = lunarDay
+        let gregorianCalendar = Calendar.current
         
-        // 默认使用当前年份
-        components.year = Calendar.current.component(.year, from: now)
+        // 从今天开始，逐天搜索，最多搜索3年
+        // 农历年约354天，3年约1062天，性能可接受
+        var currentDate = gregorianCalendar.startOfDay(for: now)
+        let maxDate = gregorianCalendar.date(byAdding: .year, value: 3, to: currentDate)!
         
-        // 尝试转换为公历日期
-        guard let lunarDate = chineseCalendar.date(from: components) else {
-            return nil
-        }
-        
-        // 如果日期已过，则使用明年
-        if lunarDate < now {
-            components.year! += 1
-            if let nextYearDate = chineseCalendar.date(from: components) {
-                return (nextYearDate, matched, true)
+        while currentDate < maxDate {
+            // 将公历日期转为农历，检查是否匹配
+            let lunarComponents = chineseCalendar.dateComponents([.month, .day], from: currentDate)
+            
+            if lunarComponents.month == lunarMonth && lunarComponents.day == lunarDay {
+                // 找到匹配的农历日期
+                return (currentDate, matched, true)
             }
+            
+            // 前进一天
+            currentDate = gregorianCalendar.date(byAdding: .day, value: 1, to: currentDate)!
         }
         
-        return (lunarDate, matched, true)
+        return nil
     }
 
     // MARK: - 颜色解析
@@ -536,6 +595,14 @@ struct NLPTaskParser {
         }
 
         return result.isEmpty ? "待办事项" : result
+    }
+    
+    // MARK: - 周期推进
+    
+    /// 将过去的时间推进到下一个周期的有效时间
+    private static func advanceToNextPeriod(date: Date, recurrence: RecurrenceType) -> Date {
+        // 复用 CalendarService 的公共逻辑，确保一致性
+        return CalendarService.advanceRecurrenceDate(date, recurrenceType: recurrence)
     }
 }
 
