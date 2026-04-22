@@ -93,6 +93,18 @@ final class AppSettings {
         }
     }
 
+    /// 默认显示待办过滤模式
+    var defaultFilterMode: String {
+        didSet {
+            UserDefaults.standard.set(defaultFilterMode, forKey: "defaultFilterMode")
+        }
+    }
+
+    /// 获取 EventFilterMode 枚举值
+    var defaultFilterModeEnum: EventFilterMode {
+        EventFilterMode(rawValue: defaultFilterMode) ?? .thisMonth
+    }
+
     var colorScheme: ColorScheme? {
         switch themeMode {
         case .light: return .light
@@ -127,6 +139,7 @@ final class AppSettings {
         self.subscriptionCalendarColorHex = UserDefaults.standard.string(forKey: "subscriptionCalendarColorHex") ?? "#FF9500"
         self.checkUpdateOnFirstLaunch = UserDefaults.standard.object(forKey: "checkUpdateOnFirstLaunch") as? Bool ?? true
         self.syncSystemReminders = UserDefaults.standard.object(forKey: "syncSystemReminders") as? Bool ?? false
+        self.defaultFilterMode = UserDefaults.standard.string(forKey: "defaultFilterMode") ?? "本月"
     }
 
     private func updateLaunchAtLogin() {

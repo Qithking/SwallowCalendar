@@ -36,7 +36,7 @@ struct EventCompletedListView: View {
             includeNoDateReminders: true
         )
         for event in cachedEvents {
-            if event.category == .user && event.isCompleted {
+            if event.category == .user && event.isCompleted && !event.title.trimmingCharacters(in: .whitespaces).isEmpty {
                 result.append(event)
             }
         }
@@ -48,7 +48,7 @@ struct EventCompletedListView: View {
             calendars: enabledCals
         )
         for event in dayEvents {
-            if event.category == .user && event.isCompleted {
+            if event.category == .user && event.isCompleted && !event.title.trimmingCharacters(in: .whitespaces).isEmpty {
                 result.append(event)
             }
         }

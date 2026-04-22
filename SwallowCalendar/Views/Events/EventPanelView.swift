@@ -134,6 +134,12 @@ struct EventPanelView: View {
                 )
             }
         }
+        .onAppear {
+            filterMode = appSettings.defaultFilterModeEnum
+        }
+        .onChange(of: appSettings.defaultFilterModeEnum) { _, newMode in
+            filterMode = newMode
+        }
         .tint(accentColor)
         .onChange(of: appSettings.accentColorHex) { _, newColor in
             accentColor = Color(hex: newColor)
@@ -151,7 +157,7 @@ struct EventPanelView: View {
 
 // MARK: - Filter Mode
 
-enum EventFilterMode: String, CaseIterable {
+enum EventFilterMode: String, CaseIterable, Codable {
     case today = "今天"
     case thisWeek = "本周"
     case thisMonth = "本月"
@@ -161,25 +167,33 @@ enum EventFilterMode: String, CaseIterable {
     func dateRange(from base: Date) -> (start: Date, end: Date) {
         let calendar = Calendar.current
         let now = Date()
+        
+        // 根据设置确定一周起始日（1=周日，2=周一）
+        var cal = calendar
+        cal.firstWeekday = AppSettings.shared.weekdayStart
 
         switch self {
         case .today:
-            return (calendar.startOfDay(for: now), calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))!)
+            return (cal.startOfDay(for: now), cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: now))!)
         case .thisWeek:
-            let start = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now))!
-            let end = calendar.date(byAdding: .weekOfYear, value: 1, to: start)!
+            // 手动计算本周开始（考虑 firstWeekday）
+            let weekday = cal.component(.weekday, from: now)
+            let daysFromWeekStart = weekday - cal.firstWeekday
+            let normalizedDaysFromStart = daysFromWeekStart < 0 ? daysFromWeekStart + 7 : daysFromWeekStart
+            let start = cal.startOfDay(for: cal.date(byAdding: .day, value: -normalizedDaysFromStart, to: now)!)
+            let end = cal.date(byAdding: .day, value: 7, to: start)!
             return (start, end)
         case .thisMonth:
-            let start = calendar.date(from: calendar.dateComponents([.year, .month], from: now))!
-            let end = calendar.date(byAdding: .month, value: 1, to: start)!
+            let start = cal.date(from: cal.dateComponents([.year, .month], from: now))!
+            let end = cal.date(byAdding: .month, value: 1, to: start)!
             return (start, end)
         case .thisYear:
-            let start = calendar.date(from: calendar.dateComponents([.year], from: now))!
-            let end = calendar.date(byAdding: .year, value: 1, to: start)!
+            let start = cal.date(from: cal.dateComponents([.year], from: now))!
+            let end = cal.date(byAdding: .year, value: 1, to: start)!
             return (start, end)
         case .all:
-            let past = calendar.date(byAdding: .year, value: -5, to: now)!
-            let future = calendar.date(byAdding: .year, value: 5, to: now)!
+            let past = cal.date(byAdding: .year, value: -5, to: now)!
+            let future = cal.date(byAdding: .year, value: 5, to: now)!
             return (past, future)
         }
     }

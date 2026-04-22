@@ -83,6 +83,13 @@ struct GeneralSettingsView: View {
                     Text("周日").tag(1)
                     Text("周一").tag(2)
                 }
+
+                // 默认显示待办过滤
+                Picker("默认显示待办", selection: $settings.defaultFilterMode) {
+                    ForEach(EventFilterMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode.rawValue)
+                    }
+                }
             }
         }
         .formStyle(.grouped)
