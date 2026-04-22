@@ -122,8 +122,16 @@ struct EventPanelView: View {
                     }
                 DeleteConfirmDialog(
                     eventTitle: event.title,
+                    isRecurring: event.groupId != nil && event.recurrenceType != .none,
                     onConfirm: {
                         deleteEvent(event)
+                        eventToDelete = nil
+                        showDeleteConfirmation = false
+                    },
+                    onDeleteAll: {
+                        if let groupId = event.groupId {
+                            calendarService.deleteUncompletedInGroup(groupId: groupId)
+                        }
                         eventToDelete = nil
                         showDeleteConfirmation = false
                     },

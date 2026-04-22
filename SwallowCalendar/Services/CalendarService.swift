@@ -199,7 +199,9 @@ final class CalendarService {
             category: .user,
             isCompleted: reminder.isCompleted,
             priority: 0,
-            isReminder: true
+            isReminder: true,
+            groupId: nil,
+            recurrenceType: .none
         )
     }
 
@@ -1025,7 +1027,9 @@ final class CalendarService {
             category: category,
             isCompleted: false,
             priority: 0,  // 系统日历事件没有优先级
-            isReminder: false
+            isReminder: false,
+            groupId: nil,
+            recurrenceType: .none
         )
     }
 
@@ -1041,7 +1045,9 @@ final class CalendarService {
             category: cached.category,
             isCompleted: cached.isCompleted,
             priority: cached.priority,
-            isReminder: cached.calendarTitle == "提醒"
+            isReminder: cached.calendarTitle == "提醒",
+            groupId: cached.groupId,
+            recurrenceType: cached.recurrenceType
         )
     }
     

@@ -88,6 +88,10 @@ struct CalendarEvent: Identifiable {
     let priority: Int
     /// 是否来自系统提醒
     let isReminder: Bool
+    /// 周期任务组ID（仅周期任务有值）
+    let groupId: String?
+    /// 周期类型
+    let recurrenceType: RecurrenceType
 
     /// 是否为订阅日历（订阅日历不在用户事件列表中显示）
     var isSubscription: Bool {
