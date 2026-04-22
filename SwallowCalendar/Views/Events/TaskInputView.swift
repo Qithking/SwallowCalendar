@@ -72,7 +72,7 @@ struct TaskInputView: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(nsColor: .controlBackgroundColor))
+                    .fill(Color.clear)
                     .stroke(accentColor.opacity(0.3), lineWidth: 1)
             )
 
