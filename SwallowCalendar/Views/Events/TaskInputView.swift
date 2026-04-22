@@ -89,11 +89,11 @@ struct TaskInputView: View {
     // MARK: - 属性编辑器
 
     private var attributeEditor: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(spacing: 8) {
             Divider()
 
             // 第一行：标题预览 + 日期时间
-            HStack(spacing: 8) {
+            HStack {
                 Text(taskTitle.isEmpty ? "待办事项" : taskTitle)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
@@ -107,39 +107,40 @@ struct TaskInputView: View {
             }
 
             // 第二行：农历开关 + 颜色选择
-            HStack(spacing: 12) {
-                Toggle("农历", isOn: $taskIsLunar)
-                    .toggleStyle(.switch)
-                    .scaleEffect(0.75)
-
-                Divider().frame(height: 16)
-
-                // 颜色选择
+            HStack {
+                // 左侧：农历开关
                 HStack(spacing: 4) {
-                    Text("颜色:")
+                    Text("农历")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
+                    Toggle("", isOn: $taskIsLunar)
+                        .toggleStyle(.switch)
+                        .scaleEffect(0.65)
+                }
+
+                Spacer()
+
+                // 右侧：颜色选择
+                HStack(spacing: 3) {
                     ForEach(EventColor.allCases, id: \.self) { color in
                         Circle()
                             .fill(Color(hex: color.rawValue))
-                            .frame(width: 14, height: 14)
+                            .frame(width: 16, height: 16)
                             .overlay(
-                                Circle().stroke(taskColor == color ? Color.primary : Color.clear, lineWidth: 1)
+                                Circle().stroke(taskColor == color ? Color.primary : Color.clear, lineWidth: 1.5)
                             )
                             .onTapGesture {
                                 taskColor = taskColor == color ? nil : color
                             }
                     }
                 }
-
-                Spacer()
             }
 
             // 第三行：优先级 + 周期
-            HStack(spacing: 12) {
-                // 优先级
+            HStack {
+                // 左侧：优先级
                 HStack(spacing: 4) {
-                    Text("优先级:")
+                    Text("优先级")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                     Picker("", selection: $taskPriority) {
@@ -149,13 +150,14 @@ struct TaskInputView: View {
                     }
                     .labelsHidden()
                     .scaleEffect(0.75)
+                    .frame(width: 80)
                 }
 
-                Divider().frame(height: 16)
+                Spacer()
 
-                // 周期
+                // 右侧：周期
                 HStack(spacing: 4) {
-                    Text("周期:")
+                    Text("周期")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                     Picker("", selection: $taskRecurrence) {
@@ -168,15 +170,15 @@ struct TaskInputView: View {
                     }
                     .labelsHidden()
                     .scaleEffect(0.75)
+                    .frame(width: 80)
                 }
-
-                Spacer()
             }
 
             // 第四行：提醒时间 + 创建为提醒开关
-            HStack(spacing: 12) {
+            HStack {
+                // 左侧：提醒时间
                 HStack(spacing: 4) {
-                    Text("提醒:")
+                    Text("提醒")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                     Picker("", selection: $taskReminderMinutes) {
@@ -189,21 +191,20 @@ struct TaskInputView: View {
                     }
                     .labelsHidden()
                     .scaleEffect(0.75)
+                    .frame(width: 110)
                 }
                 
-                Divider().frame(height: 16)
+                Spacer()
                 
-                // 创建为系统提醒开关
+                // 右侧：创建为系统提醒开关
                 HStack(spacing: 4) {
-                    Text("添加到提醒:")
+                    Text("添加到提醒")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                     Toggle("", isOn: $createAsReminder)
                         .toggleStyle(.switch)
                         .scaleEffect(0.65)
                 }
-
-                Spacer()
             }
         }
         .padding(.horizontal, 8)
