@@ -44,12 +44,29 @@ final class CachedEvent {
     /// 优先级 (0=无, 1-9, 9最高)
     var priority: Int = 0
     
+    /// 周期任务组ID（同一周期任务的所有实例共享）
+    var groupId: String?
+    
+    /// 周期任务组内序号（0-4，标记在5个中的位置）
+    var groupIndex: Int = -1
+    
+    /// 周期类型
+    var recurrenceTypeRaw: String? = RecurrenceType.none.rawValue
+    
+    /// 是否农历
+    var isLunar: Bool = false
+    
     /// 缓存更新时间
     var lastUpdated: Date
     
     var category: EventCategory {
         get { EventCategory(rawValue: categoryRaw) ?? .system }
         set { categoryRaw = newValue.rawValue }
+    }
+    
+    var recurrenceType: RecurrenceType {
+        get { RecurrenceType(rawValue: recurrenceTypeRaw ?? RecurrenceType.none.rawValue) ?? .none }
+        set { recurrenceTypeRaw = newValue.rawValue }
     }
     
     /// 是否为订阅日历
@@ -73,7 +90,11 @@ final class CachedEvent {
         calendarColorHex: String,
         category: EventCategory = .system,
         isCompleted: Bool = false,
-        priority: Int = 0
+        priority: Int = 0,
+        groupId: String? = nil,
+        groupIndex: Int = -1,
+        recurrenceType: RecurrenceType = .none,
+        isLunar: Bool = false
     ) {
         self.eventID = eventID
         self.title = title
@@ -86,6 +107,10 @@ final class CachedEvent {
         self.categoryRaw = category.rawValue
         self.isCompleted = isCompleted
         self.priority = priority
+        self.groupId = groupId
+        self.groupIndex = groupIndex
+        self.recurrenceTypeRaw = recurrenceType.rawValue
+        self.isLunar = isLunar
         self.lastUpdated = Date()
     }
 }

@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import SwiftData
 
 struct EditEventSheet: View {
     let event: CalendarEvent
@@ -18,6 +19,9 @@ struct EditEventSheet: View {
     @State private var taskRecurrence: RecurrenceType = .none
     @State private var taskReminderMinutes: Int = 10
     @State private var isProcessing = false
+    
+    // 保存原始周期类型，用于检测变更
+    private let originalRecurrence: RecurrenceType
 
     init(event: CalendarEvent, calendarService: CalendarService, onDismiss: (() -> Void)? = nil) {
         self.event = event
@@ -26,6 +30,19 @@ struct EditEventSheet: View {
         _title = State(initialValue: event.title)
         _startDate = State(initialValue: event.startDate ?? Date())
         _isAllDay = State(initialValue: event.isAllDay)
+        
+        // 获取原始周期类型（需要从缓存中读取）
+        let context = EventCacheService.shared.context
+        var originalRec = RecurrenceType.none
+        if let context = context {
+            let descriptor = FetchDescriptor<CachedEvent>()
+            if let allCached = try? context.fetch(descriptor),
+               let cached = allCached.first(where: { $0.eventID == event.id }) {
+                originalRec = cached.recurrenceType
+                _taskRecurrence = State(initialValue: cached.recurrenceType)
+            }
+        }
+        self.originalRecurrence = originalRec
     }
 
     var body: some View {
@@ -151,6 +168,15 @@ struct EditEventSheet: View {
                     endDate: isAllDay ? nil : startDate.addingTimeInterval(3600),
                     isReminder: event.isReminder
                 )
+                
+                // 如果周期类型发生变化，处理周期任务逻辑
+                if taskRecurrence != originalRecurrence {
+                    calendarService.updateEventRecurrence(
+                        eventID: event.id,
+                        newRecurrenceType: taskRecurrence
+                    )
+                }
+                
                 onDismiss?()
             } catch {
                 print("Failed to update event: \(error)")

@@ -124,7 +124,7 @@ final class SettingsWindowManager {
         window.title = "设置"
         window.contentView = hostingView
         window.center()
-        window.level = .floating  // 设置为浮动窗口，保持置顶
+        window.level = .normal  // 设置为浮动窗口，保持置顶
         settingsWindowDelegate = SettingsWindowDelegate()
         window.delegate = settingsWindowDelegate
         window.isReleasedWhenClosed = false

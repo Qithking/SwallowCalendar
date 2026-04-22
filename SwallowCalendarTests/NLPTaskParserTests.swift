@@ -135,4 +135,179 @@ class NLPTaskParserTests: XCTestCase {
         XCTAssertEqual(calendar.component(.hour, from: result3.date), 14)
         XCTAssertEqual(calendar.component(.minute, from: result3.date), 45)
     }
+    
+    // MARK: - 农历日期解析测试
+    
+    func testParseLunarDate() {
+        // 测试农历日期解析
+        let result = NLPTaskParser.parse("农历7月8日老妈生日")
+        
+        // 验证标题清理正确
+        XCTAssertEqual(result.title, "老妈生日")
+        
+        // 验证标记为农历
+        XCTAssertTrue(result.isLunar)
+        
+        // 验证日期不为空
+        XCTAssertNotNil(result.date)
+        
+        // 验证日期在未来（今年或明年）
+        let now = Date()
+        XCTAssertGreaterThan(result.date, now, "农历日期应该在未来")
+        
+        // 验证日期在3年内
+        let threeYearsLater = Calendar.current.date(byAdding: .year, value: 3, to: now)!
+        XCTAssertLessThan(result.date, threeYearsLater, "农历日期应该在3年内")
+        
+        // 验证转换回农历后月份和日期匹配
+        let chineseCalendar = Calendar(identifier: .chinese)
+        let lunarComponents = chineseCalendar.dateComponents([.month, .day], from: result.date)
+        XCTAssertEqual(lunarComponents.month, 7, "农历月份应该为7")
+        XCTAssertEqual(lunarComponents.day, 8, "农历日期应该为8")
+    }
+    
+    func testParseRecurringLunarDate() {
+        // 测试循环农历日期解析
+        let result = NLPTaskParser.parse("每年农历7月8日老妈生日")
+        
+        // 验证标题清理正确
+        XCTAssertEqual(result.title, "老妈生日")
+        
+        // 验证标记为农历和循环农历
+        XCTAssertTrue(result.isLunar)
+        XCTAssertTrue(result.isRecurringLunar)
+        
+        // 验证周期为每年
+        XCTAssertEqual(result.recurrence, .yearly)
+        
+        // 验证日期不为空
+        XCTAssertNotNil(result.date)
+        
+        // 验证日期在未来
+        let now = Date()
+        XCTAssertGreaterThan(result.date, now, "农历日期应该在未来")
+        
+        // 验证日期在3年内
+        let threeYearsLater = Calendar.current.date(byAdding: .year, value: 3, to: now)!
+        XCTAssertLessThan(result.date, threeYearsLater, "农历日期应该在3年内")
+        
+        // 验证转换回农历后月份和日期匹配
+        let chineseCalendar = Calendar(identifier: .chinese)
+        let lunarComponents = chineseCalendar.dateComponents([.month, .day], from: result.date)
+        XCTAssertEqual(lunarComponents.month, 7, "农历月份应该为7")
+        XCTAssertEqual(lunarComponents.day, 8, "农历日期应该为8")
+    }
+    
+    func testParseLunarDateWithOtherAttributes() {
+        // 测试农历日期与其他属性组合
+        let result = NLPTaskParser.parse("农历正月初一春节 红色 重要 每年循环")
+        
+        // 验证各个属性
+        XCTAssertEqual(result.title, "春节")
+        XCTAssertEqual(result.color, .red)
+        XCTAssertEqual(result.priority, .high)
+        XCTAssertEqual(result.recurrence, .yearly)
+        XCTAssertTrue(result.isLunar)
+        
+        // 验证日期
+        XCTAssertNotNil(result.date)
+        let now = Date()
+        XCTAssertGreaterThan(result.date, now)
+        
+        // 验证农历日期
+        let chineseCalendar = Calendar(identifier: .chinese)
+        let lunarComponents = chineseCalendar.dateComponents([.month, .day], from: result.date)
+        XCTAssertEqual(lunarComponents.month, 1, "农历月份应该为1（正月）")
+        XCTAssertEqual(lunarComponents.day, 1, "农历日期应该为1（初一）")
+    }
+    
+    func testParseYinliDate() {
+        // 测试"阴历"格式（与"农历"等价）
+        let result = NLPTaskParser.parse("阴历8月15中秋节")
+        
+        XCTAssertEqual(result.title, "中秋节")
+        XCTAssertTrue(result.isLunar)
+        XCTAssertNotNil(result.date)
+        
+        // 验证农历日期
+        let chineseCalendar = Calendar(identifier: .chinese)
+        let lunarComponents = chineseCalendar.dateComponents([.month, .day], from: result.date)
+        XCTAssertEqual(lunarComponents.month, 8)
+        XCTAssertEqual(lunarComponents.day, 15)
+    }
+    
+    func testLunarDateAccuracy() {
+        // 测试多个农历日期的准确性
+        let testCases: [(input: String, expectedMonth: Int, expectedDay: Int, expectedTitle: String)] = [
+            ("农历1月1日元旦", 1, 1, "元旦"),
+            ("农历5月5日端午节", 5, 5, "端午节"),
+            ("农历7月7日七夕", 7, 7, "七夕"),
+            ("农历8月15日中秋节", 8, 15, "中秋节"),
+            ("农历9月9日重阳节", 9, 9, "重阳节"),
+            ("农历12月30日除夕", 12, 30, "除夕"),
+        ]
+        
+        let chineseCalendar = Calendar(identifier: .chinese)
+        
+        for testCase in testCases {
+            let result = NLPTaskParser.parse(testCase.input)
+            
+            XCTAssertEqual(result.title, testCase.expectedTitle, "Failed for: \(testCase.input)")
+            XCTAssertTrue(result.isLunar, "Failed for: \(testCase.input)")
+            XCTAssertNotNil(result.date, "Failed for: \(testCase.input)")
+            
+            let lunarComponents = chineseCalendar.dateComponents([.month, .day], from: result.date)
+            XCTAssertEqual(lunarComponents.month, testCase.expectedMonth, "Month mismatch for: \(testCase.input)")
+            XCTAssertEqual(lunarComponents.day, testCase.expectedDay, "Day mismatch for: \(testCase.input)")
+        }
+    }
+    
+    func testLunarDateRegression() {
+        // 回归测试：确保农历解析不影响其他日期解析
+        // 测试普通公历日期解析仍然正常
+        let result1 = NLPTaskParser.parse("明天下午3点开会")
+        XCTAssertEqual(result1.title, "开会")
+        XCTAssertFalse(result1.isLunar)
+        
+        let result2 = NLPTaskParser.parse("后天上午9点体检")
+        XCTAssertEqual(result2.title, "体检")
+        XCTAssertFalse(result2.isLunar)
+        
+        // 测试绝对日期解析仍然正常
+        let result3 = NLPTaskParser.parse("12月25日圣诞节")
+        XCTAssertEqual(result3.title, "圣诞节")
+        XCTAssertFalse(result3.isLunar)
+        
+        // 测试时间格式解析仍然正常
+        let result4 = NLPTaskParser.parse("20:15开会")
+        XCTAssertEqual(result4.title, "开会")
+        XCTAssertFalse(result4.isLunar)
+        
+        let result5 = NLPTaskParser.parse("14点30会议")
+        XCTAssertEqual(result5.title, "会议")
+        XCTAssertFalse(result5.isLunar)
+    }
+    
+    // MARK: - 周期任务测试
+    
+    func testParseRecurringTaskWithLunar() {
+        // 测试农历周期任务解析
+        let result = NLPTaskParser.parse("每年农历7月8日老妈生日")
+        
+        XCTAssertEqual(result.title, "老妈生日")
+        XCTAssertTrue(result.isLunar)
+        XCTAssertTrue(result.isRecurringLunar)
+        XCTAssertEqual(result.recurrence, .yearly)
+        XCTAssertNotNil(result.date)
+    }
+    
+    func testParseRecurringTaskWithGregorian() {
+        // 测试公历周期任务解析
+        let result = NLPTaskParser.parse("每周一上午9点晨会")
+        
+        XCTAssertEqual(result.title, "晨会")
+        XCTAssertFalse(result.isLunar)
+        XCTAssertEqual(result.recurrence, .weekly)
+        XCTAssertNotNil(result.date)
+    }
 }

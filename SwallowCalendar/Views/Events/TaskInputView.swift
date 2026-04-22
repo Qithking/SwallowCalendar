@@ -248,7 +248,8 @@ struct TaskInputView: View {
                     recurrence: taskRecurrence,
                     reminderMinutes: taskReminderMinutes > 0 ? taskReminderMinutes : nil,
                     category: .user,
-                    asReminder: createAsReminder
+                    asReminder: createAsReminder,
+                    isLunar: taskIsLunar
                 )
                 await MainActor.run {
                     inputText = ""
