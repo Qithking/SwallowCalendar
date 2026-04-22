@@ -59,6 +59,12 @@ struct ContentView: View {
         .onChange(of: appSettings.accentColorHex) { _, newColor in
             accentColor = Color(hex: newColor)
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("CalendarPreferencesChanged"))) { _ in
+            // 日历配置变化时，触发同步
+            Task {
+                await syncCalendarEvents()
+            }
+        }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             // 从非活跃状态切换到活跃状态时，说明是用户点击了菜单栏图标
             if oldPhase != .active && newPhase == .active {

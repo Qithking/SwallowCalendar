@@ -237,11 +237,20 @@ final class EventCacheService {
         
         let newIDs = Set(systemEvents.map { $0.id })
         
-        // 删除已不存在的系统事件
+        // 获取当前启用的日历ID集合
+        let enabledCalendarIDs = Set(calendars.map { $0.calendarIdentifier })
+        
+        // 删除已不存在的系统事件（但保留被禁用日历的事件和提醒）
         let deletedIDs = Set(existingByID.keys).subtracting(newIDs)
         for eventID in deletedIDs {
             if let event = existingByID[eventID] {
-                context.delete(event)
+                // 跳过提醒事件（由 syncReminders 管理）
+                guard event.calendarTitle != "提醒" else { continue }
+                
+                // 只删除启用日历中的事件，保留被禁用日历的缓存
+                if enabledCalendarIDs.contains(event.calendarID) {
+                    context.delete(event)
+                }
             }
         }
         

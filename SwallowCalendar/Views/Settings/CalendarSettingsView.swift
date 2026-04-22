@@ -346,6 +346,9 @@ struct CalendarSettingsView: View {
         do {
             try modelContext.save()
             saveStatus = "已保存 \(Date().formatted(date: .omitted, time: .shortened))"
+            
+            // 发送通知，告知主窗口日历配置已更改
+            NotificationCenter.default.post(name: NSNotification.Name("CalendarPreferencesChanged"), object: nil)
         } catch {
             saveStatus = "保存失败"
             print("[CalendarSettings] 保存失败: \(error)")

@@ -26,31 +26,19 @@ struct EventCompletedListView: View {
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let range = filterMode.dateRange(from: selectedDate)
 
-        var result: [CalendarEvent] = []
-
-        // 从缓存读取事件（包括系统提醒，包含无到期时间的）
+        // 从缓存读取事件（包括全天事件和系统提醒，包含无到期时间的）
         let cachedEvents = calendarService.fetchCachedEvents(
             from: range.start,
             to: range.end,
             calendars: enabledCals,
             includeNoDateReminders: true
         )
-        for event in cachedEvents {
-            if event.category == .user && event.isCompleted && !event.title.trimmingCharacters(in: .whitespaces).isEmpty {
-                result.append(event)
-            }
-        }
-
-        // 全天事件
-        let dayEvents = calendarService.fetchCachedAllDayEvents(
-            from: range.start,
-            to: range.end,
-            calendars: enabledCals
-        )
-        for event in dayEvents {
-            if event.category == .user && event.isCompleted && !event.title.trimmingCharacters(in: .whitespaces).isEmpty {
-                result.append(event)
-            }
+        
+        // 过滤用户创建且已完成的非空事件
+        let result = cachedEvents.filter { event in
+            event.category == .user &&
+            event.isCompleted &&
+            !event.title.trimmingCharacters(in: .whitespaces).isEmpty
         }
 
         // 排序：优先级降序，时间降序

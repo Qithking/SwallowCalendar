@@ -14,11 +14,16 @@ struct NLPTaskParser {
             return ParsedTask(title: "", date: Date())
         }
 
-        // 解析日期
+        // 解析日期（包括农历）
         let dateResult = parseChineseDate(trimmed)
         let title = cleanTitle(trimmed)
 
         var result = ParsedTask(title: title, date: dateResult.date)
+
+        // 标记是否为农历
+        if dateResult.isLunar {
+            result.isLunar = true
+        }
 
         // 提取颜色
         if let color = parseColor(from: trimmed) {
@@ -35,8 +40,13 @@ struct NLPTaskParser {
             result.recurrence = recurrence
         }
 
-        // 提取农历标记
-        if trimmed.contains("农历") || trimmed.contains("阴历") {
+        // 标记是否为循环农历
+        if result.recurrence == .yearly && (trimmed.contains("农历") || trimmed.contains("阴历")) {
+            result.isRecurringLunar = true
+        }
+
+        // 提取农历标记（如果没有解析到农历日期，但包含农历关键词）
+        if !result.isLunar && (trimmed.contains("农历") || trimmed.contains("阴历")) {
             result.isLunar = true
         }
 
@@ -48,10 +58,15 @@ struct NLPTaskParser {
         return result
     }
 
-    /// 解析中文日期
-    private static func parseChineseDate(_ input: String) -> (date: Date, matched: String) {
+    /// 解析中文日期（包括农历）
+    private static func parseChineseDate(_ input: String) -> (date: Date, matched: String, isLunar: Bool) {
         let calendar = Calendar.current
         let now = Date()
+        
+        // 首先尝试解析农历日期
+        if let lunarResult = parseLunarDate(input, now: now) {
+            return lunarResult
+        }
         
         // 首先尝试解析时间部分（如"下午3点"、"20:15"、"20点15分"）
         var baseDate = calendar.startOfDay(for: now)  // 默认为今天的开始
@@ -163,10 +178,10 @@ struct NLPTaskParser {
                 components.month = calendar.component(.month, from: d)
                 components.day = calendar.component(.day, from: d)
                 if let finalDate = calendar.date(from: components) {
-                    return (finalDate, "大后天" + matchedText)
+                    return (finalDate, "大后天" + matchedText, false)
                 }
             }
-            return (date ?? now, "大后天")
+            return (date ?? now, "大后天", false)
         }
         if input.contains("后天") {
             let date = calendar.date(byAdding: .day, value: 2, to: calendar.startOfDay(for: now))
@@ -176,10 +191,10 @@ struct NLPTaskParser {
                 components.month = calendar.component(.month, from: d)
                 components.day = calendar.component(.day, from: d)
                 if let finalDate = calendar.date(from: components) {
-                    return (finalDate, "后天" + matchedText)
+                    return (finalDate, "后天" + matchedText, false)
                 }
             }
-            return (date ?? now, "后天")
+            return (date ?? now, "后天", false)
         }
         if input.contains("明天") {
             let date = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))
@@ -189,16 +204,16 @@ struct NLPTaskParser {
                 components.month = calendar.component(.month, from: d)
                 components.day = calendar.component(.day, from: d)
                 if let finalDate = calendar.date(from: components) {
-                    return (finalDate, "明天" + matchedText)
+                    return (finalDate, "明天" + matchedText, false)
                 }
             }
-            return (date ?? now, "明天")
+            return (date ?? now, "明天", false)
         }
         if input.contains("今天") {
             if !matchedText.isEmpty {
-                return (baseDate, "今天" + matchedText)
+                return (baseDate, "今天" + matchedText, false)
             }
-            return (calendar.startOfDay(for: now), "今天")
+            return (calendar.startOfDay(for: now), "今天", false)
         }
 
         // 匹配 X天后/小时/分钟后
@@ -213,10 +228,10 @@ struct NLPTaskParser {
                     components.month = calendar.component(.month, from: d)
                     components.day = calendar.component(.day, from: d)
                     if let finalDate = calendar.date(from: components) {
-                        return (finalDate, matched + matchedText)
+                        return (finalDate, matched + matchedText, false)
                     }
                 }
-                return (date ?? now, matched)
+                return (date ?? now, matched, false)
             }
         }
         if let match = input.range(of: "(\\d+)小时后", options: .regularExpression) {
@@ -224,7 +239,7 @@ struct NLPTaskParser {
             let numbers = matched.filter { $0.isNumber }
             if let hours = Int(numbers) {
                 let date = calendar.date(byAdding: .hour, value: hours, to: now)
-                return (date ?? now, matched)
+                return (date ?? now, matched, false)
             }
         }
         if let match = input.range(of: "(\\d+)分钟后", options: .regularExpression) {
@@ -232,7 +247,7 @@ struct NLPTaskParser {
             let numbers = matched.filter { $0.isNumber }
             if let minutes = Int(numbers) {
                 let date = calendar.date(byAdding: .minute, value: minutes, to: now)
-                return (date ?? now, matched)
+                return (date ?? now, matched, false)
             }
         }
 
@@ -260,20 +275,65 @@ struct NLPTaskParser {
                     timeComponents.month = calendar.component(.month, from: d)
                     timeComponents.day = calendar.component(.day, from: d)
                     if let finalDate = calendar.date(from: timeComponents) {
-                        return (finalDate, matched + matchedText)
+                        return (finalDate, matched + matchedText, false)
                     }
                 }
-                return (date ?? now, matched)
+                return (date ?? now, matched, false)
             }
         }
 
         // 如果没有找到特定日期但有时间，返回今天的时间
         if !matchedText.isEmpty {
-            return (baseDate, matchedText)
+            return (baseDate, matchedText, false)
         }
 
         // 默认今天
-        return (now, "")
+        return (now, "", false)
+    }
+
+    /// 解析农历日期
+    private static func parseLunarDate(_ input: String, now: Date) -> (date: Date, matched: String, isLunar: Bool)? {
+        // 匹配"农历X月X日"或"阴历X月X日"格式
+        let lunarPattern = "(?:农历|阴历)(\\d+)月(\\d+)[日号]?"
+        guard let match = input.range(of: lunarPattern, options: .regularExpression) else {
+            return nil
+        }
+        
+        let matched = String(input[match])
+        let numbers = matched.filter { $0.isNumber }
+        let parts = numbers.split(separator: " ")
+        
+        guard parts.count >= 2,
+              let lunarMonth = Int(parts[0]),
+              let lunarDay = Int(parts[1]),
+              lunarMonth >= 1, lunarMonth <= 12,
+              lunarDay >= 1, lunarDay <= 30 else {
+            return nil
+        }
+        
+        // 使用农历日历转换
+        let chineseCalendar = Calendar(identifier: .chinese)
+        var components = DateComponents()
+        components.month = lunarMonth
+        components.day = lunarDay
+        
+        // 默认使用当前年份
+        components.year = Calendar.current.component(.year, from: now)
+        
+        // 尝试转换为公历日期
+        guard let lunarDate = chineseCalendar.date(from: components) else {
+            return nil
+        }
+        
+        // 如果日期已过，则使用明年
+        if lunarDate < now {
+            components.year! += 1
+            if let nextYearDate = chineseCalendar.date(from: components) {
+                return (nextYearDate, matched, true)
+            }
+        }
+        
+        return (lunarDate, matched, true)
     }
 
     // MARK: - 颜色解析
@@ -308,6 +368,10 @@ struct NLPTaskParser {
     // MARK: - 周期解析
 
     private static func parseRecurrence(from input: String) -> RecurrenceType? {
+        // 优先匹配“每年农历”
+        if input.contains("每年农历") || input.contains("每年阴历") {
+            return .yearly
+        }
         if input.contains("每天") || input.contains("日循环") || input.contains("循环") {
             return .daily
         }
@@ -420,12 +484,15 @@ struct NLPTaskParser {
         }
 
         // 移除周期关键词
-        let recurrenceKeywords = ["每天", "每周", "每月", "每年", "循环", "重复"]
+        let recurrenceKeywords = ["每年农历", "每年阴历", "每天", "每周", "每月", "每年", "循环", "重复"]
         for kw in recurrenceKeywords {
             result = result.replacingOccurrences(of: kw, with: "")
         }
 
-        // 移除农历标记
+        // 移除农历标记（包括农历日期）
+        if let lunarRange = result.range(of: "(?:农历|阴历)(?:\\d+)月(?:\\d+)[日号]?", options: .regularExpression) {
+            result.removeSubrange(lunarRange)
+        }
         result = result.replacingOccurrences(of: "农历", with: "")
         result = result.replacingOccurrences(of: "阴历", with: "")
 
@@ -480,6 +547,7 @@ struct ParsedTask {
     var priority: EventPriority?
     var recurrence: RecurrenceType?
     var isLunar: Bool = false
+    var isRecurringLunar: Bool = false
     var reminderMinutes: Int?
 
     init(title: String, date: Date) {
@@ -489,6 +557,7 @@ struct ParsedTask {
         self.priority = nil
         self.recurrence = nil
         self.isLunar = false
+        self.isRecurringLunar = false
         self.reminderMinutes = nil
     }
 }

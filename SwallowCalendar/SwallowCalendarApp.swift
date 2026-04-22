@@ -88,8 +88,9 @@ final class SettingsWindowManager {
         // 防止重复打开
         guard !isOpening else { return }
 
-        // 已有窗口则直接激活
+        // 已有窗口则直接激活并置顶
         if let window = settingsWindow {
+            window.level = .floating  // 确保置顶
             if window.isVisible {
                 window.makeKeyAndOrderFront(nil)
             } else {
@@ -123,11 +124,14 @@ final class SettingsWindowManager {
         window.title = "设置"
         window.contentView = hostingView
         window.center()
+        window.level = .floating  // 设置为浮动窗口，保持置顶
         settingsWindowDelegate = SettingsWindowDelegate()
         window.delegate = settingsWindowDelegate
         window.isReleasedWhenClosed = false
-        window.makeKeyAndOrderFront(nil)
+        
+        // 先激活应用，再显示窗口，确保控件正常响应
         NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
 
         settingsWindow = window
     }
