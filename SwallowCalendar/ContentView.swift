@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var isSyncing = false  // 同步状态
     @State private var shouldSyncOnAppear = false  // 是否在显示时同步
     @State private var hasInitialized = false  // 是否已初始化
+    @State private var calendarGridRefreshTrigger = false  // 用于触发日历网格刷新
     
     // 用于强制视图响应主题色变化
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
@@ -36,7 +37,8 @@ struct ContentView: View {
                 calendarService: calendarService,
                 icsService: icsService,
                 customSources: customSources,
-                calendarPreferences: calendarPreferences
+                calendarPreferences: calendarPreferences,
+                externalRefreshTrigger: calendarGridRefreshTrigger
             )
 
             Divider()
@@ -45,7 +47,11 @@ struct ContentView: View {
             EventPanelView(
                 selectedDate: $selectedDate,
                 calendarService: calendarService,
-                calendarPreferences: calendarPreferences
+                calendarPreferences: calendarPreferences,
+                onEventsChanged: {
+                    // 事件变更时刷新日历网格缓存
+                    calendarGridRefreshTrigger.toggle()
+                }
             )
             .frame(maxHeight: .infinity)
 

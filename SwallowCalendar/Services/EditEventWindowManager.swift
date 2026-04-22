@@ -15,7 +15,7 @@ final class EditEventWindowManager {
 
     private init() {}
 
-    func openEditWindow(event: CalendarEvent, calendarService: CalendarService, onDismiss: @escaping () -> Void) {
+    func openEditWindow(event: CalendarEvent, calendarService: CalendarService, onDismiss: @escaping () -> Void, onSave: @escaping () -> Void = {}) {
         guard !isOpening else { return }
 
         // 关闭已有窗口
@@ -30,6 +30,9 @@ final class EditEventWindowManager {
             onDismiss: {
                 self.editWindow?.close()
                 onDismiss()
+            },
+            onSave: {
+                onSave()
             }
         )
 

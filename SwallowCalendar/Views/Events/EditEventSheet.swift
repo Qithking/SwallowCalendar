@@ -10,6 +10,7 @@ struct EditEventSheet: View {
     let event: CalendarEvent
     let calendarService: CalendarService
     var onDismiss: (() -> Void)?
+    var onSave: (() -> Void)? = nil  // 保存成功通知回调
 
     @State private var title: String
     @State private var startDate: Date
@@ -176,6 +177,9 @@ struct EditEventSheet: View {
                         newRecurrenceType: taskRecurrence
                     )
                 }
+                
+                // 通知外部刷新
+                onSave?()
                 
                 onDismiss?()
             } catch {

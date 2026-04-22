@@ -13,6 +13,7 @@ struct CalendarGridView: View {
     let icsService: ICSService
     let customSources: [CustomCalendarSource]
     let calendarPreferences: [CalendarPreference]
+    var externalRefreshTrigger: Bool = false  // 外部刷新信号
 
     @State private var currentMonth = Date()
     @State private var hoveredDate: Date?
@@ -77,6 +78,13 @@ struct CalendarGridView: View {
         .onChange(of: customSources.map { "\($0.icsURL):\($0.isEnabled):\($0.isImportant)" }.joined()) { _, _ in
             // 订阅源改变时刷新缓存
             print("[CalendarGridView] 检测到订阅源变化，刷新所有缓存")
+            Task {
+                await computeAllCaches()
+            }
+        }
+        .onChange(of: externalRefreshTrigger) { _, _ in
+            // 外部刷新信号（删除/编辑事件后）触发缓存刷新
+            print("[CalendarGridView] 检测到外部刷新信号，刷新所有缓存")
             Task {
                 await computeAllCaches()
             }

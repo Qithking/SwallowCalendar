@@ -258,8 +258,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "SwallowCalendar需要访问日历以显示和管理您的日程安排";
-				INFOPLIST_KEY_NSRemindersUsageDescription = "SwallowCalendar需要访问提醒以同步您的待办事项";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSRemindersUsageDescription = "SwallowCalendar需要访问提醒以同步您的待办事项";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -292,8 +292,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "SwallowCalendar需要访问日历以显示和管理您的日程安排";
-				INFOPLIST_KEY_NSRemindersUsageDescription = "SwallowCalendar需要访问提醒以同步您的待办事项";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSRemindersUsageDescription = "SwallowCalendar需要访问提醒以同步您的待办事项";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

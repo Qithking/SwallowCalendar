@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct EventPanelView: View {
     @Environment(AppSettings.self) private var appSettings
@@ -11,10 +12,9 @@ struct EventPanelView: View {
     let calendarService: CalendarService
     let calendarPreferences: [CalendarPreference]
     var externalRefreshTrigger: Bool = false
+    var onEventsChanged: (() -> Void)? = nil  // 事件变更通知回调
 
     @State private var filterMode: EventFilterMode = .thisMonth
-    @State private var showDeleteConfirmation = false
-    @State private var eventToDelete: CalendarEvent?
     @State private var refreshTrigger = false
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
     @State private var todoExpanded = true
@@ -29,6 +29,7 @@ struct EventPanelView: View {
                 refreshTrigger: $refreshTrigger,
                 onTaskAdded: {
                     refreshTrigger.toggle()
+                    onEventsChanged?()
                 }
             )
             .padding(.horizontal, 8)
@@ -62,16 +63,21 @@ struct EventPanelView: View {
                         EditEventWindowManager.shared.openEditWindow(
                             event: event,
                             calendarService: calendarService,
-                            onDismiss: {}
+                            onDismiss: {},
+                            onSave: {
+                                // 编辑保存后刷新日历
+                                refreshTrigger.toggle()
+                                onEventsChanged?()
+                            }
                         )
                     },
                     onCompleteEvent: { event in
                         calendarService.toggleEventCompleted(eventID: event.id, isCompleted: true, isReminder: event.isReminder)
                         refreshTrigger.toggle()
+                        onEventsChanged?()
                     },
                     onDeleteEvent: { event in
-                        eventToDelete = event
-                        showDeleteConfirmation = true
+                        showDeleteConfirmation(event: event)
                     },
                     refreshTrigger: $refreshTrigger
                 )
@@ -95,16 +101,21 @@ struct EventPanelView: View {
                         EditEventWindowManager.shared.openEditWindow(
                             event: event,
                             calendarService: calendarService,
-                            onDismiss: {}
+                            onDismiss: {},
+                            onSave: {
+                                // 编辑保存后刷新日历
+                                refreshTrigger.toggle()
+                                onEventsChanged?()
+                            }
                         )
                     },
                     onUncompleteEvent: { event in
                         calendarService.toggleEventCompleted(eventID: event.id, isCompleted: false, isReminder: event.isReminder)
                         refreshTrigger.toggle()
+                        onEventsChanged?()
                     },
                     onDeleteEvent: { event in
-                        eventToDelete = event
-                        showDeleteConfirmation = true
+                        showDeleteConfirmation(event: event)
                     },
                     refreshTrigger: $refreshTrigger
                 )
@@ -112,35 +123,6 @@ struct EventPanelView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        }
-        .overlay {
-            if showDeleteConfirmation, let event = eventToDelete {
-                Color.black.opacity(0.3)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        // 点击遮罩不关闭，只有按钮可以关闭
-                    }
-                DeleteConfirmDialog(
-                    eventTitle: event.title,
-                    isRecurring: event.groupId != nil && event.recurrenceType != .none,
-                    onConfirm: {
-                        deleteEvent(event)
-                        eventToDelete = nil
-                        showDeleteConfirmation = false
-                    },
-                    onDeleteAll: {
-                        if let groupId = event.groupId {
-                            calendarService.deleteUncompletedInGroup(groupId: groupId)
-                        }
-                        eventToDelete = nil
-                        showDeleteConfirmation = false
-                    },
-                    onCancel: {
-                        eventToDelete = nil
-                        showDeleteConfirmation = false
-                    }
-                )
-            }
         }
         .onAppear {
             filterMode = appSettings.defaultFilterModeEnum
@@ -154,9 +136,67 @@ struct EventPanelView: View {
         }
     }
 
+    // MARK: - Delete Confirmation with NSAlert
+
+    @MainActor
+    private func showDeleteConfirmation(event: CalendarEvent) {
+        let isRecurring = event.groupId != nil && event.recurrenceType != .none
+        
+        let alert = NSAlert()
+        alert.messageText = "确认删除"
+        
+        if isRecurring {
+            alert.informativeText = "确定要删除事件「\(event.title)」吗？\n此操作无法撤销。\n\n这是周期任务，您可以选择只删除此项，或删除所有未完成的实例。"
+        } else {
+            alert.informativeText = "确定要删除事件「\(event.title)」吗？\n此操作无法撤销。"
+        }
+        
+        alert.alertStyle = .warning
+        
+        if isRecurring {
+            // 周期任务：三个按钮（从右到左：取消、删除此项、删除全部）
+            alert.addButton(withTitle: "取消")  // 第一个按钮 = .alertFirstButton
+            alert.addButton(withTitle: "删除此项")  // 第二个按钮 = .alertSecondButton
+            let deleteAllButton = alert.addButton(withTitle: "删除全部")  // 第三个按钮 = .alertThirdButton
+            deleteAllButton.hasDestructiveAction = true  // 红色警示
+            
+            // 显示对话框
+            let response = alert.runModal()
+            
+            // NSAlert 按钮索引从 1000 开始：1000=第一个, 1001=第二个, 1002=第三个
+            switch response.rawValue {
+            case 1001:  // 删除此项
+                deleteEvent(event)
+            case 1002:  // 删除全部
+                if let groupId = event.groupId {
+                    calendarService.deleteUncompletedInGroup(groupId: groupId)
+                    refreshTrigger.toggle()
+                    onEventsChanged?()
+                }
+            default:  // 1000 = 取消
+                break
+            }
+        } else {
+            // 非周期任务：两个按钮
+            alert.addButton(withTitle: "取消")  // 第一个按钮
+            let deleteButton = alert.addButton(withTitle: "删除")  // 第二个按钮
+            deleteButton.hasDestructiveAction = true
+            
+            // 显示对话框
+            let response = alert.runModal()
+            
+            // 1001 = 第二个按钮（删除）
+            if response.rawValue == 1001 {
+                deleteEvent(event)
+            }
+        }
+    }
+
     private func deleteEvent(_ event: CalendarEvent) {
         do {
             try calendarService.deleteEvent(eventID: event.id, isReminder: event.isReminder)
+            refreshTrigger.toggle()
+            onEventsChanged?()
         } catch {
             print("Failed to delete event: \(error)")
         }
