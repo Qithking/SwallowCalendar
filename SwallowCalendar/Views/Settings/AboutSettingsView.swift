@@ -175,5 +175,3 @@ struct AboutSettingsView: View {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
     }
 }
-
-

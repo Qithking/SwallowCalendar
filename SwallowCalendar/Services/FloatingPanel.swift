@@ -110,8 +110,6 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
             // 将按钮坐标转换为屏幕坐标
             let buttonFrameInScreen = buttonWindow.convertToScreen(buttonFrameInWindow)
             
-            print("[FloatingPanel] Button frame in screen: \(buttonFrameInScreen)")
-            
             // 窗口应该显示在按钮下方，左对齐
             var originX = buttonFrameInScreen.minX
             var originY = buttonFrameInScreen.minY - frame.height - 5 // 5px 间距

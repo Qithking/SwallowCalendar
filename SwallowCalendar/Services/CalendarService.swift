@@ -226,9 +226,6 @@ final class CalendarService {
     ) throws {
         let recurrenceType = recurrence ?? .none
         
-        // 调试日志
-        print("[DEBUG] createEvent - startDate: \(startDate), endDate: \(endDate?.description ?? "nil"), isAllDay: \(isAllDay), recurrence: \(recurrenceType)")
-        
         // 周期任务需要确保时间在当前时间之后
         var finalStartDate = startDate
         var finalEndDate = endDate
@@ -241,8 +238,6 @@ final class CalendarService {
                 let timeDiff = ed.timeIntervalSince(startDate)
                 finalEndDate = finalStartDate.addingTimeInterval(timeDiff)
             }
-            
-            print("[DEBUG] After advancement - finalStartDate: \(finalStartDate), finalEndDate: \(finalEndDate?.description ?? "nil")")
         }
         
         // 如果是周期任务，生成5个实例
@@ -377,7 +372,6 @@ final class CalendarService {
             let calculatedEndDate = endDate ?? startDate.addingTimeInterval(3600)
             // 确保 endDate > startDate
             if calculatedEndDate <= startDate {
-                print("[ERROR] endDate (\(calculatedEndDate)) <= startDate (\(startDate))! Auto-fixing to startDate + 1h")
                 event.endDate = startDate.addingTimeInterval(3600)
             } else {
                 event.endDate = calculatedEndDate
@@ -512,7 +506,6 @@ final class CalendarService {
             let calculatedEndDate = endDate ?? startDate.addingTimeInterval(3600)
             // 确保 endDate > startDate
             if calculatedEndDate <= startDate {
-                print("[ERROR] endDate (\(calculatedEndDate)) <= startDate (\(startDate))! Auto-fixing to startDate + 1h")
                 event.endDate = startDate.addingTimeInterval(3600)
             } else {
                 event.endDate = calculatedEndDate

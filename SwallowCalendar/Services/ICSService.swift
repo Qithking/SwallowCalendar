@@ -129,28 +129,19 @@ final class ICSService {
         // 只返回启用的日历源的事件
         let enabledSourceURLs = Set(sources.filter { $0.isEnabled }.map { $0.icsURL })
         let filtered = allEvents.filter { enabledSourceURLs.contains($0.sourceURL) }
-        let events = filtered.map { $0.eventName }
-        if !events.isEmpty {
-            print("[ICSService] subscriptionEventsSync(\(dateKey)): \(events)")
-        }
-        return events
+        return filtered.map { $0.eventName }
     }
 
     /// 预加载订阅日历数据
     func preloadSubscriptions(sources: [CustomCalendarSource]) async {
-        print("[ICSService] 开始预加载订阅日历数据, sources=\(sources.count)")
         for source in sources where source.isEnabled {
-            print("[ICSService] 加载日历源: \(source.name), URL: \(source.icsURL)")
             let events: [ICSEvent]
             if let cached = loadCached(url: source.icsURL) {
                 events = cached
-                print("[ICSService] 从缓存加载 \(events.count) 个事件")
             } else {
                 do {
                     events = try await fetchAndParse(url: source.icsURL)
-                    print("[ICSService] 从网络加载 \(events.count) 个事件")
                 } catch {
-                    print("[ICSService] 加载失败: \(error)")
                     continue
                 }
             }
