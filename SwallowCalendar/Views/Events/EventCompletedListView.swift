@@ -93,7 +93,7 @@ struct EventCompletedListView: View {
                     }
                 }
                 .padding(.top, 6)
-                .frame(maxHeight: 200)
+                .frame(maxHeight: .infinity)
             }
         }
     }
