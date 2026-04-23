@@ -1,0 +1,220 @@
+//
+//  FloatingPanel.swift
+//  SwallowCalendar
+//
+//  参考 Maccy 项目实现的可缩放浮动面板
+
+import SwiftUI
+import AppKit
+
+class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
+    var isPresented: Bool = false
+    var statusBarButton: NSStatusBarButton?
+    let onClose: () -> Void
+    
+    override var isMovable: Bool {
+        get { true }
+        set {}
+    }
+    
+    init(
+        contentRect: NSRect,
+        identifier: String = "",
+        statusBarButton: NSStatusBarButton? = nil,
+        onClose: @escaping () -> Void,
+        @ViewBuilder view: @escaping () -> Content
+    ) {
+        self.onClose = onClose
+        self.statusBarButton = statusBarButton
+        
+        super.init(
+            contentRect: contentRect,
+            styleMask: [.resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        
+        self.identifier = NSUserInterfaceItemIdentifier(identifier)
+        delegate = self
+        
+        animationBehavior = .none
+        isFloatingPanel = true
+        level = .statusBar
+        collectionBehavior = [.auxiliary, .stationary, .moveToActiveSpace, .fullScreenAuxiliary]
+        titleVisibility = .hidden
+        titlebarAppearsTransparent = true
+        isMovableByWindowBackground = true
+        hidesOnDeactivate = false
+        backgroundColor = NSColor.clear
+        titlebarSeparatorStyle = .none
+        
+        // 启用半透明效果
+        isOpaque = false
+        hasShadow = true
+        
+        // 添加圆角和阴影效果（类似 MenuBarExtra）
+        contentView?.wantsLayer = true
+        contentView?.layer?.cornerRadius = 12
+        contentView?.layer?.masksToBounds = false
+        
+        // 添加阴影
+        contentView?.layer?.shadowColor = NSColor.black.cgColor
+        contentView?.layer?.shadowOffset = NSSize(width: 0, height: -2)
+        contentView?.layer?.shadowOpacity = 0.3
+        contentView?.layer?.shadowRadius = 10
+        
+        // 设置窗口最小和最大尺寸
+        minSize = NSSize(width: 340, height: 600)
+        maxSize = NSSize(width: 500, height: 1000)
+        
+        // 设置内容视图
+        let rootView = view()
+            .ignoresSafeArea()
+        
+        contentView = NSHostingView(
+            rootView: AnyView(rootView)
+        )
+        
+        // 关键：设置自动调整大小掩码，使内容跟随窗口尺寸变化
+        contentView?.autoresizingMask = [.width, .height]
+    }
+    
+    func toggle() {
+        print("[FloatingPanel] toggle called, isPresented: \(isPresented)")
+        if isPresented {
+            close()
+        } else {
+            open()
+        }
+    }
+    
+    func open() {
+        print("[FloatingPanel] Opening window...")
+        // 从 UserDefaults 恢复窗口尺寸
+        let savedWidth = UserDefaults.standard.double(forKey: "mainWindowWidth")
+        let savedHeight = UserDefaults.standard.double(forKey: "mainWindowHeight")
+        
+        let width = savedWidth > 340 ? savedWidth : 340
+        let height = savedHeight > 600 ? savedHeight : 600
+        
+        print("[FloatingPanel] Window size: \(width)x\(height)")
+        setContentSize(NSSize(width: width, height: height))
+        
+        // 定位到状态栏图标下方
+        if let button = statusBarButton {
+            print("[FloatingPanel] Using status bar button positioning")
+            
+            // 获取按钮在屏幕坐标系中的位置
+            // NSStatusBarButton 的 convert(to: nil) 返回的是相对于其父窗口的坐标
+            // 我们需要将其转换为屏幕坐标
+            let buttonFrameInWindow = button.convert(button.bounds, to: nil)
+            
+            // 获取按钮所在窗口
+            guard let buttonWindow = button.window else {
+                print("[FloatingPanel] ERROR: Button has no window")
+                return
+            }
+            
+            // 将按钮坐标转换为屏幕坐标
+            let buttonFrameInScreen = buttonWindow.convertToScreen(buttonFrameInWindow)
+            
+            print("[FloatingPanel] Button frame in screen: \(buttonFrameInScreen)")
+            
+            // 窗口应该显示在按钮下方，左对齐
+            var originX = buttonFrameInScreen.minX
+            var originY = buttonFrameInScreen.minY - frame.height - 5 // 5px 间距
+            
+            // 获取屏幕可见区域
+            let screen = buttonWindow.screen ?? NSScreen.main
+            guard let screenFrame = screen?.visibleFrame else {
+                print("[FloatingPanel] ERROR: No screen frame available")
+                return
+            }
+            
+            print("[FloatingPanel] Screen frame: \(screenFrame)")
+            print("[FloatingPanel] Calculated origin before bounds check: x=\(originX), y=\(originY)")
+            
+            // 确保窗口不超出屏幕右边界
+            if originX + frame.width > screenFrame.maxX {
+                originX = screenFrame.maxX - frame.width - 10
+            }
+            
+            // 确保窗口不超出屏幕左边界
+            if originX < screenFrame.minX {
+                originX = screenFrame.minX + 10
+            }
+            
+            // 确保窗口不超出屏幕底部
+            if originY < screenFrame.minY {
+                originY = screenFrame.minY + 10
+            }
+            
+            print("[FloatingPanel] Final origin: x=\(originX), y=\(originY)")
+            setFrameOrigin(NSPoint(x: originX, y: originY))
+        } else {
+            print("[FloatingPanel] WARNING: No status bar button, using center positioning")
+            // 居中显示
+            if let screen = NSScreen.main {
+                let screenFrame = screen.visibleFrame
+                let x = screenFrame.midX - frame.width / 2
+                let y = screenFrame.midY - frame.height / 2
+                print("[FloatingPanel] Center position: x=\(x), y=\(y)")
+                setFrameOrigin(NSPoint(x: x, y: y))
+            }
+        }
+        
+        print("[FloatingPanel] Calling orderFrontRegardless()")
+        orderFrontRegardless()
+        
+        // 先激活应用，再让窗口成为关键窗口
+        NSApp.activate(ignoringOtherApps: true)
+        
+        print("[FloatingPanel] Calling makeKeyAndOrderFront()")
+        makeKeyAndOrderFront(nil)
+        isPresented = true
+        
+        print("[FloatingPanel] Window frame: \(frame)")
+        print("[FloatingPanel] Window isVisible: \(isVisible)")
+        print("[FloatingPanel] Window isKeyWindow: \(isKeyWindow)")
+        print("[FloatingPanel] Window opened successfully")
+        
+        // 高亮状态栏按钮
+        statusBarButton?.isHighlighted = true
+    }
+    
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        var newSize = frameSize
+        newSize.width = max(newSize.width, 340)
+        newSize.height = max(newSize.height, 600)
+        return newSize
+    }
+    
+    func windowDidEndLiveResize(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        let size = window.frame.size
+        UserDefaults.standard.set(size.width, forKey: "mainWindowWidth")
+        UserDefaults.standard.set(size.height, forKey: "mainWindowHeight")
+    }
+    
+    func windowDidResignKey(_ notification: Notification) {
+        // 窗口失去焦点时关闭
+        if isPresented {
+            close()
+        }
+    }
+    
+    override func resignKey() {
+        super.resignKey()
+    }
+    
+    override func close() {
+        super.close()
+        isPresented = false
+        statusBarButton?.isHighlighted = false
+        onClose()
+    }
+    
+    override var canBecomeKey: Bool {
+        return true
+    }
+}

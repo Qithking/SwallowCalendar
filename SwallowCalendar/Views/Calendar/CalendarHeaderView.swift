@@ -25,6 +25,7 @@ struct CalendarHeaderView: View {
                     .font(.system(size: 14, weight: .semibold))
             }
             .buttonStyle(.plain)
+            .focusEffectDisabled()
             .popover(isPresented: $showMonthPicker, arrowEdge: .bottom) {
                 MonthYearPickerView(currentMonth: $currentMonth, selectedDate: $selectedDate)
             }

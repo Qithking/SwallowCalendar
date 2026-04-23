@@ -60,6 +60,8 @@ struct ContentView: View {
             // 工具栏
             toolbar
         }
+        .background(.regularMaterial)
+        .cornerRadius(12)
         .preferredColorScheme(appSettings.colorScheme)
         .tint(accentColor)
         .onChange(of: appSettings.accentColorHex) { _, newColor in
