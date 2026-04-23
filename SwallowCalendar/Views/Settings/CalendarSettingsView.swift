@@ -25,10 +25,8 @@ struct CalendarSettingsView: View {
         @Bindable var settings = appSettings
 
         Form {
-            // 显示选项
-            Section("显示选项") {
-                Toggle("显示农历", isOn: $settings.showLunarCalendar)
-                
+            // 系统提醒
+            Section("系统提醒") {
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("同步系统提醒", isOn: $settings.syncSystemReminders)
                         .help("将系统提醒应用中的待办事项同步到待办列表中")

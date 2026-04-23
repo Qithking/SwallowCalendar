@@ -77,7 +77,10 @@ struct GeneralSettingsView: View {
                             }
                     }
                 }
+            }
 
+            // 显示选项
+            Section("显示选项") {
                 // 星期起始日
                 Picker("星期起始日", selection: $settings.weekdayStart) {
                     Text("周日").tag(1)
@@ -90,6 +93,9 @@ struct GeneralSettingsView: View {
                         Text(mode.rawValue).tag(mode.rawValue)
                     }
                 }
+                
+                // 显示农历
+                Toggle("显示农历", isOn: $settings.showLunarCalendar)
             }
         }
         .formStyle(.grouped)

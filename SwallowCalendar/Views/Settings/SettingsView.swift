@@ -17,7 +17,7 @@ struct SettingsView: View {
 
             CalendarSettingsView()
                 .tabItem {
-                    Label("日历", systemImage: "calendar")
+                    Label("同步", systemImage: "arrow.triangle.2.circlepath")
                 }
             
             DataExportSettingsView()
