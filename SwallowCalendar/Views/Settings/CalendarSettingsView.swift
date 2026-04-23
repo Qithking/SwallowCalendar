@@ -136,11 +136,17 @@ struct CalendarSettingsView: View {
                 }
 
                 // 添加新源
-                HStack(spacing: 8) {
-                    TextField("名称", text: $newSourceName)
+                HStack(spacing: 6) {
+                    Text("名称")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    TextField("", text: $newSourceName)
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 80)
-                    TextField("ICS URL", text: $newSourceURL)
+                        .frame(width: 70)
+                    Text("ICS URL")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    TextField("", text: $newSourceURL)
                         .textFieldStyle(.roundedBorder)
                     Button("添加") {
                         addCustomSource()
