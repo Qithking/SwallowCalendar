@@ -24,10 +24,11 @@ struct EditEventSheet: View {
     // 保存原始周期类型，用于检测变更
     private let originalRecurrence: RecurrenceType
 
-    init(event: CalendarEvent, calendarService: CalendarService, onDismiss: (() -> Void)? = nil) {
+    init(event: CalendarEvent, calendarService: CalendarService, onDismiss: (() -> Void)? = nil, onSave: (() -> Void)? = nil) {
         self.event = event
         self.calendarService = calendarService
         self.onDismiss = onDismiss
+        self.onSave = onSave
         _title = State(initialValue: event.title)
         _startDate = State(initialValue: event.startDate ?? Date())
         _isAllDay = State(initialValue: event.isAllDay)
