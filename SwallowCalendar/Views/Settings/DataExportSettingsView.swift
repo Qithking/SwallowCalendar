@@ -14,6 +14,9 @@ struct DataExportSettingsView: View {
     @State private var showExportSuccess = false
     @State private var showExportError = false
     @State private var errorMessage = ""
+    @State private var showClearConfirm = false
+    @State private var isClearing = false
+    @State private var clearStatus: ClearStatus?  // 清除操作的状态反馈
     
     var body: some View {
         Form {
@@ -47,13 +50,27 @@ struct DataExportSettingsView: View {
                         .foregroundColor(.secondary)
                     
                     Button(role: .destructive) {
-                        clearEventCache()
+                        showClearConfirm = true
                     } label: {
                         HStack {
-                            Image(systemName: "trash")
-                            Text("清除事件缓存")
+                            // 状态反馈图标
+                            if let status = clearStatus {
+                                status.icon
+                                    .foregroundStyle(status.color)
+                                    .transition(.scale)
+                            }
+                            
+                            if isClearing {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "trash")
+                            }
+                            Text(isClearing ? "清除中..." : "清除事件缓存")
                         }
                     }
+                    .disabled(isClearing)
+                    .animation(.easeInOut(duration: 0.2), value: clearStatus)
                 }
                 .padding(.vertical, 4)
             }
@@ -88,6 +105,14 @@ struct DataExportSettingsView: View {
             Button("确定") {}
         } message: {
             Text(errorMessage)
+        }
+        .alert("确认清除", isPresented: $showClearConfirm) {
+            Button("取消", role: .cancel) {}
+            Button("确认清除", role: .destructive) {
+                clearEventCache()
+            }
+        } message: {
+            Text("此操作将清除本地缓存的所有事件数据，但不会影响系统日历中的原始数据。")
         }
     }
     
@@ -144,7 +169,42 @@ struct DataExportSettingsView: View {
     }
     
     private func clearEventCache() {
-        EventCacheService.shared.clearCache()
+        isClearing = true
+        
+        Task {
+            do {
+                // 模拟异步操作（实际 clearCache 是同步的，但为了 UI 反馈使用 Task）
+                try await Task.sleep(nanoseconds: 100_000_000)  // 100ms 延迟让用户看到进度
+                
+                EventCacheService.shared.clearCache()
+                
+                await MainActor.run {
+                    isClearing = false
+                    clearStatus = .success
+                    
+                    // 5 秒后自动清除状态
+                    Task {
+                        try await Task.sleep(nanoseconds: 5_000_000_000)  // 5 秒
+                        await MainActor.run {
+                            clearStatus = nil
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isClearing = false
+                    clearStatus = .failure
+                    
+                    // 5 秒后自动清除状态
+                    Task {
+                        try await Task.sleep(nanoseconds: 5_000_000_000)  // 5 秒
+                        await MainActor.run {
+                            clearStatus = nil
+                        }
+                    }
+                }
+            }
+        }
     }
     
     private func generateICS(events: [CalendarEvent]) -> String {
@@ -212,5 +272,30 @@ struct DataExportSettingsView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmmss"
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - Clear Status
+
+enum ClearStatus {
+    case success
+    case failure
+    
+    var icon: Image {
+        switch self {
+        case .success:
+            return Image(systemName: "checkmark.circle.fill")
+        case .failure:
+            return Image(systemName: "xmark.circle.fill")
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .success:
+            return .green
+        case .failure:
+            return .red
+        }
     }
 }

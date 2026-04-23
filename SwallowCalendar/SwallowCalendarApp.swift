@@ -91,15 +91,26 @@ final class SettingsWindowManager {
         // 已有窗口则直接激活并置顶
         if let window = settingsWindow {
             window.level = .floating  // 确保浮动在最上层
-            if window.isVisible {
-                window.makeKeyAndOrderFront(nil)
-            } else {
-                // 窗口可能被隐藏，重新显示
-                window.orderFront(nil)
+            
+            // 强制激活应用并显示窗口
+            DispatchQueue.main.async {
+                // 1. 先激活应用
+                NSApp.activate(ignoringOtherApps: true)
+                
+                // 2. 显示窗口
+                if window.isVisible {
+                    window.makeKeyAndOrderFront(nil)
+                } else {
+                    window.orderFront(nil)
+                }
+                
+                // 3. 确保窗口获取焦点
+                window.makeKey()
+                window.becomeKey()
+                
+                // 4. 再次确认应用激活
+                NSApp.activate(ignoringOtherApps: true)
             }
-            // 强制激活应用并获取焦点
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKey()
             return
         }
 
@@ -130,13 +141,25 @@ final class SettingsWindowManager {
         settingsWindowDelegate = SettingsWindowDelegate()
         window.delegate = settingsWindowDelegate
         window.isReleasedWhenClosed = false
+        window.hidesOnDeactivate = false  // 失焦时不隐藏
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]  // 确保在所有空间中可用
         
-        // 先激活应用并获取焦点，再显示窗口，确保控件正常响应
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-        window.becomeKey()
-
         settingsWindow = window
+        
+        // 强制激活应用并显示窗口
+        DispatchQueue.main.async {
+            // 1. 先激活应用
+            NSApp.activate(ignoringOtherApps: true)
+            
+            // 2. 显示窗口并设为关键窗口
+            window.makeKeyAndOrderFront(nil)
+            
+            // 3. 确保窗口获取焦点
+            window.becomeKey()
+            
+            // 4. 再次确认应用激活
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     func windowDidClose() {
