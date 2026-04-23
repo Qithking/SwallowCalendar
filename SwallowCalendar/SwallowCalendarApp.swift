@@ -90,11 +90,11 @@ final class SettingsWindowManager {
 
         // 已有窗口则直接激活并置顶
         if let window = settingsWindow {
-            window.level = .floating  // 确保浮动在最上层
+            // 先置顶
+            window.level = .floating
             
-            // 强制激活应用并显示窗口
             DispatchQueue.main.async {
-                // 1. 先激活应用
+                // 1. 先激活应用（等待完成）
                 NSApp.activate(ignoringOtherApps: true)
                 
                 // 2. 显示窗口
@@ -108,8 +108,14 @@ final class SettingsWindowManager {
                 window.makeKey()
                 window.becomeKey()
                 
-                // 4. 再次确认应用激活
-                NSApp.activate(ignoringOtherApps: true)
+                // 4. 增加延迟时间，确保应用完全激活后再取消置顶
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    window.level = .normal
+                    // 再次确认激活状态
+                    NSApp.activate(ignoringOtherApps: true)
+                    window.makeKey()
+                    window.becomeKey()
+                }
             }
             return
         }
@@ -137,12 +143,12 @@ final class SettingsWindowManager {
         window.title = "设置"
         window.contentView = hostingView
         window.center()
-        window.level = .floating  // 设置为浮动窗口，保持在最上层
+        window.level = .floating  // 初始为浮动窗口
         settingsWindowDelegate = SettingsWindowDelegate()
         window.delegate = settingsWindowDelegate
         window.isReleasedWhenClosed = false
         window.hidesOnDeactivate = false  // 失焦时不隐藏
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]  // 确保在所有空间中可用
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         
         settingsWindow = window
         
@@ -157,8 +163,14 @@ final class SettingsWindowManager {
             // 3. 确保窗口获取焦点
             window.becomeKey()
             
-            // 4. 再次确认应用激活
-            NSApp.activate(ignoringOtherApps: true)
+            // 4. 增加延迟时间，确保应用完全激活后再取消置顶
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                window.level = .normal
+                // 再次确认激活状态
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKey()
+                window.becomeKey()
+            }
         }
     }
 
