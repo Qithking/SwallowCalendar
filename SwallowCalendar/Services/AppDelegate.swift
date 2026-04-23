@@ -22,11 +22,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }()
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        print("[AppDelegate] applicationDidFinishLaunching called")
-        
         // 设置状态栏图标
         updateStatusItemIcon()
-        print("[AppDelegate] Status item created, button exists: \(statusItem.button != nil)")
         
         // 配置事件缓存服务
         let container = Self.createModelContainer()
@@ -37,16 +34,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         UpdateChecker.shared.startPeriodicCheck()
         
         // 创建 FloatingPanel
-        print("[AppDelegate] Creating FloatingPanel...")
         panel = FloatingPanel(
             contentRect: NSRect(origin: .zero, size: CGSize(width: 340, height: 600)),
             identifier: "SwallowCalendarMainWindow",
             statusBarButton: statusItem.button,
-            onClose: {
-                print("[AppDelegate] Panel closed")
-            }
+            onClose: {}
         ) {
-            // 获取 sharedModelContainer
             let container = Self.createModelContainer()
             let settings = AppSettings.shared
             
@@ -56,7 +49,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     .modelContainer(container)
             )
         }
-        print("[AppDelegate] FloatingPanel created, panel exists: \(panel != nil)")
     }
     
     func applicationWillTerminate(_ notification: Notification) {
@@ -65,18 +57,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     /// 点击状态栏图标时的处理
     @objc private func performStatusItemClick() {
-        print("[AppDelegate] Status item clicked!")
-        print("[AppDelegate] Panel exists: \(panel != nil)")
-        
-        guard let panel = panel else {
-            print("[AppDelegate] ERROR: Panel is nil!")
-            return
-        }
-        
-        print("[AppDelegate] Panel isPresented before toggle: \(panel.isPresented)")
-        print("[AppDelegate] Calling panel.toggle()...")
+        guard let panel = panel else { return }
         panel.toggle()
-        print("[AppDelegate] panel.toggle() completed")
     }
     
     /// 点击菜单栏图标但窗口未显示时调用

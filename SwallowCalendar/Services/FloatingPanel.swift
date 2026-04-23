@@ -80,7 +80,6 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     }
     
     func toggle() {
-        print("[FloatingPanel] toggle called, isPresented: \(isPresented)")
         if isPresented {
             close()
         } else {
@@ -89,7 +88,6 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     }
     
     func open() {
-        print("[FloatingPanel] Opening window...")
         // 从 UserDefaults 恢复窗口尺寸
         let savedWidth = UserDefaults.standard.double(forKey: "mainWindowWidth")
         let savedHeight = UserDefaults.standard.double(forKey: "mainWindowHeight")
@@ -97,23 +95,17 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         let width = savedWidth > 340 ? savedWidth : 340
         let height = savedHeight > 600 ? savedHeight : 600
         
-        print("[FloatingPanel] Window size: \(width)x\(height)")
         setContentSize(NSSize(width: width, height: height))
         
         // 定位到状态栏图标下方
         if let button = statusBarButton {
-            print("[FloatingPanel] Using status bar button positioning")
-            
             // 获取按钮在屏幕坐标系中的位置
             // NSStatusBarButton 的 convert(to: nil) 返回的是相对于其父窗口的坐标
             // 我们需要将其转换为屏幕坐标
             let buttonFrameInWindow = button.convert(button.bounds, to: nil)
             
             // 获取按钮所在窗口
-            guard let buttonWindow = button.window else {
-                print("[FloatingPanel] ERROR: Button has no window")
-                return
-            }
+            guard let buttonWindow = button.window else { return }
             
             // 将按钮坐标转换为屏幕坐标
             let buttonFrameInScreen = buttonWindow.convertToScreen(buttonFrameInWindow)
@@ -126,13 +118,7 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
             
             // 获取屏幕可见区域
             let screen = buttonWindow.screen ?? NSScreen.main
-            guard let screenFrame = screen?.visibleFrame else {
-                print("[FloatingPanel] ERROR: No screen frame available")
-                return
-            }
-            
-            print("[FloatingPanel] Screen frame: \(screenFrame)")
-            print("[FloatingPanel] Calculated origin before bounds check: x=\(originX), y=\(originY)")
+            guard let screenFrame = screen?.visibleFrame else { return }
             
             // 确保窗口不超出屏幕右边界
             if originX + frame.width > screenFrame.maxX {
@@ -149,34 +135,24 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
                 originY = screenFrame.minY + 10
             }
             
-            print("[FloatingPanel] Final origin: x=\(originX), y=\(originY)")
             setFrameOrigin(NSPoint(x: originX, y: originY))
         } else {
-            print("[FloatingPanel] WARNING: No status bar button, using center positioning")
             // 居中显示
             if let screen = NSScreen.main {
                 let screenFrame = screen.visibleFrame
                 let x = screenFrame.midX - frame.width / 2
                 let y = screenFrame.midY - frame.height / 2
-                print("[FloatingPanel] Center position: x=\(x), y=\(y)")
                 setFrameOrigin(NSPoint(x: x, y: y))
             }
         }
         
-        print("[FloatingPanel] Calling orderFrontRegardless()")
         orderFrontRegardless()
         
         // 先激活应用，再让窗口成为关键窗口
         NSApp.activate(ignoringOtherApps: true)
         
-        print("[FloatingPanel] Calling makeKeyAndOrderFront()")
         makeKeyAndOrderFront(nil)
         isPresented = true
-        
-        print("[FloatingPanel] Window frame: \(frame)")
-        print("[FloatingPanel] Window isVisible: \(isVisible)")
-        print("[FloatingPanel] Window isKeyWindow: \(isKeyWindow)")
-        print("[FloatingPanel] Window opened successfully")
         
         // 高亮状态栏按钮
         statusBarButton?.isHighlighted = true
