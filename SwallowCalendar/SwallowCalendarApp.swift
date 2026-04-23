@@ -90,14 +90,16 @@ final class SettingsWindowManager {
 
         // 已有窗口则直接激活并置顶
         if let window = settingsWindow {
-            window.level = .floating  // 确保置顶
+            window.level = .floating  // 确保浮动在最上层
             if window.isVisible {
                 window.makeKeyAndOrderFront(nil)
             } else {
                 // 窗口可能被隐藏，重新显示
                 window.orderFront(nil)
             }
+            // 强制激活应用并获取焦点
             NSApp.activate(ignoringOtherApps: true)
+            window.makeKey()
             return
         }
 
@@ -124,14 +126,15 @@ final class SettingsWindowManager {
         window.title = "设置"
         window.contentView = hostingView
         window.center()
-        window.level = .normal  // 设置为浮动窗口，保持置顶
+        window.level = .floating  // 设置为浮动窗口，保持在最上层
         settingsWindowDelegate = SettingsWindowDelegate()
         window.delegate = settingsWindowDelegate
         window.isReleasedWhenClosed = false
         
-        // 先激活应用，再显示窗口，确保控件正常响应
+        // 先激活应用并获取焦点，再显示窗口，确保控件正常响应
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+        window.becomeKey()
 
         settingsWindow = window
     }
