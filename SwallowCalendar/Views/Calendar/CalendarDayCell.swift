@@ -22,61 +22,99 @@ struct CalendarDayCell: View {
     var subscriptionCalendarColor: Color = Color(hex: "#FF9500")
     var isImportant: Bool = false
 
+    // MARK: - Holiday/Work Marks
+    
+    /// 是否显示"休"标记（标题包含"假期"或"（休）"）
+    private var showRestMark: Bool {
+        let allTitles = subscriptionTitles + eventTitles
+        return allTitles.contains { title in
+            title.contains("假期") || title.contains("（休）")
+        }
+    }
+    
+    /// 是否显示"班"标记（标题包含"补班"或"（班）"）
+    private var showWorkMark: Bool {
+        let allTitles = subscriptionTitles + eventTitles
+        return allTitles.contains { title in
+            title.contains("补班") || title.contains("（班）")
+        }
+    }
+
     @State private var showPopover = false
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     var body: some View {
-        VStack(spacing: 1) {
-            // 公历日期
-            Text("\(Calendar.current.component(.day, from: date))")
-                .font(.system(size: 12, weight: isSelected ? .bold : .regular))
-                .foregroundColor(dayTextColor)
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 1) {
+                // 公历日期
+                Text("\(Calendar.current.component(.day, from: date))")
+                    .font(.system(size: 12, weight: isSelected ? .bold : .regular))
+                    .foregroundColor(dayTextColor)
 
-            // 农历（仅显示农历，不显示订阅事件名称）
-            if appSettings.showLunarCalendar {
-                Text(lunarText)
-                    .font(.system(size: 7))
-                    .foregroundColor(lunarTextColor)
-                    .lineLimit(1)
-            } else {
-                Text("")
-                    .font(.system(size: 7))
-                    .lineLimit(1)
+                // 农历（仅显示农历，不显示订阅事件名称）
+                if appSettings.showLunarCalendar {
+                    Text(lunarText)
+                        .font(.system(size: 7))
+                        .foregroundColor(lunarTextColor)
+                        .lineLimit(1)
+                } else {
+                    Text("")
+                        .font(.system(size: 7))
+                        .lineLimit(1)
+                }
+
+                // 事件标记
+                HStack(spacing: 3) {
+                    // 系统日历事件小圆点
+                    if eventCount > 0 {
+                        Circle()
+                            .fill(systemCalendarColor)
+                            .frame(width: 5, height: 5)
+                            .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: 0.5))
+                    }
+                    // 订阅日历事件小圆点
+                    if !subscriptionTitles.isEmpty {
+                        Circle()
+                            .fill(subscriptionCalendarColor)
+                            .frame(width: 5, height: 5)
+                            .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: 0.5))
+                    }
+                }
+            }
+            .frame(height: 38)
+            .frame(maxWidth: .infinity)
+            .background(backgroundShape)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                if hasPopoverContent {
+                    showPopover = hovering
+                }
+            }
+            .popover(isPresented: $showPopover, arrowEdge: .bottom) {
+                popoverContent
+            }
+            .onChange(of: appSettings.accentColorHex) { _, newColor in
+                accentColor = Color(hex: newColor)
             }
 
-            // 事件标记
-            HStack(spacing: 3) {
-                // 系统日历事件小圆点
-                if eventCount > 0 {
-                    Circle()
-                        .fill(systemCalendarColor)
-                        .frame(width: 5, height: 5)
-                        .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: 0.5))
+            // 休/班标记（右上角）
+            if showRestMark || showWorkMark {
+                VStack(spacing: 1) {
+                    if showRestMark {
+                        Text("休")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(Color(hex: "#2E8B57")) // 深绿色
+                    }
+                    if showWorkMark {
+                        Text("班")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.red)
+                    }
                 }
-                // 订阅日历事件小圆点
-                if !subscriptionTitles.isEmpty {
-                    Circle()
-                        .fill(subscriptionCalendarColor)
-                        .frame(width: 5, height: 5)
-                        .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: 0.5))
-                }
+                .padding(.top, 1)
+                .padding(.trailing, 2)
             }
-        }
-        .frame(height: 38)
-        .frame(maxWidth: .infinity)
-        .background(backgroundShape)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            if hasPopoverContent {
-                showPopover = hovering
-            }
-        }
-        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
-            popoverContent
-        }
-        .onChange(of: appSettings.accentColorHex) { _, newColor in
-            accentColor = Color(hex: newColor)
         }
     }
 
