@@ -155,10 +155,30 @@ final class AppSettings {
         }
     }
 
+    /// 事项排序方向
+    enum SortOrder: String, CaseIterable {
+        case descending = "降序"
+        case ascending = "升序"
+
+        var displayName: String {
+            switch self {
+            case .descending: return "降序"
+            case .ascending: return "升序"
+            }
+        }
+    }
+
     /// 事项排序模式
     var sortMode: SortMode {
         didSet {
             UserDefaults.standard.set(sortMode.rawValue, forKey: "sortMode")
+        }
+    }
+
+    /// 事项排序方向
+    var sortOrder: SortOrder {
+        didSet {
+            UserDefaults.standard.set(sortOrder.rawValue, forKey: "sortOrder")
         }
     }
 
@@ -176,6 +196,7 @@ final class AppSettings {
         self.syncSystemReminders = UserDefaults.standard.object(forKey: "syncSystemReminders") as? Bool ?? false
         self.syncEventsToSystem = UserDefaults.standard.object(forKey: "syncEventsToSystem") as? Bool ?? false
         self.sortMode = SortMode(rawValue: UserDefaults.standard.string(forKey: "sortMode") ?? "") ?? .default
+        self.sortOrder = SortOrder(rawValue: UserDefaults.standard.string(forKey: "sortOrder") ?? "") ?? .descending
         self.defaultFilterMode = UserDefaults.standard.string(forKey: "defaultFilterMode") ?? "本月"
     }
 

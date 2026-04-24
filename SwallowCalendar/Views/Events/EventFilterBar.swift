@@ -41,6 +41,7 @@ struct EventFilterBar: View {
             
             // 右侧：排序菜单
             Menu {
+                // 排序字段
                 ForEach(AppSettings.SortMode.allCases, id: \.self) { mode in
                     Button {
                         appSettings.sortMode = mode
@@ -51,6 +52,23 @@ struct EventFilterBar: View {
                                     .foregroundColor(accentColor)
                             }
                             Text(mode.displayName)
+                        }
+                    }
+                }
+                
+                Divider()
+                
+                // 排序方向
+                ForEach(AppSettings.SortOrder.allCases, id: \.self) { order in
+                    Button {
+                        appSettings.sortOrder = order
+                    } label: {
+                        HStack {
+                            if appSettings.sortOrder == order {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(accentColor)
+                            }
+                            Text(order.displayName)
                         }
                     }
                 }

@@ -42,43 +42,49 @@ struct EventCompletedListView: View {
             !event.title.trimmingCharacters(in: .whitespaces).isEmpty
         }
 
-        // 根据 sortMode 排序
+        // 根据 sortMode 和 sortOrder 排序
         var sorted = result
+        let isAscending = appSettings.sortOrder == .ascending
+        
         switch appSettings.sortMode {
         case .default:
-            // 默认排序：优先级降序，时间降序
+            // 默认排序：优先级 + 时间
             sorted.sort {
                 if $0.priority != $1.priority {
-                    return $0.priority > $1.priority
+                    return isAscending ? $0.priority < $1.priority : $0.priority > $1.priority
                 }
-                return ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
+                return isAscending ? ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) : ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
             }
         case .createTime:
-            // 创建时间降序（按 startDate）
+            // 创建时间（按 startDate）
             sorted.sort {
-                ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
+                return isAscending ? ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) : ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
             }
         case .deadline:
-            // 截止时间降序
+            // 截止时间
             sorted.sort {
                 let date0 = $0.endDate ?? $0.startDate ?? .distantPast
                 let date1 = $1.endDate ?? $1.startDate ?? .distantPast
-                return date0 > date1
+                return isAscending ? date0 < date1 : date0 > date1
             }
         case .priority:
-            // 优先级降序
+            // 优先级
             sorted.sort {
-                $0.priority > $1.priority
+                return isAscending ? $0.priority < $1.priority : $0.priority > $1.priority
             }
         case .title:
-            // 标题降序
+            // 标题
             sorted.sort {
-                $0.title > $1.title
+                return isAscending ? $0.title < $1.title : $0.title > $1.title
             }
         case .reminder:
-            // 系统提醒降序
+            // 系统提醒
             sorted.sort {
-                $0.isReminder && !$1.isReminder
+                if isAscending {
+                    return !$0.isReminder && $1.isReminder
+                } else {
+                    return $0.isReminder && !$1.isReminder
+                }
             }
         }
         

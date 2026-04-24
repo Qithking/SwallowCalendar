@@ -55,47 +55,52 @@ struct EventTodoListView: View {
         // 合并所有待办事项
         var allEvents: [CalendarEvent] = timedEvents + allDayEvents
         
-        // 根据 sortMode 排序
+        let isAscending = appSettings.sortOrder == .ascending
+        
+        // 根据 sortMode 和 sortOrder 排序
         switch appSettings.sortMode {
         case .default:
-            // 默认排序：时间降序，优先级降序
+            // 默认排序：时间 + 优先级
             allEvents.sort {
                 let date0 = $0.startDate ?? .distantPast
                 let date1 = $1.startDate ?? .distantPast
                 if date0 != date1 {
-                    return date0 > date1
+                    return isAscending ? date0 < date1 : date0 > date1
                 }
-                return $0.priority > $1.priority
+                return isAscending ? $0.priority < $1.priority : $0.priority > $1.priority
             }
         case .createTime:
-            // 创建时间降序（使用 id 作为代理，假设 id 包含时间信息）
-            // 由于 CalendarEvent 没有明确的 createTime 字段，暂时按 startDate 排序
+            // 创建时间（按 startDate）
             allEvents.sort {
                 let date0 = $0.startDate ?? .distantPast
                 let date1 = $1.startDate ?? .distantPast
-                return date0 > date1
+                return isAscending ? date0 < date1 : date0 > date1
             }
         case .deadline:
-            // 截止时间降序（最晚截止在前）
+            // 截止时间
             allEvents.sort {
                 let date0 = $0.endDate ?? $0.startDate ?? .distantPast
                 let date1 = $1.endDate ?? $1.startDate ?? .distantPast
-                return date0 > date1
+                return isAscending ? date0 < date1 : date0 > date1
             }
         case .priority:
-            // 优先级降序（高优先级在前）
+            // 优先级
             allEvents.sort {
-                $0.priority > $1.priority
+                return isAscending ? $0.priority < $1.priority : $0.priority > $1.priority
             }
         case .title:
-            // 标题降序（Z→A）
+            // 标题
             allEvents.sort {
-                $0.title > $1.title
+                return isAscending ? $0.title < $1.title : $0.title > $1.title
             }
         case .reminder:
-            // 系统提醒降序（有提醒的在前）
+            // 系统提醒
             allEvents.sort {
-                $0.isReminder && !$1.isReminder
+                if isAscending {
+                    return !$0.isReminder && $1.isReminder
+                } else {
+                    return $0.isReminder && !$1.isReminder
+                }
             }
         }
         
