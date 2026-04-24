@@ -31,7 +31,7 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            // 系统级毛玻璃背景（参考 Maccy 实现）
+            // 系统级毛玻璃背景
             if #available(macOS 26.0, *) {
                 GlassEffectView()
             } else {

@@ -2,7 +2,7 @@
 //  FloatingPanel.swift
 //  SwallowCalendar
 //
-//  参考 Maccy 项目实现的可缩放浮动面板
+//  可缩放浮动面板
 
 import SwiftUI
 import AppKit

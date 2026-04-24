@@ -2,7 +2,7 @@
 //  VisualEffectView.swift
 //  SwallowCalendar
 //
-//  参考 Maccy 项目实现的系统级毛玻璃效果
+//  系统级毛玻璃效果
 
 import SwiftUI
 

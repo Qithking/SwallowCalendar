@@ -2,7 +2,7 @@
 //  AppDelegate.swift
 //  SwallowCalendar
 //
-//  参考 Maccy 项目实现，管理状态栏图标和主窗口
+//  管理状态栏图标和主窗口
 
 import SwiftUI
 import AppKit
