@@ -148,46 +148,11 @@ final class EventCacheService {
     /// 获取某天的事件
     /// - Parameter includeNoDateReminders: 是否包含无到期时间的系统提醒，默认 false（日历视图不需要）
     func getEvents(for date: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CachedEvent] {
-        guard let context = modelContext else { return [] }
-        
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: date)
         let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
         
-        // 获取所有事件后手动过滤
-        let descriptor = FetchDescriptor<CachedEvent>(
-            sortBy: [SortDescriptor(\.startDate)]
-        )
-        
-        do {
-            var events = try context.fetch(descriptor)
-            
-            // 过滤日期范围
-            events = events.filter { event in
-                // 无日期的提醒（没有到期时间的系统提醒）
-                guard let start = event.startDate, let end = event.endDate else {
-                    // 根据参数决定是否包含无日期的提醒
-                    return includeNoDateReminders
-                }
-                return start < endOfDay && end >= startOfDay
-            }
-            
-            // 如果指定了日历且非空，进一步过滤（但保留用户分类的事件，包括系统提醒）
-            if let calendars = calendars, !calendars.isEmpty {
-                let calendarIDs = Set(calendars.map { $0.calendarIdentifier })
-                events = events.filter { event in
-                    // 用户分类的事件（包括系统提醒）始终保留
-                    if event.category == .user { return true }
-                    // 其他事件按日历ID过滤
-                    return calendarIDs.contains(event.calendarID)
-                }
-            }
-            
-            return events
-        } catch {
-            print("[EventCache] 获取事件失败: \(error)")
-            return []
-        }
+        return getEvents(from: startOfDay, to: endOfDay, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
     }
     
     /// 获取日期范围内的事件
@@ -227,7 +192,6 @@ final class EventCacheService {
             
             return events
         } catch {
-            print("[EventCache] 获取事件失败: \(error)")
             return []
         }
     }
@@ -313,7 +277,7 @@ final class EventCacheService {
             try context.save()
             lastSyncTime = Date()
         } catch {
-            print("[EventCache] 保存失败: \(error)")
+            // 保存失败，记录到日志系统（待实现）
         }
     }
 
@@ -380,7 +344,7 @@ final class EventCacheService {
         do {
             try context.save()
         } catch {
-            print("[EventCache] 提醒保存失败: \(error)")
+            // 提醒保存失败，记录到日志系统（待实现）
         }
     }
 

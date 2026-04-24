@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import EventKit
 
 struct EventTodoListView: View {
     @Environment(AppSettings.self) private var appSettings

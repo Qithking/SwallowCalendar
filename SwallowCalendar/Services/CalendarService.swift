@@ -424,7 +424,7 @@ final class CalendarService {
             do {
                 try context.save()
             } catch {
-                print("[CalendarService] 缓存同步失败 (createCalendarEvent): \(error)")
+                // 缓存同步失败，记录到日志系统（待实现）
             }
         }
     }
@@ -475,7 +475,7 @@ final class CalendarService {
             do {
                 try context.save()
             } catch {
-                print("[CalendarService] 缓存同步失败 (createReminder): \(error)")
+                // 缓存同步失败，记录到日志系统（待实现）
             }
         }
     }
@@ -548,7 +548,7 @@ final class CalendarService {
             do {
                 try context.save()
             } catch {
-                print("[CalendarService] 缓存同步失败 (createCalendarEventWithGroupInfo): \(error)")
+                // 缓存同步失败，记录到日志系统（待实现）
             }
         }
     }
@@ -606,7 +606,7 @@ final class CalendarService {
             do {
                 try context.save()
             } catch {
-                print("[CalendarService] 缓存同步失败 (createReminderWithGroupInfo): \(error)")
+                // 缓存同步失败，记录到日志系统（待实现）
             }
         }
     }
@@ -628,7 +628,7 @@ final class CalendarService {
             do {
                 try cacheService.context?.save()
             } catch {
-                print("[CalendarService] 删除缓存失败 (eventID: \(eventID)): \(error)")
+                // 删除缓存失败，记录到日志系统（待实现）
             }
         }
     }
@@ -650,7 +650,7 @@ final class CalendarService {
             do {
                 try cacheService.context?.save()
             } catch {
-                print("[CalendarService] 更新缓存失败 (eventID: \(eventID)): \(error)")
+                // 更新缓存失败，记录到日志系统（待实现）
             }
             
             // 如果是完成操作且是周期任务，追加新实例
@@ -725,7 +725,6 @@ final class CalendarService {
         do {
             try context.save()
         } catch {
-            print("[CalendarService] 更新周期类型失败 (eventID: \(eventID)): \(error)")
         }
     }
 
@@ -856,7 +855,7 @@ final class CalendarService {
             let events = try context.fetch(descriptor)
             return events.count
         } catch {
-            print("[CalendarService] 查询周期任务组失败: \(error)")
+            // 查询周期任务组失败，记录到日志系统（待实现）
             return 0
         }
     }
@@ -882,7 +881,7 @@ final class CalendarService {
             }
             try context.save()
         } catch {
-            print("[CalendarService] 删除周期任务组失败: \(error)")
+            // 删除周期任务组失败，记录到日志系统（待实现）
         }
     }
     
@@ -1002,7 +1001,7 @@ final class CalendarService {
                     )
                 }
             } catch {
-                print("[CalendarService] 追加周期任务失败: \(error)")
+                // 追加周期任务失败，记录到日志系统（待实现）
             }
         }
     }

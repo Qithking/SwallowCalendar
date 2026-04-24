@@ -184,7 +184,7 @@ struct EditEventSheet: View {
                 
                 onDismiss?()
             } catch {
-                print("Failed to update event: \(error)")
+                // 更新事件失败，记录到日志系统（待实现）
             }
             isProcessing = false
         }

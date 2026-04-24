@@ -258,7 +258,7 @@ struct TaskInputView: View {
                     onTaskAdded?()
                 }
             } catch {
-                print("[TaskInput] 任务添加失败: \(error)")
+                // 任务添加失败，记录到日志系统（待实现）
             }
             await MainActor.run {
                 isProcessing = false
