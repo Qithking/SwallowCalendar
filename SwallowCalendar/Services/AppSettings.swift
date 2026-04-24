@@ -93,6 +93,13 @@ final class AppSettings {
         }
     }
 
+    /// 事项是否同步到系统日历和提醒
+    var syncEventsToSystem: Bool {
+        didSet {
+            UserDefaults.standard.set(syncEventsToSystem, forKey: "syncEventsToSystem")
+        }
+    }
+
     /// 默认显示待办过滤模式
     var defaultFilterMode: String {
         didSet {
@@ -139,6 +146,7 @@ final class AppSettings {
         self.subscriptionCalendarColorHex = UserDefaults.standard.string(forKey: "subscriptionCalendarColorHex") ?? "#FF9500"
         self.checkUpdateOnFirstLaunch = UserDefaults.standard.object(forKey: "checkUpdateOnFirstLaunch") as? Bool ?? true
         self.syncSystemReminders = UserDefaults.standard.object(forKey: "syncSystemReminders") as? Bool ?? false
+        self.syncEventsToSystem = UserDefaults.standard.object(forKey: "syncEventsToSystem") as? Bool ?? false
         self.defaultFilterMode = UserDefaults.standard.string(forKey: "defaultFilterMode") ?? "本月"
     }
 

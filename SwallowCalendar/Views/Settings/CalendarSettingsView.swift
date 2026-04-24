@@ -26,10 +26,13 @@ struct CalendarSettingsView: View {
 
         Form {
             // 系统提醒
-            Section("系统提醒") {
+            Section("同步设置") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Toggle("同步系统提醒", isOn: $settings.syncSystemReminders)
-                        .help("将系统提醒应用中的待办事项同步到待办列表中")
+                    Toggle("系统提醒同步至应用", isOn: $settings.syncSystemReminders)
+                    
+                    Text("将系统提醒应用中的待办事项同步到待办列表中")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
                     
                     // 提醒权限状态提示
                     if settings.syncSystemReminders {
@@ -46,6 +49,47 @@ struct CalendarSettingsView: View {
                                     .foregroundColor(.red)
                                 Button("前往设置") {
                                     openReminderSettings()
+                                }
+                                .font(.system(size: 10))
+                                .buttonStyle(.plain)
+                                .foregroundColor(.blue)
+                            case .fullAccess:
+                                Text("已授权")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.green)
+                            case .writeOnly:
+                                Text("仅写入权限")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.orange)
+                            @unknown default:
+                                EmptyView()
+                            }
+                        }
+                    }
+                }
+                
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("应用事项同步至系统", isOn: $settings.syncEventsToSystem)
+                    
+                    Text("开启后，事项的增删改都与系统日历和提醒同步；关闭后，仅当前应用内的数据增删改")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    
+                    if settings.syncEventsToSystem {
+                        HStack(spacing: 6) {
+                            let status = CalendarService.shared.authorizationStatus
+                            switch status {
+                            case .notDetermined:
+                                Text("需要授权访问日历")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.orange)
+                            case .restricted, .denied:
+                                Text("权限被拒绝，点击前往设置开启")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.red)
+                                Button("前往设置") {
+                                    openCalendarSettings()
                                 }
                                 .font(.system(size: 10))
                                 .buttonStyle(.plain)
@@ -387,6 +431,14 @@ struct CalendarSettingsView: View {
     /// 打开系统设置中的提醒权限页面
     private func openReminderSettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+    
+    /// 打开系统设置中的日历权限页面
+    private func openCalendarSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") else {
             return
         }
         NSWorkspace.shared.open(url)
