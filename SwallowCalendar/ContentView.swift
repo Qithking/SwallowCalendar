@@ -107,6 +107,17 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .help("设置")
+            
+            // 固定窗口按钮
+            Button {
+                appSettings.isWindowPinned.toggle()
+            } label: {
+                Image(systemName: appSettings.isWindowPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 13))
+                    .foregroundColor(appSettings.isWindowPinned ? accentColor : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help(appSettings.isWindowPinned ? "取消固定窗口" : "固定窗口")
 
             Spacer()
 

@@ -57,7 +57,8 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         collectionBehavior = [.auxiliary, .stationary, .moveToActiveSpace, .fullScreenAuxiliary]
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
-        isMovableByWindowBackground = true
+        isMovableByWindowBackground = false
+        isMovable = false
         hidesOnDeactivate = false
         backgroundColor = NSColor.clear
         titlebarSeparatorStyle = .none
@@ -187,8 +188,8 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     }
     
     func windowDidResignKey(_ notification: Notification) {
-        // 窗口失去焦点时关闭
-        if isPresented {
+        // 窗口失去焦点时，如果未固定则关闭
+        if isPresented && !AppSettings.shared.isWindowPinned {
             close()
         }
     }
