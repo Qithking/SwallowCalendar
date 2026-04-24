@@ -7,6 +7,20 @@
 import SwiftUI
 import AppKit
 
+// MARK: - Popup 配置
+enum Popup {
+    // 内边距
+    static let verticalPadding: CGFloat = 5
+    static let horizontalPadding: CGFloat = 5
+    
+    // 圆角半径（根据 macOS 版本动态调整）
+    static let cornerRadius: CGFloat = if #available(macOS 26.0, *) {
+        7
+    } else {
+        4
+    }
+}
+
 class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     var isPresented: Bool = false
     var statusBarButton: NSStatusBarButton?
@@ -53,8 +67,10 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         hasShadow = true
         
         // 添加圆角和阴影效果（类似 MenuBarExtra）
+        // 圆角 = Popup.cornerRadius + Popup.horizontalPadding
+        // macOS 26+: 7 + 5 = 12pt, 旧版本: 4 + 5 = 9pt
         contentView?.wantsLayer = true
-        contentView?.layer?.cornerRadius = 12
+        contentView?.layer?.cornerRadius = Popup.cornerRadius + Popup.horizontalPadding
         contentView?.layer?.masksToBounds = false
         
         // 添加阴影

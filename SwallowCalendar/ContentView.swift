@@ -30,37 +30,45 @@ struct ContentView: View {
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     var body: some View {
-        VStack(spacing: 0) {
-            // 日历区域
-            CalendarGridView(
-                selectedDate: $selectedDate,
-                calendarService: calendarService,
-                icsService: icsService,
-                customSources: customSources,
-                calendarPreferences: calendarPreferences,
-                externalRefreshTrigger: calendarGridRefreshTrigger
-            )
+        ZStack {
+            // 系统级毛玻璃背景（参考 Maccy 实现）
+            if #available(macOS 26.0, *) {
+                GlassEffectView()
+            } else {
+                VisualEffectView()
+            }
+            
+            VStack(spacing: 0) {
+                // 日历区域
+                CalendarGridView(
+                    selectedDate: $selectedDate,
+                    calendarService: calendarService,
+                    icsService: icsService,
+                    customSources: customSources,
+                    calendarPreferences: calendarPreferences,
+                    externalRefreshTrigger: calendarGridRefreshTrigger
+                )
 
-            Divider()
+                Divider()
 
-            // 事项区域（占满剩余空间）
-            EventPanelView(
-                selectedDate: $selectedDate,
-                calendarService: calendarService,
-                calendarPreferences: calendarPreferences,
-                onEventsChanged: {
-                    // 事件变更时刷新日历网格缓存
-                    calendarGridRefreshTrigger.toggle()
-                }
-            )
-            .frame(maxHeight: .infinity)
+                // 事项区域（占满剩余空间）
+                EventPanelView(
+                    selectedDate: $selectedDate,
+                    calendarService: calendarService,
+                    calendarPreferences: calendarPreferences,
+                    onEventsChanged: {
+                        // 事件变更时刷新日历网格缓存
+                        calendarGridRefreshTrigger.toggle()
+                    }
+                )
+                .frame(maxHeight: .infinity)
 
-            Divider()
+                Divider()
 
-            // 工具栏
-            toolbar
+                // 工具栏
+                toolbar
+            }
         }
-        .background(.regularMaterial)
         .cornerRadius(12)
         .preferredColorScheme(appSettings.colorScheme)
         .tint(accentColor)
