@@ -52,11 +52,13 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     @Published var downloadProgress: Double = 0
     @Published var downloadError: String?
     @Published var showDownloadWindow = false
+    @Published var usingProxy = false  // 是否正在使用代理下载
 
     private var downloadSession: URLSession?
     private var downloadTask: URLSessionDownloadTask?
     private var pendingDownloadUrl: URL?
     private var downloadWindow: NSWindow?
+    private var hasTriedProxy = false  // 是否已尝试代理
 
     private let repoOwner = "Qithking"
     private let repoName = "SwallowCalendar"
@@ -218,6 +220,14 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         NSWorkspace.shared.open(url)
     }
 
+    /// 获取代理下载 URL（添加 gh-proxy.org 前缀）
+    private var proxyDownloadUrl: String {
+        if releaseUrl.hasPrefix("https://github.com/") {
+            return "https://gh-proxy.org/\(releaseUrl)"
+        }
+        return releaseUrl
+    }
+
     func downloadLatestRelease() {
         guard URL(string: releaseUrl) != nil else {
             downloadError = "无效的下载链接"
@@ -225,6 +235,8 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         }
         downloadProgress = 0
         downloadError = nil
+        usingProxy = true  // 优先使用代理
+        hasTriedProxy = false
         isDownloading = true
         showDownloadWindow = true
         showDownloadWindowPanel()
@@ -232,9 +244,27 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     }
 
     private func startDownload() {
-        guard let url = URL(string: releaseUrl) else { return }
+        let urlString: String
+        if usingProxy {
+            urlString = proxyDownloadUrl  // 优先使用代理
+        } else {
+            urlString = releaseUrl  // 代理失败后才用直连
+        }
+        
+        guard let url = URL(string: urlString) else { return }
         pendingDownloadUrl = url
         downloadTask?.cancel()
+        
+        // 直连使用较短的超时时间，代理使用正常超时
+        let config = URLSessionConfiguration.default
+        if usingProxy {
+            config.timeoutIntervalForRequest = 60
+            config.timeoutIntervalForResource = 300
+        } else {
+            config.timeoutIntervalForRequest = 15
+            config.timeoutIntervalForResource = 60
+        }
+        downloadSession = URLSession(configuration: config, delegate: self, delegateQueue: .main)
         
         downloadTask = downloadSession?.downloadTask(with: url)
         downloadTask?.resume()
@@ -246,11 +276,15 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         isDownloading = false
         showDownloadWindow = false
         downloadProgress = 0
+        usingProxy = false
+        hasTriedProxy = false
         closeDownloadWindow()
     }
 
     func retryDownload() {
         downloadError = nil
+        usingProxy = true  // 重试时优先使用代理
+        hasTriedProxy = false
         isDownloading = true
         startDownload()
     }
@@ -303,18 +337,37 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     // MARK: - URLSessionDownloadDelegate
 
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        // 注意：此方法已在主线程调用（delegateQueue: .main）
+        // 必须立即移动临时文件，否则系统会自动清理
+        let fileManager = FileManager.default
+        
+        // 先验证临时文件是否存在
+        guard fileManager.fileExists(atPath: location.path) else {
+            Task { @MainActor in
+                self.downloadError = "下载文件不存在，请重试"
+                self.isDownloading = false
+            }
+            return
+        }
+        
+        // 立即将文件移动到安全位置（使用 UUID 避免冲突）
+        let tempDir = FileManager.default.temporaryDirectory
+        let tempFileName = "SwallowCalendar_\(UUID().uuidString).tmp"
+        let tempDestURL = tempDir.appendingPathComponent(tempFileName)
+        
+        do {
+            try fileManager.moveItem(at: location, to: tempDestURL)
+        } catch {
+            Task { @MainActor in
+                self.downloadError = "保存失败: \(error.localizedDescription)"
+                self.isDownloading = false
+            }
+            return
+        }
+        
+        // 现在文件已经在安全位置，可以安全地切换到 async 上下文
         Task { @MainActor in
-            // 下载完成，立即保存文件
             do {
-                let fileManager = FileManager.default
-                
-                // 验证临时文件是否存在
-                guard fileManager.fileExists(atPath: location.path) else {
-                    self.downloadError = "下载文件不存在，请重试"
-                    self.isDownloading = false
-                    return
-                }
-                
                 // 获取下载目录
                 guard let downloadsFolder = fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
                     self.downloadError = "无法访问下载文件夹"
@@ -337,16 +390,15 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
                     try fileManager.removeItem(at: destinationUrl)
                 }
 
-                // 移动文件（比复制更快且避免沙盒问题）
-                try fileManager.moveItem(at: location, to: destinationUrl)
+                // 移动文件到下载文件夹
+                try fileManager.moveItem(at: tempDestURL, to: destinationUrl)
 
                 self.downloadProgress = 1.0
                 self.isDownloading = false
-
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
                 self.closeDownloadWindow()
 
-                NSWorkspace.shared.selectFile(destinationUrl.path, inFileViewerRootedAtPath: downloadsFolder.path)
+                // 立即打开下载的文件（.dmg 会自动挂载，.zip 会自动解压）
+                NSWorkspace.shared.open(destinationUrl)
             } catch {
                 self.downloadError = "保存失败: \(error.localizedDescription)"
                 self.isDownloading = false
@@ -365,8 +417,18 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         Task { @MainActor in
             if let nsError = error as NSError?, nsError.code != NSURLErrorCancelled {
+                // 优先使用代理，如果代理失败且还没尝试过直连，则切换到直连重试
+                if usingProxy && !hasTriedProxy {
+                    hasTriedProxy = true
+                    usingProxy = false  // 切换到直连
+                    startDownload()
+                    return
+                }
+                
+                // 两种方法都失败
                 self.downloadError = "下载失败: \(error?.localizedDescription ?? "未知错误")"
                 self.isDownloading = false
+                self.usingProxy = false
             }
         }
     }
