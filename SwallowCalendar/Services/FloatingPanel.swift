@@ -3,7 +3,6 @@
 //  SwallowCalendar
 //
 //  可缩放浮动面板
-
 import SwiftUI
 import AppKit
 
@@ -72,7 +71,6 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         titlebarAppearsTransparent = true
         isMovableByWindowBackground = false  // 禁止通过拖动背景移动窗口
         hidesOnDeactivate = false
-        // 使用透明背景，让 VisualEffectView 负责背景渲染
         backgroundColor = NSColor.clear
         titlebarSeparatorStyle = .none
         
@@ -95,16 +93,11 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         // 关键：设置自动调整大小掩码，使内容跟随窗口尺寸变化
         contentView?.autoresizingMask = [.width, .height]
         
-        // 添加阴影效果（类似 MenuBarExtra）
-        // 圆角 = Popup.cornerRadius + Popup.horizontalPadding
-        // macOS 26+: 7 + 5 = 12pt, 旧版本: 4 + 5 = 9pt
+        // 设置 contentView 圆角和阴影
         contentView?.wantsLayer = true
         contentView?.layer?.backgroundColor = NSColor.clear.cgColor
         contentView?.layer?.cornerRadius = Popup.totalCornerRadius
-        contentView?.layer?.masksToBounds = true  // 改为 true 避免黑色边角
-        
-        // 添加阴影（masksToBounds = true 时阴影不会显示，所以阴影移到窗口层）
-        self.hasShadow = true
+        contentView?.layer?.masksToBounds = true
     }
     
     func toggle() {
@@ -127,43 +120,28 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         
         // 定位到状态栏图标下方
         if let button = statusBarButton {
-            // 获取按钮在屏幕坐标系中的位置
-            // NSStatusBarButton 的 convert(to: nil) 返回的是相对于其父窗口的坐标
-            // 我们需要将其转换为屏幕坐标
             let buttonFrameInWindow = button.convert(button.bounds, to: nil)
-            
-            // 获取按钮所在窗口
             guard let buttonWindow = button.window else { return }
-            
-            // 将按钮坐标转换为屏幕坐标
             let buttonFrameInScreen = buttonWindow.convertToScreen(buttonFrameInWindow)
             
-            // 窗口应该显示在按钮下方，左对齐
             var originX = buttonFrameInScreen.minX
-            var originY = buttonFrameInScreen.minY - frame.height - 5 // 5px 间距
+            var originY = buttonFrameInScreen.minY - frame.height - 5
             
-            // 获取屏幕可见区域
             let screen = buttonWindow.screen ?? NSScreen.main
             guard let screenFrame = screen?.visibleFrame else { return }
             
-            // 确保窗口不超出屏幕右边界
             if originX + frame.width > screenFrame.maxX {
                 originX = screenFrame.maxX - frame.width - 10
             }
-            
-            // 确保窗口不超出屏幕左边界
             if originX < screenFrame.minX {
                 originX = screenFrame.minX + 10
             }
-            
-            // 确保窗口不超出屏幕底部
             if originY < screenFrame.minY {
                 originY = screenFrame.minY + 10
             }
             
             setFrameOrigin(NSPoint(x: originX, y: originY))
         } else {
-            // 居中显示
             if let screen = NSScreen.main {
                 let screenFrame = screen.visibleFrame
                 let x = screenFrame.midX - frame.width / 2
@@ -173,17 +151,10 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         }
         
         orderFrontRegardless()
-        
-        // 先激活应用，再让窗口成为关键窗口
         NSApp.activate(ignoringOtherApps: true)
-        
         makeKeyAndOrderFront(nil)
         isPresented = true
-        
-        // 强制重绘，确保 VisualEffectView 正常显示
         contentView?.needsDisplay = true
-        
-        // 高亮状态栏按钮
         statusBarButton?.isHighlighted = true
     }
     
@@ -201,15 +172,18 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         UserDefaults.standard.set(size.height, forKey: "mainWindowHeight")
     }
     
-    func windowDidResignKey(_ notification: Notification) {
-        // 窗口失去焦点时，如果未固定则关闭
-        if isPresented && !AppSettings.shared.isWindowPinned {
-            close()
-        }
+    // MARK: - 关闭逻辑（统一处理）
+    
+    /// 检查是否应该关闭窗口（未固定且已显示）
+    private func shouldClose() -> Bool {
+        let isPinned = UserDefaults.standard.bool(forKey: "isWindowPinned")
+        return isPresented && !isPinned
     }
     
-    override func resignKey() {
-        super.resignKey()
+    func windowDidResignKey(_ notification: Notification) {
+        if shouldClose() {
+            close()
+        }
     }
     
     override func close() {
