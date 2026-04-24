@@ -9,6 +9,7 @@ import SwiftUI
 import EventKit
 
 struct EventTodoListView: View {
+    @Environment(AppSettings.self) private var appSettings
     let selectedDate: Date
     let calendarService: CalendarService
     let calendarPreferences: [CalendarPreference]
@@ -52,21 +53,50 @@ struct EventTodoListView: View {
         }
 
         // 合并所有待办事项
-        // 排序规则：
-        // 1. 有时间的按时间降序（最新的在前）
-        // 2. 全天事件按时间降序
-        // 3. 无到期时间的提醒放在最后
         var allEvents: [CalendarEvent] = timedEvents + allDayEvents
         
-        allEvents.sort {
-            // 1. 首先按时间降序（最新的在前）
-            let date0 = $0.startDate ?? .distantPast
-            let date1 = $1.startDate ?? .distantPast
-            if date0 != date1 {
+        // 根据 sortMode 排序
+        switch appSettings.sortMode {
+        case .default:
+            // 默认排序：时间降序，优先级降序
+            allEvents.sort {
+                let date0 = $0.startDate ?? .distantPast
+                let date1 = $1.startDate ?? .distantPast
+                if date0 != date1 {
+                    return date0 > date1
+                }
+                return $0.priority > $1.priority
+            }
+        case .createTime:
+            // 创建时间降序（使用 id 作为代理，假设 id 包含时间信息）
+            // 由于 CalendarEvent 没有明确的 createTime 字段，暂时按 startDate 排序
+            allEvents.sort {
+                let date0 = $0.startDate ?? .distantPast
+                let date1 = $1.startDate ?? .distantPast
                 return date0 > date1
             }
-            // 2. 时间相同则按优先级降序
-            return $0.priority > $1.priority
+        case .deadline:
+            // 截止时间降序（最晚截止在前）
+            allEvents.sort {
+                let date0 = $0.endDate ?? $0.startDate ?? .distantPast
+                let date1 = $1.endDate ?? $1.startDate ?? .distantPast
+                return date0 > date1
+            }
+        case .priority:
+            // 优先级降序（高优先级在前）
+            allEvents.sort {
+                $0.priority > $1.priority
+            }
+        case .title:
+            // 标题降序（Z→A）
+            allEvents.sort {
+                $0.title > $1.title
+            }
+        case .reminder:
+            // 系统提醒降序（有提醒的在前）
+            allEvents.sort {
+                $0.isReminder && !$1.isReminder
+            }
         }
         
         // 无到期时间的提醒放在最后

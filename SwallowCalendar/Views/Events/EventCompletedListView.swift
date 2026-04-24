@@ -10,6 +10,7 @@ import EventKit
 import SwiftData
 
 struct EventCompletedListView: View {
+    @Environment(AppSettings.self) private var appSettings
     let selectedDate: Date
     let calendarService: CalendarService
     let calendarPreferences: [CalendarPreference]
@@ -41,13 +42,47 @@ struct EventCompletedListView: View {
             !event.title.trimmingCharacters(in: .whitespaces).isEmpty
         }
 
-        // 排序：优先级降序，时间降序
-        return result.sorted {
-            if $0.priority != $1.priority {
-                return $0.priority > $1.priority
+        // 根据 sortMode 排序
+        var sorted = result
+        switch appSettings.sortMode {
+        case .default:
+            // 默认排序：优先级降序，时间降序
+            sorted.sort {
+                if $0.priority != $1.priority {
+                    return $0.priority > $1.priority
+                }
+                return ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
             }
-            return ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
+        case .createTime:
+            // 创建时间降序（按 startDate）
+            sorted.sort {
+                ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
+            }
+        case .deadline:
+            // 截止时间降序
+            sorted.sort {
+                let date0 = $0.endDate ?? $0.startDate ?? .distantPast
+                let date1 = $1.endDate ?? $1.startDate ?? .distantPast
+                return date0 > date1
+            }
+        case .priority:
+            // 优先级降序
+            sorted.sort {
+                $0.priority > $1.priority
+            }
+        case .title:
+            // 标题降序
+            sorted.sort {
+                $0.title > $1.title
+            }
+        case .reminder:
+            // 系统提醒降序
+            sorted.sort {
+                $0.isReminder && !$1.isReminder
+            }
         }
+        
+        return sorted
     }
 
     var body: some View {

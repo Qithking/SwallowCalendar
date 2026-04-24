@@ -134,6 +134,34 @@ final class AppSettings {
         }
     }
 
+    /// 事项排序模式
+    enum SortMode: String, CaseIterable {
+        case `default` = "默认排序"
+        case createTime = "创建时间"
+        case deadline = "截止时间"
+        case priority = "优先级"
+        case title = "标题"
+        case reminder = "系统提醒"
+
+        var displayName: String {
+            switch self {
+            case .default: return "默认排序"
+            case .createTime: return "创建时间"
+            case .deadline: return "截止时间"
+            case .priority: return "优先级"
+            case .title: return "标题"
+            case .reminder: return "系统提醒"
+            }
+        }
+    }
+
+    /// 事项排序模式
+    var sortMode: SortMode {
+        didSet {
+            UserDefaults.standard.set(sortMode.rawValue, forKey: "sortMode")
+        }
+    }
+
     private init() {
         self.launchAtLogin = UserDefaults.standard.bool(forKey: "launchAtLogin")
         self.iconStyle = IconStyle(rawValue: UserDefaults.standard.string(forKey: "iconStyleRaw") ?? "") ?? .solidDate
@@ -147,6 +175,7 @@ final class AppSettings {
         self.checkUpdateOnFirstLaunch = UserDefaults.standard.object(forKey: "checkUpdateOnFirstLaunch") as? Bool ?? true
         self.syncSystemReminders = UserDefaults.standard.object(forKey: "syncSystemReminders") as? Bool ?? false
         self.syncEventsToSystem = UserDefaults.standard.object(forKey: "syncEventsToSystem") as? Bool ?? false
+        self.sortMode = SortMode(rawValue: UserDefaults.standard.string(forKey: "sortMode") ?? "") ?? .default
         self.defaultFilterMode = UserDefaults.standard.string(forKey: "defaultFilterMode") ?? "本月"
     }
 

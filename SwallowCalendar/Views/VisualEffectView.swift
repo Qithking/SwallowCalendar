@@ -23,7 +23,10 @@ struct VisualEffectView: NSViewRepresentable {
     }
 }
 
-/// macOS 26.0+ 的玻璃效果视图
+// MARK: - Future Enhancement
+// GlassEffectView 将在 macOS 26.0 SDK 可用时启用
+// 目前暂时禁用以避免 GitHub Actions 编译错误
+/*
 @available(macOS 26.0, *)
 struct GlassEffectView: NSViewRepresentable {
     let glassEffectView = NSGlassEffectView()
@@ -38,6 +41,7 @@ struct GlassEffectView: NSViewRepresentable {
         glassEffectView.style = style
     }
 }
+*/
 
 #Preview {
     VisualEffectView(

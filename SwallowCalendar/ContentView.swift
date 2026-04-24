@@ -32,11 +32,7 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             // 系统级毛玻璃背景
-            if #available(macOS 26.0, *) {
-                GlassEffectView()
-            } else {
-                VisualEffectView()
-            }
+            VisualEffectView()
             
             VStack(spacing: 0) {
                 // 日历区域
