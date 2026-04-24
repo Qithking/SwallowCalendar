@@ -19,6 +19,11 @@ enum Popup {
     } else {
         4
     }
+    
+    // 总圆角半径（contentView 使用的圆角）
+    static var totalCornerRadius: CGFloat {
+        return cornerRadius + horizontalPadding
+    }
 }
 
 class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
@@ -26,8 +31,16 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     var statusBarButton: NSStatusBarButton?
     let onClose: () -> Void
     
+    private var pinObserver: NSObjectProtocol?
+    
+    deinit {
+        if let observer = pinObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+    
     override var isMovable: Bool {
-        get { true }
+        get { false }
         set {}
     }
     
@@ -57,28 +70,15 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         collectionBehavior = [.auxiliary, .stationary, .moveToActiveSpace, .fullScreenAuxiliary]
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
-        isMovableByWindowBackground = false
-        isMovable = false
+        isMovableByWindowBackground = false  // 禁止通过拖动背景移动窗口
         hidesOnDeactivate = false
+        // 使用透明背景，让 VisualEffectView 负责背景渲染
         backgroundColor = NSColor.clear
         titlebarSeparatorStyle = .none
         
         // 启用半透明效果
         isOpaque = false
         hasShadow = true
-        
-        // 添加圆角和阴影效果（类似 MenuBarExtra）
-        // 圆角 = Popup.cornerRadius + Popup.horizontalPadding
-        // macOS 26+: 7 + 5 = 12pt, 旧版本: 4 + 5 = 9pt
-        contentView?.wantsLayer = true
-        contentView?.layer?.cornerRadius = Popup.cornerRadius + Popup.horizontalPadding
-        contentView?.layer?.masksToBounds = false
-        
-        // 添加阴影
-        contentView?.layer?.shadowColor = NSColor.black.cgColor
-        contentView?.layer?.shadowOffset = NSSize(width: 0, height: -2)
-        contentView?.layer?.shadowOpacity = 0.3
-        contentView?.layer?.shadowRadius = 10
         
         // 设置窗口最小和最大尺寸
         minSize = NSSize(width: 340, height: 600)
@@ -94,6 +94,17 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         
         // 关键：设置自动调整大小掩码，使内容跟随窗口尺寸变化
         contentView?.autoresizingMask = [.width, .height]
+        
+        // 添加阴影效果（类似 MenuBarExtra）
+        // 圆角 = Popup.cornerRadius + Popup.horizontalPadding
+        // macOS 26+: 7 + 5 = 12pt, 旧版本: 4 + 5 = 9pt
+        contentView?.wantsLayer = true
+        contentView?.layer?.backgroundColor = NSColor.clear.cgColor
+        contentView?.layer?.cornerRadius = Popup.totalCornerRadius
+        contentView?.layer?.masksToBounds = true  // 改为 true 避免黑色边角
+        
+        // 添加阴影（masksToBounds = true 时阴影不会显示，所以阴影移到窗口层）
+        self.hasShadow = true
     }
     
     func toggle() {
@@ -168,6 +179,9 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         
         makeKeyAndOrderFront(nil)
         isPresented = true
+        
+        // 强制重绘，确保 VisualEffectView 正常显示
+        contentView?.needsDisplay = true
         
         // 高亮状态栏按钮
         statusBarButton?.isHighlighted = true

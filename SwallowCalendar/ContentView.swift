@@ -34,6 +34,7 @@ struct ContentView: View {
             // 系统级毛玻璃背景
             VisualEffectView()
             
+            // 主内容
             VStack(spacing: 0) {
                 // 日历区域
                 CalendarGridView(
@@ -65,7 +66,7 @@ struct ContentView: View {
                 toolbar
             }
         }
-        .cornerRadius(12)
+        .cornerRadius(Popup.totalCornerRadius)
         .preferredColorScheme(appSettings.colorScheme)
         .tint(accentColor)
         .onChange(of: appSettings.accentColorHex) { _, newColor in

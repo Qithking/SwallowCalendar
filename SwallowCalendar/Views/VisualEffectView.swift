@@ -8,18 +8,29 @@ import SwiftUI
 
 /// macOS 旧版本的毛玻璃效果视图
 struct VisualEffectView: NSViewRepresentable {
-    let visualEffectView = NSVisualEffectView()
-    
     var material: NSVisualEffectView.Material = .popover
     var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
     
     func makeNSView(context: Context) -> NSVisualEffectView {
-        return visualEffectView
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active  // 确保视觉效果始终激活
+        view.isEmphasized = false  // 移除强调边框
+        
+        // 设置圆角，确保覆盖窗口四角
+        view.wantsLayer = true
+        view.layer?.cornerRadius = Popup.totalCornerRadius
+        view.layer?.masksToBounds = true
+        
+        return view
     }
     
     func updateNSView(_ view: NSVisualEffectView, context: Context) {
-        visualEffectView.material = material
-        visualEffectView.blendingMode = blendingMode
+        view.material = material
+        view.blendingMode = blendingMode
+        // 更新圆角
+        view.layer?.cornerRadius = Popup.totalCornerRadius
     }
 }
 
