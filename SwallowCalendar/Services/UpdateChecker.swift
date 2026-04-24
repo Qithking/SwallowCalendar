@@ -276,7 +276,6 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         )
         window.title = "下载更新"
         window.contentView = progressView
-        window.level = .floating // 确保窗口在最前面
 
         // 在当前前台窗口所在屏幕居中显示
         if let keyWindow = NSApp.keyWindow, let screen = keyWindow.screen {
@@ -309,18 +308,21 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
             do {
                 let fileManager = FileManager.default
                 
+                // 验证临时文件是否存在
                 guard fileManager.fileExists(atPath: location.path) else {
                     self.downloadError = "下载文件不存在，请重试"
                     self.isDownloading = false
                     return
                 }
                 
+                // 获取下载目录
                 guard let downloadsFolder = fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
                     self.downloadError = "无法访问下载文件夹"
                     self.isDownloading = false
                     return
                 }
                 
+                // 确定文件名
                 let urlString = self.releaseUrl.lowercased()
                 let fileName: String
                 if urlString.contains(".dmg") {
@@ -330,11 +332,13 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
                 }
                 let destinationUrl = downloadsFolder.appendingPathComponent(fileName)
 
+                // 如果目标文件已存在，先删除
                 if fileManager.fileExists(atPath: destinationUrl.path) {
                     try fileManager.removeItem(at: destinationUrl)
                 }
 
-                try fileManager.copyItem(at: location, to: destinationUrl)
+                // 移动文件（比复制更快且避免沙盒问题）
+                try fileManager.moveItem(at: location, to: destinationUrl)
 
                 self.downloadProgress = 1.0
                 self.isDownloading = false
