@@ -153,12 +153,12 @@ struct CalendarDayCell: View {
                     if showRestMark {
                         Text("休")
                             .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(Color(hex: "#2E8B57")) // 深绿色
+                            .foregroundColor(isToday ? .white : accentColor)
                     }
                     if showWorkMark {
                         Text("班")
                             .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.red)
+                            .foregroundColor(isToday ? .white : .red)
                     }
                 }
                 .padding(.top, 1)
