@@ -78,9 +78,12 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         backgroundColor = NSColor.clear
         titlebarSeparatorStyle = .none
         
-        // 启用半透明效果
+        // 启用半透明效果，使毛玻璃效果生效
         isOpaque = false
         hasShadow = true
+        
+        // 确保窗口背景透明，让VisualEffectView的毛玻璃效果显示
+        contentView?.wantsLayer = true
         
         // 设置窗口最小和最大尺寸
         minSize = NSSize(width: 340, height: 600)

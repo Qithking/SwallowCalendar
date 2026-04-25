@@ -432,18 +432,22 @@ struct CalendarSettingsView: View {
 
     /// 打开系统设置中的提醒权限页面
     private func openReminderSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders") else {
-            return
+        // 使用正确的 URL scheme，先检查是否可以打开
+        if let url = URL(string: "x-apple.systempreferences://com.apple.preference.security?Privacy_Reminders") {
+            if NSWorkspace.shared.urlForApplication(toOpen: url) != nil {
+                NSWorkspace.shared.open(url)
+            }
         }
-        NSWorkspace.shared.open(url)
     }
     
     /// 打开系统设置中的日历权限页面
     private func openCalendarSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") else {
-            return
+        // 使用正确的 URL scheme，先检查是否可以打开
+        if let url = URL(string: "x-apple.systempreferences://com.apple.preference.security?Privacy_Calendars") {
+            if NSWorkspace.shared.urlForApplication(toOpen: url) != nil {
+                NSWorkspace.shared.open(url)
+            }
         }
-        NSWorkspace.shared.open(url)
     }
 }
 

@@ -13,7 +13,7 @@ struct GeneralSettingsView: View {
         @Bindable var settings = appSettings
 
         Form {
-            // 开机启动
+            // 启动
             Section("启动") {
                 Toggle("开机自动启动", isOn: $settings.launchAtLogin)
                     .toggleStyle(.switch)
@@ -46,7 +46,7 @@ struct GeneralSettingsView: View {
                         Text(mode.displayName).tag(mode)
                     }
                 }
-                
+
                 // 主题色
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
@@ -70,7 +70,7 @@ struct GeneralSettingsView: View {
                                 )
                         }
                     }
-                    
+
                     HStack {
                         Text("自定义颜色")
                             .font(.system(size: 12))
@@ -99,7 +99,7 @@ struct GeneralSettingsView: View {
                         Text(mode.rawValue).tag(mode.rawValue)
                     }
                 }
-                
+
                 // 显示农历
                 Toggle("显示农历", isOn: $settings.showLunarCalendar)
                     .toggleStyle(.switch)
@@ -125,7 +125,7 @@ struct GeneralSettingsView: View {
         "#FF2D55", // 粉色
         "#8E8E93"  // 灰色
     ]
-    
+
     private let accentColors = [
         "#FF3B30", // 红色
         "#FF9500", // 橙色

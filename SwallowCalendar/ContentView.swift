@@ -33,6 +33,7 @@ struct ContentView: View {
         ZStack {
             // 系统级毛玻璃背景
             VisualEffectView()
+                .ignoresSafeArea()
             
             // 主内容
             VStack(spacing: 0) {

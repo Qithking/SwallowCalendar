@@ -62,12 +62,11 @@ final class CalendarService {
 
     /// 打开系统设置中的提醒权限页面
     func openReminderSettings() {
-        if let url = URL(string: "x-apple.reminders://") {
-            NSWorkspace.shared.open(url)
-        }
-        // 备用：打开隐私与安全性设置
-        if let url = URL(string: "x-apple.preferences:com.apple.preference.security") {
-            NSWorkspace.shared.open(url)
+        // 尝试打开系统设置 - 隐私与安全性 - 提醒事项
+        if let url = URL(string: "x-apple.systempreferences://com.apple.preference.security?Privacy_Reminders") {
+            if NSWorkspace.shared.urlForApplication(toOpen: url) != nil {
+                NSWorkspace.shared.open(url)
+            }
         }
     }
 
