@@ -251,18 +251,13 @@ struct TaskInputView: View {
                     asReminder: createAsReminder,
                     isLunar: taskIsLunar
                 )
-                await MainActor.run {
-                    inputText = ""
-                    resetTaskAttributes()
-                    refreshTrigger.toggle()  // 触发视图刷新
-                    onTaskAdded?()
-                }
+                inputText = ""
+                resetTaskAttributes()
+                onTaskAdded?()
             } catch {
                 // 任务添加失败，记录到日志系统（待实现）
             }
-            await MainActor.run {
-                isProcessing = false
-            }
+            isProcessing = false
         }
     }
 

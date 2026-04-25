@@ -13,7 +13,7 @@ struct CalendarGridView: View {
     let icsService: ICSService
     let customSources: [CustomCalendarSource]
     let calendarPreferences: [CalendarPreference]
-    var externalRefreshTrigger: Bool = false  // 外部刷新信号
+    @Binding var externalRefreshTrigger: Bool  // 外部刷新信号
 
     @State private var currentMonth = Date()
     @State private var hoveredDate: Date?
@@ -23,6 +23,7 @@ struct CalendarGridView: View {
     @State private var subscriptionTitlesCache: [String: [String]] = [:]  // 缓存订阅事件标题
     @State private var eventTitlesCache: [String: [String]] = [:]  // 缓存事件标题
     @State private var eventColorsCache: [String: [String]] = [:]  // 缓存事件颜色
+    @State private var eventCategoriesCache: [String: [String]] = [:]  // 缓存事件分类
 
     private let calendar = Calendar.current
     private let weekDaySymbols: [String] = {
@@ -120,6 +121,7 @@ struct CalendarGridView: View {
         let cachedSubscriptions = subscriptionTitlesCache
         let cachedEventTitles = eventTitlesCache
         let cachedEventColors = eventColorsCache
+        let cachedEventCategories = eventCategoriesCache
         _ = subscriptionsLoaded
 
         return LazyVGrid(columns: columns, spacing: 2) {
@@ -135,6 +137,7 @@ struct CalendarGridView: View {
                     isHovered: hoveredDate.flatMap { calendar.isDate(date, inSameDayAs: $0) } ?? false,
                     eventTitles: cachedEventTitles[formatDateKey(date)] ?? [],
                     eventColors: cachedEventColors[formatDateKey(date)] ?? [],
+                    eventCategories: cachedEventCategories[formatDateKey(date)] ?? [],
                     systemCalendarColor: systemCalendarColor(),
                     subscriptionCalendarColor: subscriptionCalendarColor(),
                     isImportant: isImportantDate(for: date)
@@ -245,12 +248,13 @@ struct CalendarGridView: View {
         return Color(hex: appSettings.subscriptionCalendarColorHex)
     }
     
-    /// 预计算所有缓存（重要日期、订阅事件、事件标题、事件颜色）
+    /// 预计算所有缓存（重要日期、订阅事件、事件标题、事件颜色、事件分类）
     func computeAllCaches() async {
         // 预计算订阅事件和事件标题/颜色的缓存
         var subCache: [String: [String]] = [:]
         var titlesCache: [String: [String]] = [:]
         var colorsCache: [String: [String]] = [:]
+        var categoriesCache: [String: [String]] = [:]
         
         let days = daysInMonth()
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
@@ -268,15 +272,18 @@ struct CalendarGridView: View {
             let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
             let eventTitles = events.map { $0.title }
             let eventColors = events.map { $0.calendarColorHex }
+            let eventCategories = events.map { $0.category.rawValue }
             if !eventTitles.isEmpty {
                 titlesCache[dateKey] = eventTitles
                 colorsCache[dateKey] = eventColors
+                categoriesCache[dateKey] = eventCategories
             }
         }
         
         subscriptionTitlesCache = subCache
         eventTitlesCache = titlesCache
         eventColorsCache = colorsCache
+        eventCategoriesCache = categoriesCache
         print("[CalendarGridView] 事件缓存已更新，订阅事件: \(subCache.count) 天，事件: \(titlesCache.count) 天")
         
         // 预计算重要日期

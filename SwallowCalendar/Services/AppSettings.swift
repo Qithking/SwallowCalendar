@@ -206,6 +206,9 @@ final class AppSettings {
         self.sortOrder = SortOrder(rawValue: UserDefaults.standard.string(forKey: "sortOrder") ?? "") ?? .descending
         self.isWindowPinned = UserDefaults.standard.bool(forKey: "isWindowPinned")
         self.defaultFilterMode = UserDefaults.standard.string(forKey: "defaultFilterMode") ?? "本月"
+
+        // 初始化时同步一次开机启动状态（让 SMAppService 生效）
+        updateLaunchAtLogin()
     }
 
     private func updateLaunchAtLogin() {

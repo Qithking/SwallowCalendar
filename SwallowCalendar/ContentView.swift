@@ -43,7 +43,7 @@ struct ContentView: View {
                     icsService: icsService,
                     customSources: customSources,
                     calendarPreferences: calendarPreferences,
-                    externalRefreshTrigger: calendarGridRefreshTrigger
+                    externalRefreshTrigger: $calendarGridRefreshTrigger
                 )
 
                 Divider()
@@ -141,8 +141,17 @@ struct ContentView: View {
 
     private func initializeServices() async {
         // 请求日历和提醒权限（同时请求，只弹一次授权框）
+        var reminderGranted = calendarService.reminderAuthorizationStatus == .fullAccess
         if calendarService.authorizationStatus == .notDetermined {
-            _ = await calendarService.requestAccess()
+            let result = await calendarService.requestAccess()
+            reminderGranted = result.reminder
+        }
+
+        // 若提醒授权被拒绝，弹窗引导用户开启
+        if !reminderGranted && calendarService.reminderAuthorizationStatus == .denied {
+            await MainActor.run {
+                showReminderAuthAlert()
+            }
         }
 
         calendarService.loadCalendars()
@@ -161,6 +170,21 @@ struct ContentView: View {
 
         // 预加载订阅日历数据
         await icsService.preloadSubscriptions(sources: customSources)
+    }
+
+    /// 弹窗引导用户去系统设置开启提醒权限
+    private func showReminderAuthAlert() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "需要提醒权限"
+        alert.informativeText = "请在系统设置中开启「提醒」权限，以便同步系统提醒事项。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "去开启")
+        alert.addButton(withTitle: "忽略")
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            calendarService.openReminderSettings()
+        }
     }
     
     /// 后台同步日历事件到本地缓存
