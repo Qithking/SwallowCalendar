@@ -25,8 +25,8 @@ struct CalendarDayCell: View {
     
     /// 计算属性：判断是否有系统日历事件（非订阅、非用户）
     private var hasSystemEvents: Bool {
-        if let categories = eventCategories as? [String] {
-            return categories.contains { $0 == "系统" }
+        if !eventCategories.isEmpty {
+            return eventCategories.contains { $0 == "系统" }
         }
         return eventCount > 0
     }
@@ -96,7 +96,6 @@ struct CalendarDayCell: View {
                 let hasSystem = hasSystemEvents
                 let hasUser = hasUserEvents
                 let hasSubscription = hasSubscriptionEvents
-                let showCount = [hasSystem, hasUser, hasSubscription].filter { $0 }.count
                 
                 HStack(spacing: 3) {
                     // 系统日历事件小圆点

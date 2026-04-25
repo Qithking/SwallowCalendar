@@ -33,14 +33,14 @@ struct VisualEffectView: NSViewRepresentable {
     }
     
     @available(macOS 26.0, *)
-    private func makeGlassEffectView() -> NSGlassEffectView {
+    private func makeGlassEffectView() -> NSView {
         let view = NSGlassEffectView()
         view.style = .regular
         view.autoresizingMask = [.width, .height]
         return view
     }
     
-    private func makeClassicEffectView() -> NSVisualEffectView {
+    private func makeClassicEffectView() -> NSView {
         let view = NSVisualEffectView()
         view.material = material
         view.blendingMode = blendingMode
