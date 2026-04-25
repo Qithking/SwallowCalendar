@@ -29,6 +29,7 @@ struct CalendarSettingsView: View {
             Section("同步设置") {
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("系统提醒同步至应用", isOn: $settings.syncSystemReminders)
+                        .toggleStyle(.switch)
                     
                     Text("将系统提醒应用中的待办事项同步到待办列表中")
                         .font(.system(size: 10))
@@ -71,6 +72,7 @@ struct CalendarSettingsView: View {
                 
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("应用事项同步至系统", isOn: $settings.syncEventsToSystem)
+                        .toggleStyle(.switch)
                     
                     Text("开启后，事项的增删改都与系统日历和提醒同步；关闭后，仅当前应用内的数据增删改")
                         .font(.system(size: 10))

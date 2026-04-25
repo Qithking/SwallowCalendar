@@ -16,7 +16,9 @@ struct GeneralSettingsView: View {
             // 开机启动
             Section("启动") {
                 Toggle("开机自动启动", isOn: $settings.launchAtLogin)
+                    .toggleStyle(.switch)
                 Toggle("启动时检查更新", isOn: $settings.checkUpdateOnFirstLaunch)
+                    .toggleStyle(.switch)
             }
 
             // 外观
@@ -57,11 +59,15 @@ struct GeneralSettingsView: View {
                                 .frame(width: 22, height: 22)
                                 .overlay(
                                     Circle()
-                                        .stroke(appSettings.accentColorHex == colorHex ? Color.primary : Color.clear, lineWidth: 2)
+                                        .strokeBorder(appSettings.accentColorHex == colorHex ? Color.primary : Color.clear, lineWidth: 2)
                                 )
                                 .onTapGesture {
                                     settings.accentColorHex = colorHex
                                 }
+                                .overlay(
+                                    Circle()
+                                        .strokeBorder(Color.primary.opacity(0.2), lineWidth: 0.5)
+                                )
                         }
                     }
                     
@@ -96,6 +102,7 @@ struct GeneralSettingsView: View {
                 
                 // 显示农历
                 Toggle("显示农历", isOn: $settings.showLunarCalendar)
+                    .toggleStyle(.switch)
             }
         }
         .formStyle(.grouped)

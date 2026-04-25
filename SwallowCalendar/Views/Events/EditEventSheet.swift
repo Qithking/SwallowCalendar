@@ -68,6 +68,7 @@ struct EditEventSheet: View {
 
             // 日期时间选择
             Toggle("全天事件", isOn: $isAllDay)
+                .toggleStyle(.switch)
 
             if !isAllDay {
                 DatePicker("开始时间", selection: $startDate, displayedComponents: [.date, .hourAndMinute])

@@ -215,6 +215,7 @@ jobs:
             echo "  1. 下载并打开 DMG 文件"
             echo "  2. 将 SwallowCalendar.app 拖入 Applications 文件夹"
             echo "  3. 如果提示"无法打开"，请在系统设置 > 隐私与安全性中允许运行"
+            echo "  4. 应用启动时需要访问日历和系统提醒应用权限（如果有数据同步异常问题请检查是否有相关权限）"
             echo ""
             echo "### 系统要求"
             echo "  - macOS 14.0 (Sonoma) 或更高版本"
