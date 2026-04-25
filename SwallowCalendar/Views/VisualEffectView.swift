@@ -15,36 +15,23 @@ struct VisualEffectView: NSViewRepresentable {
     var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
     
     func makeNSView(context: Context) -> NSView {
-        #if compiler(>=6.0)
-        if #available(macOS 26.0, *), hasGlassEffectView() {
+        if #available(macOS 26.0, *) {
             return makeGlassEffectView()
+        } else {
+            return makeClassicEffectView()
         }
-        #endif
-        return makeClassicEffectView()
     }
     
     func updateNSView(_ view: NSView, context: Context) {
-        #if compiler(>=6.0)
-        if #available(macOS 26.0, *), hasGlassEffectView(), let glassView = view as? NSGlassEffectView {
+        if #available(macOS 26.0, *), let glassView = view as? NSGlassEffectView {
             // macOS 26+ : 更新 Glass Effect View
-            return
-        }
-        #endif
-        if let visualView = view as? NSVisualEffectView {
+        } else if let visualView = view as? NSVisualEffectView {
+            // macOS 14 及以下: 更新 Visual Effect View
             visualView.material = material
             visualView.blendingMode = blendingMode
         }
     }
     
-    /// 检查编译时是否可用 NSGlassEffectView
-    #if compiler(>=6.0)
-    private func hasGlassEffectView() -> Bool { true }
-    #else
-    private func hasGlassEffectView() -> Bool { false }
-    #endif
-    
-    /// 创建 Glass Effect View (仅 Swift 6.0+ 编译器可见)
-    #if compiler(>=6.0)
     @available(macOS 26.0, *)
     private func makeGlassEffectView() -> NSView {
         let view = NSGlassEffectView()
@@ -52,16 +39,21 @@ struct VisualEffectView: NSViewRepresentable {
         view.autoresizingMask = [.width, .height]
         return view
     }
-    #endif
     
-    /// 创建传统 Visual Effect View (支持 macOS 14+)
     private func makeClassicEffectView() -> NSView {
         let view = NSVisualEffectView()
         view.material = material
         view.blendingMode = blendingMode
-        view.state = .active
-        view.isEmphasized = false
+        view.state = .active  // 确保视觉效果始终激活
+        view.isEmphasized = false  // 移除强调边框
         view.autoresizingMask = [.width, .height]
         return view
     }
+}
+
+#Preview {
+    VisualEffectView(
+        material: .popover,
+        blendingMode: .behindWindow
+    )
 }
