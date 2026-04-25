@@ -25,30 +25,49 @@ final class CalendarService {
         reminderAuthorizationStatus = EKEventStore.authorizationStatus(for: .reminder)
     }
 
+    // MARK: - Public Methods
+
+    /// 根据事件标识符获取 EKEvent
+    func getEvent(withIdentifier identifier: String) -> EKEvent? {
+        return eventStore.event(withIdentifier: identifier)
+    }
+
     // MARK: - Authorization
 
     /// 请求日历和提醒权限（同时请求，只弹一次授权框）
+    /// 返回 (日历授权成功, 提醒授权成功)
     @MainActor
-    func requestAccess() async -> Bool {
+    func requestAccess() async -> (calendar: Bool, reminder: Bool) {
         do {
             // 同时请求日历和提醒权限
             async let eventsGranted = eventStore.requestFullAccessToEvents()
             async let remindersGranted = eventStore.requestFullAccessToReminders()
-            
+
             let (eventResult, reminderResult) = try await (eventsGranted, remindersGranted)
-            
+
             authorizationStatus = eventResult ? .fullAccess : .denied
             reminderAuthorizationStatus = reminderResult ? .fullAccess : .denied
-            
+
             if eventResult {
                 loadCalendars()
             }
-            
-            return eventResult
+
+            return (eventResult, reminderResult)
         } catch {
             authorizationStatus = .denied
             reminderAuthorizationStatus = .denied
-            return false
+            return (false, false)
+        }
+    }
+
+    /// 打开系统设置中的提醒权限页面
+    func openReminderSettings() {
+        if let url = URL(string: "x-apple.reminders://") {
+            NSWorkspace.shared.open(url)
+        }
+        // 备用：打开隐私与安全性设置
+        if let url = URL(string: "x-apple.preferences:com.apple.preference.security") {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -404,6 +423,12 @@ final class CalendarService {
         guard event.calendar != nil else {
             throw EventError.noCalendarAvailable
         }
+        
+        // 如果是用户分类且开启了同步至系统日历，在备注中标记
+        if category == .user && AppSettings.shared.syncEventsToSystem {
+            event.notes = "此事项来自SwallowCalendar应用"
+        }
+        
         try eventStore.save(event, span: .thisEvent)
         
         // 保存到本地缓存

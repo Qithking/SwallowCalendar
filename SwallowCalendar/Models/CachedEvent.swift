@@ -251,11 +251,20 @@ final class EventCacheService {
                 existing.startDate = event.startDate ?? now
                 existing.endDate = event.endDate ?? now
                 existing.isAllDay = event.isAllDay
+                // 保留原有的分类（如果是SwallowCalendar事项，保持为用户分类）
                 existing.lastUpdated = Date()
             } else {
                 // 查找对应的EKCalendar获取ID
                 let targetCalendar = calendars.first { $0.title == event.calendarTitle }
                 let calendarID = targetCalendar?.calendarIdentifier ?? ""
+                
+                // 检查EKEvent的备注，判断是否是SwallowCalendar事项
+                var category = event.category
+                if let ekEvent = CalendarService.shared.getEvent(withIdentifier: event.id) {
+                    if let notes = ekEvent.notes, notes.contains("此事项来自SwallowCalendar应用") {
+                        category = .user
+                    }
+                }
                 
                 // 插入新事件
                 let cached = CachedEvent(
@@ -267,7 +276,7 @@ final class EventCacheService {
                     calendarID: calendarID,
                     calendarTitle: event.calendarTitle,
                     calendarColorHex: event.calendarColorHex,
-                    category: event.category
+                    category: category
                 )
                 context.insert(cached)
             }
