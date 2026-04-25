@@ -14,152 +14,105 @@ env:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Xcode
+      - name: Setup Xcode 26
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16.2'
+          xcode-version: '26.3'
+
+      - name: Show Xcode and SDK Info
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
+          xcrun --show-sdk-path
 
       - name: Build Universal Binary
         run: |
           mkdir -p build
 
-          # 构建 arm64 版本 
-          swift build --configuration release --arch arm64 2>&1
+          # 构建 arm64 版本
+          xcodebuild build \
+            -project SwallowCalendar.xcodeproj \
+            -scheme SwallowCalendar \
+            -configuration Release \
+            -arch arm64 \
+            -sdk macosx \
+            -derivedDataPath build/DerivedData-arm64 \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
 
-          # 查找 arm64 二进制文件 (排除 dSYM)
-          ARM64_PATH=$(find .build -type f -name "SwallowCalendar" -not -path "*.dSYM/*" 2>/dev/null | head -1)
-          echo "=== arm64 binary: $ARM64_PATH ==="
+          ARM64_APP=$(find build/DerivedData-arm64 -name "SwallowCalendar.app" -type d | head -1)
+          ARM64_BIN="$ARM64_APP/Contents/MacOS/SwallowCalendar"
 
-          if [ -z "$ARM64_PATH" ] || [ ! -f "$ARM64_PATH" ]; then
+          if [ ! -f "$ARM64_BIN" ]; then
             echo "Error: arm64 binary not found"
             exit 1
           fi
 
-          cp "$ARM64_PATH" build/SwallowCalendar-arm64
+          cp "$ARM64_BIN" build/SwallowCalendar-arm64
+          echo "arm64 binary: $ARM64_BIN"
 
-          # 构建 x86_64 版本 (先保存 arm64 后再删除 .build)
-          swift build --configuration release --arch x86_64 2>&1
+          # 构建 x86_64 版本
+          xcodebuild clean \
+            -project SwallowCalendar.xcodeproj \
+            -scheme SwallowCalendar
 
-          # 查找 x86_64 二进制文件 (排除 dSYM)
-          X86_PATH=$(find .build -type f -name "SwallowCalendar" -not -path "*.dSYM/*" 2>/dev/null | head -1)
-          echo "=== x86_64 binary: $X86_PATH ==="
+          xcodebuild build \
+            -project SwallowCalendar.xcodeproj \
+            -scheme SwallowCalendar \
+            -configuration Release \
+            -arch x86_64 \
+            -sdk macosx \
+            -derivedDataPath build/DerivedData-x86 \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
 
-          if [ -z "$X86_PATH" ] || [ ! -f "$X86_PATH" ]; then
+          X86_APP=$(find build/DerivedData-x86 -name "SwallowCalendar.app" -type d | head -1)
+          X86_BIN="$X86_APP/Contents/MacOS/SwallowCalendar"
+
+          if [ ! -f "$X86_BIN" ]; then
             echo "Error: x86_64 binary not found"
             exit 1
           fi
 
-          cp "$X86_PATH" build/SwallowCalendar-x86_64
+          cp "$X86_BIN" build/SwallowCalendar-x86_64
+          echo "x86_64 binary: $X86_BIN"
 
           # 合并为 Universal Binary
           lipo -create build/SwallowCalendar-arm64 build/SwallowCalendar-x86_64 -output build/SwallowCalendar
 
           echo "=== Universal Binary Info ==="
           lipo -info build/SwallowCalendar
-          file build/SwallowCalendar
 
-      - name: Create App Bundle
+      - name: Create App Bundle from xcodebuild output
         run: |
-          # 创建 App Bundle 目录结构
-          mkdir -p SwallowCalendar.app/Contents/MacOS
-          mkdir -p SwallowCalendar.app/Contents/Resources
-
-          # 复制二进制文件
-          cp build/SwallowCalendar SwallowCalendar.app/Contents/MacOS/
-          chmod +x SwallowCalendar.app/Contents/MacOS/SwallowCalendar
-
-          # 生成 .icns 图标文件
-          ICONSET_DIR="SwallowCalendar.app/Contents/Resources/AppIcon.iconset"
-          mkdir -p "$ICONSET_DIR"
-
-          # 复制各种尺寸的图标到 iconset
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-16.png" "$ICONSET_DIR/icon_16x16.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-16@2x.png" "$ICONSET_DIR/icon_16x16@2x.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-32.png" "$ICONSET_DIR/icon_32x32.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-32@2x.png" "$ICONSET_DIR/icon_32x32@2x.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-128.png" "$ICONSET_DIR/icon_128x128.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-128@2x.png" "$ICONSET_DIR/icon_128x128@2x.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-256.png" "$ICONSET_DIR/icon_256x256.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-256@2x.png" "$ICONSET_DIR/icon_256x256@2x.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-512.png" "$ICONSET_DIR/icon_512x512.png" 2>/dev/null || true
-          cp "SwallowCalendar/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png" "$ICONSET_DIR/icon_512x512@2x.png" 2>/dev/null || true
-
-          # 使用 iconutil 生成 .icns 文件
-          iconutil -c icns "$ICONSET_DIR" -o "SwallowCalendar.app/Contents/Resources/AppIcon.icns"
-          rm -rf "$ICONSET_DIR"
-
-          # 获取版本号
           VERSION=${GITHUB_REF#refs/tags/v}
-
-          # 创建 Info.plist
-          cat > SwallowCalendar.app/Contents/Info.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleDevelopmentRegion</key>
-              <string>zh_CN</string>
-              <key>CFBundleExecutable</key>
-              <string>SwallowCalendar</string>
-              <key>CFBundleIconFile</key>
-              <string>AppIcon</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.swallowcalendar.app</string>
-              <key>CFBundleInfoDictionaryVersion</key>
-              <string>6.0</string>
-              <key>CFBundleName</key>
-              <string>SwallowCalendar</string>
-              <key>CFBundleDisplayName</key>
-              <string>燕子日历</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>CFBundleShortVersionString</key>
-              <string>VERSION_PLACEHOLDER</string>
-              <key>CFBundleVersion</key>
-              <string>BUILD_PLACEHOLDER</string>
-          <key>LSMinimumSystemVersion</key>
-          <string>14.0</string>
-              <key>LSUIElement</key>
-              <true/>
-              <key>NSHumanReadableCopyright</key>
-              <string>Copyright © 2026 thking. All rights reserved.</string>
-              <key>NSPrincipalClass</key>
-              <string>NSApplication</string>
-              <key>NSCalendarsUsageDescription</key>
-              <string>燕子日历需要访问您的日历以显示和管理日程事件。</string>
-              <key>NSCalendarsFullAccessUsageDescription</key>
-              <string>燕子日历需要完整的日历访问权限以读取和创建日历事件。</string>
-          </dict>
-          </plist>
-          EOF
-
-          sed -i '' "s/VERSION_PLACEHOLDER/${VERSION}/g" SwallowCalendar.app/Contents/Info.plist
           BUILD_NUM=$(git rev-list HEAD --count)
-          sed -i '' "s/BUILD_PLACEHOLDER/${BUILD_NUM}/g" SwallowCalendar.app/Contents/Info.plist
 
-          # 添加 entitlements 文件
-          cat > SwallowCalendar.app/Contents/Entitlements.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>com.apple.security.app-sandbox</key>
-              <false/>
-              <key>com.apple.security.personal-information.calendars</key>
-              <true/>
-          </dict>
-          </plist>
-          EOF
+          # 使用 arm64 构建的 .app 作为基础（包含完整的 Info.plist、图标、资源）
+          BASE_APP=$(find build/DerivedData-arm64 -name "SwallowCalendar.app" -type d | head -1)
+
+          # 复制 .app 目录
+          cp -R "$BASE_APP" SwallowCalendar.app
+
+          # 用 Universal Binary 替换二进制
+          cp build/SwallowCalendar SwallowCalendar.app/Contents/MacOS/SwallowCalendar
+
+          # 更新 Info.plist 中的版本号
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" SwallowCalendar.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUM" SwallowCalendar.app/Contents/Info.plist
 
           echo "=== App Bundle Structure ==="
-          ls -la SwallowCalendar.app/Contents/
+          ls -la SwallowCalendar.app/Contents/MacOS/
+          cat SwallowCalendar.app/Contents/Info.plist
 
       - name: Ad-hoc Sign App
         run: |
