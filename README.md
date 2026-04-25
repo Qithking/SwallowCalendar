@@ -22,23 +22,23 @@
 
 <table>
   <tr>
-    <td><img src="./assets/clipboard/clipboard-C4DA4DCB-D8BE-4049-B222-2827494E1B9D.png" alt="主界面" height="250"></td>
-    <td><img src="./assets/clipboard/clipboard-2B10C325-0385-4A07-8E1F-CC277F9C69F0.png" alt="日历详情" height="250"></td>
+    <td><img src="./assets/clipboard/clipboard-C4DA4DCB-D8BE-4049-B222-2827494E1B9D.png" alt="主界面" height="350"></td>
+    <td><img src="./assets/clipboard/clipboard-2B10C325-0385-4A07-8E1F-CC277F9C69F0.png" alt="日历详情" height="350"></td>
   </tr>
   <tr>
     <td align="center"><strong>主界面 - 日历与待办</strong></td>
     <td align="center"><strong>日历详情 - 节假日标注</strong></td>
   </tr>
   <tr>
-    <td><img src="./assets/clipboard/clipboard-506E5092-FA67-4B1B-868C-A8A3EAA5079D.png" alt="待办事项" height="250"></td>
-    <td><img src="./assets/clipboard/clipboard-5333EE1A-F4B7-41B5-B3F2-3742B27A947B.png" alt="设置界面" height="250"></td>
+    <td><img src="./assets/clipboard/clipboard-506E5092-FA67-4B1B-868C-A8A3EAA5079D.png" alt="待办事项" height="350"></td>
+    <td><img src="./assets/clipboard/clipboard-5333EE1A-F4B7-41B5-B3F2-3742B27A947B.png" alt="设置界面" height="350"></td>
   </tr>
   <tr>
     <td align="center"><strong>待办事项管理</strong></td>
     <td align="center"><strong>设置与主题定制</strong></td>
   </tr>
   <tr>
-    <td><img src="./assets/clipboard/clipboard-836DC392-A451-418B-B5B1-7AA074D9647B.png" alt="编辑事件" height="250"></td>
+    <td><img src="./assets/clipboard/clipboard-836DC392-A451-418B-B5B1-7AA074D9647B.png" alt="编辑事件" height="350"></td>
     <td></td>
   </tr>
   <tr>
