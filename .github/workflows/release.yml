@@ -26,19 +26,12 @@ jobs:
         with:
           xcode-version: '17'
 
-      - name: Verify Xcode and Swift Version
-        run: |
-          sudo xcode-select -s /Applications/Xcode_17.app/Contents/Developer
-          xcode-select -p
-          xcodebuild -version
-          swift --version
-
       - name: Build Universal Binary
         run: |
           mkdir -p build
 
-          # 构建 arm64 版本 (使用 xcrun 确保使用 Xcode toolchain)
-          xcrun swift build --configuration release --arch arm64 2>&1
+          # 构建 arm64 版本 
+          swift build --configuration release --arch arm64 2>&1
 
           # 查找 arm64 二进制文件 (排除 dSYM)
           ARM64_PATH=$(find .build -type f -name "SwallowCalendar" -not -path "*.dSYM/*" 2>/dev/null | head -1)
@@ -52,7 +45,7 @@ jobs:
           cp "$ARM64_PATH" build/SwallowCalendar-arm64
 
           # 构建 x86_64 版本 (先保存 arm64 后再删除 .build)
-          xcrun swift build --configuration release --arch x86_64 2>&1
+          swift build --configuration release --arch x86_64 2>&1
 
           # 查找 x86_64 二进制文件 (排除 dSYM)
           X86_PATH=$(find .build -type f -name "SwallowCalendar" -not -path "*.dSYM/*" 2>/dev/null | head -1)
