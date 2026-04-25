@@ -31,9 +31,13 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     let onClose: () -> Void
     
     private var pinObserver: NSObjectProtocol?
+    private var deactivateObserver: NSObjectProtocol?
     
     deinit {
         if let observer = pinObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = deactivateObserver {
             NotificationCenter.default.removeObserver(observer)
         }
     }
@@ -98,6 +102,21 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         contentView?.layer?.backgroundColor = NSColor.clear.cgColor
         contentView?.layer?.cornerRadius = Popup.totalCornerRadius
         contentView?.layer?.masksToBounds = true
+        
+        // 监听应用失焦通知，未固定时自动关闭窗口
+        deactivateObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.appDidResignActive()
+        }
+    }
+    
+    @objc private func appDidResignActive() {
+        if shouldClose() {
+            close()
+        }
     }
     
     func toggle() {
