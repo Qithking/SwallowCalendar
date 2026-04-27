@@ -18,6 +18,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.action = #selector(performStatusItemClick)
         item.button?.target = self
         item.button?.imagePosition = .imageLeft
+        // 绑定到 StatusBarIconManager，使图标更新能自动同步
+        StatusBarIconManager.shared.bind(statusItem: item)
         return item
     }()
     

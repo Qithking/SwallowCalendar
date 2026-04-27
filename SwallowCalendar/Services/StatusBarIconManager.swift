@@ -10,14 +10,25 @@ import SwiftUI
 final class StatusBarIconManager {
     static let shared = StatusBarIconManager()
 
-    var currentIcon: NSImage
+    var currentIcon: NSImage {
+        didSet {
+            statusItemButton?.image = currentIcon
+        }
+    }
+
+    private(set) weak var statusItemButton: NSButton?
 
     private var refreshTimer: Timer?
 
     private init() {
         let iconColor = NSColor(hexString: AppSettings.shared.accentColorHex) ?? .systemBlue
         currentIcon = Self.generateIcon(style: .solidDate, customFormat: "d", iconColor: iconColor)
-        startDayChangeTimer()
+    }
+
+    /// 绑定 statusItem 按钮（由 AppDelegate 在创建 statusItem 后调用）
+    func bind(statusItem: NSStatusItem) {
+        statusItemButton = statusItem.button
+        statusItemButton?.image = currentIcon
     }
 
     func updateIcon() {
