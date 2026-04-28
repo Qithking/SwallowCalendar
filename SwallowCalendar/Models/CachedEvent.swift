@@ -120,17 +120,23 @@ final class CachedEvent {
 @Observable
 final class EventCacheService {
     static let shared = EventCacheService()
-    
+
     private var modelContainer: ModelContainer?
     private var modelContext: ModelContext?
-    
+
     /// 是否正在同步
     var isSyncing = false
-    
-    /// 最后同步时间
-    var lastSyncTime: Date?
-    
-    private init() {}
+
+    /// 最后同步时间（持久化到 UserDefaults）
+    var lastSyncTime: Date? {
+        didSet {
+            UserDefaults.standard.set(lastSyncTime, forKey: "EventCacheService.lastSyncTime")
+        }
+    }
+
+    private init() {
+        self.lastSyncTime = UserDefaults.standard.object(forKey: "EventCacheService.lastSyncTime") as? Date
+    }
     
     /// 设置 ModelContainer
     func configure(with container: ModelContainer) {
@@ -352,6 +358,7 @@ final class EventCacheService {
 
         do {
             try context.save()
+            lastSyncTime = Date()
         } catch {
             // 提醒保存失败，记录到日志系统（待实现）
         }

@@ -183,11 +183,8 @@ final class AppSettings {
     }
 
     /// 窗口是否固定（失焦不关闭）
-    var isWindowPinned: Bool {
-        didSet {
-            UserDefaults.standard.set(isWindowPinned, forKey: "isWindowPinned")
-        }
-    }
+    /// 每次启动默认不固定，运行中切换固定状态不会持久化
+    var isWindowPinned: Bool = false
 
     private init() {
         self.launchAtLogin = UserDefaults.standard.bool(forKey: "launchAtLogin")
@@ -204,7 +201,6 @@ final class AppSettings {
         self.syncEventsToSystem = UserDefaults.standard.object(forKey: "syncEventsToSystem") as? Bool ?? false
         self.sortMode = SortMode(rawValue: UserDefaults.standard.string(forKey: "sortMode") ?? "") ?? .default
         self.sortOrder = SortOrder(rawValue: UserDefaults.standard.string(forKey: "sortOrder") ?? "") ?? .descending
-        self.isWindowPinned = UserDefaults.standard.bool(forKey: "isWindowPinned")
         self.defaultFilterMode = UserDefaults.standard.string(forKey: "defaultFilterMode") ?? "本月"
 
         // 初始化时同步一次开机启动状态（让 SMAppService 生效）

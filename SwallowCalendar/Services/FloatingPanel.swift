@@ -198,8 +198,7 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     
     /// 检查是否应该关闭窗口（未固定且已显示）
     private func shouldClose() -> Bool {
-        let isPinned = UserDefaults.standard.bool(forKey: "isWindowPinned")
-        return isPresented && !isPinned
+        return isPresented && !AppSettings.shared.isWindowPinned
     }
     
     func windowDidResignKey(_ notification: Notification) {

@@ -153,6 +153,7 @@ final class ICSService {
                 }
             }
         }
+        EventCacheService.shared.lastSyncTime = Date()
         print("[ICSService] 预加载完成, 缓存条目数: \(subscriptionCache.count)")
     }
 
