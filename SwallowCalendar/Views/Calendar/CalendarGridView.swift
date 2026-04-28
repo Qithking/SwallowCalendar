@@ -77,9 +77,11 @@ struct CalendarGridView: View {
             }
         }
         .onChange(of: customSources.map { "\($0.icsURL):\($0.isEnabled):\($0.isImportant)" }.joined()) { _, _ in
-            // 订阅源改变时刷新缓存
-            print("[CalendarGridView] 检测到订阅源变化，刷新所有缓存")
+            // 订阅源改变时，先重新加载订阅数据，再刷新缓存
+            print("[CalendarGridView] 检测到订阅源变化，重新加载订阅数据并刷新缓存")
             Task {
+                await icsService.preloadSubscriptions(sources: customSources)
+                subscriptionsLoaded = true
                 await computeAllCaches()
             }
         }
@@ -92,6 +94,13 @@ struct CalendarGridView: View {
         }
         .onChange(of: currentMonth) { _, _ in
             // 月份改变时刷新缓存
+            Task {
+                await computeAllCaches()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("CalendarCacheCleared"))) { _ in
+            // 清除事件缓存后刷新
+            print("[CalendarGridView] 检测到缓存清除通知，刷新所有缓存")
             Task {
                 await computeAllCaches()
             }
@@ -261,23 +270,16 @@ struct CalendarGridView: View {
         
         for date in days {
             let dateKey = formatDateKey(date)
-            
-            // 订阅事件（只计算有启用订阅源的日期）
+
+            // 订阅事件（始终更新缓存，空时设为空数组）
             let subTitles = icsService.subscriptionEventsSync(for: date, sources: customSources)
-            if !subTitles.isEmpty {
-                subCache[dateKey] = subTitles
-            }
-            
-            // 系统日历事件
+            subCache[dateKey] = subTitles
+
+            // 系统日历事件（始终更新缓存，空时设为空数组）
             let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
-            let eventTitles = events.map { $0.title }
-            let eventColors = events.map { $0.calendarColorHex }
-            let eventCategories = events.map { $0.category.rawValue }
-            if !eventTitles.isEmpty {
-                titlesCache[dateKey] = eventTitles
-                colorsCache[dateKey] = eventColors
-                categoriesCache[dateKey] = eventCategories
-            }
+            titlesCache[dateKey] = events.map { $0.title }
+            colorsCache[dateKey] = events.map { $0.calendarColorHex }
+            categoriesCache[dateKey] = events.map { $0.category.rawValue }
         }
         
         subscriptionTitlesCache = subCache

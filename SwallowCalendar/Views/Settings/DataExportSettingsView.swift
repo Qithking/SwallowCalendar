@@ -45,7 +45,7 @@ struct DataExportSettingsView: View {
             
             Section("数据管理") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("清除本地缓存的事件数据，不会影响系统日历中的原始数据。")
+                    Text("清除本地存储的事件数据，不会影响系统日历中的原始数据。")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     
@@ -66,7 +66,7 @@ struct DataExportSettingsView: View {
                             } else {
                                 Image(systemName: "trash")
                             }
-                            Text(isClearing ? "清除中..." : "清除事件缓存")
+                            Text(isClearing ? "清除中..." : "清除本地事件")
                         }
                     }
                     .disabled(isClearing)
@@ -77,7 +77,7 @@ struct DataExportSettingsView: View {
             
             Section("统计") {
                 HStack {
-                    Text("缓存事件数")
+                    Text("本地事件数")
                     Spacer()
                     Text("\(cachedEventCount)")
                         .foregroundColor(.secondary)
@@ -112,7 +112,7 @@ struct DataExportSettingsView: View {
                 clearEventCache()
             }
         } message: {
-            Text("此操作将清除本地缓存的所有事件数据，但不会影响系统日历中的原始数据。")
+            Text("此操作将清除本地存储的所有事件数据，但不会影响系统日历中的原始数据。")
         }
     }
     
@@ -177,6 +177,10 @@ struct DataExportSettingsView: View {
                 try await Task.sleep(nanoseconds: 100_000_000)  // 100ms 延迟让用户看到进度
                 
                 EventCacheService.shared.clearCache()
+                ICSService.shared.clearCache()
+
+                // 通知其他视图缓存已清除，需要刷新
+                NotificationCenter.default.post(name: Notification.Name("CalendarCacheCleared"), object: nil)
                 
                 await MainActor.run {
                     isClearing = false

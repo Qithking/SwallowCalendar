@@ -156,6 +156,16 @@ final class ICSService {
         print("[ICSService] 预加载完成, 缓存条目数: \(subscriptionCache.count)")
     }
 
+    /// 清除所有订阅日历缓存（内存 + 磁盘）
+    func clearCache() {
+        subscriptionCache.removeAll()
+        // 清除磁盘 ICS 文件缓存
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("SwallowCalendar/ICS", isDirectory: true)
+        try? FileManager.default.removeItem(at: cacheDir)
+        print("[ICSService] 订阅日历缓存已清除（内存 + 磁盘）")
+    }
+
     // MARK: - ICS Date Parsing
 
     private func parseICSDate(_ line: String) -> Date? {

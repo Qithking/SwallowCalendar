@@ -193,7 +193,11 @@ struct ContentView: View {
         guard calendarService.authorizationStatus == .fullAccess else { return }
 
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        await calendarService.cacheService.syncEvents(from: calendarService, calendars: enabledCals)
+
+        // 只有开启的系统日历才同步
+        if !enabledCals.isEmpty {
+            await calendarService.cacheService.syncEvents(from: calendarService, calendars: enabledCals)
+        }
 
         // 同步系统提醒（如果开启）
         if appSettings.syncSystemReminders && calendarService.reminderAuthorizationStatus == .fullAccess {

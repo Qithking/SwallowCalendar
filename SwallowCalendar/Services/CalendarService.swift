@@ -78,12 +78,20 @@ final class CalendarService {
     }
 
     /// 获取已启用的日历（根据用户偏好过滤）
-    /// 优先返回用户配置的日历，如果配置为空则返回所有用户日历
+    /// - 新用户（preferences 为空）：返回所有系统日历
+    /// - 所有日历已关闭（enabledIDs 为空）：返回空数组，不同步任何系统日历数据
+    /// - 有开启的日历：返回开启的日历 + 所有用户日历
     func enabledCalendars(preferences: [CalendarPreference]) -> [EKCalendar] {
         let enabledIDs = Set(preferences.filter(\.isEnabled).map(\.calendarID))
 
-        if enabledIDs.isEmpty {
+        if preferences.isEmpty {
+            // 新用户，还没有任何偏好配置，返回所有系统日历
             return calendars.filter { $0.type != .subscription }
+        }
+
+        if enabledIDs.isEmpty {
+            // 所有日历都已关闭，返回空数组（不同步任何系统日历数据）
+            return []
         }
 
         // 返回配置的日历 + 所有用户日历（确保用户创建的事件能显示）
