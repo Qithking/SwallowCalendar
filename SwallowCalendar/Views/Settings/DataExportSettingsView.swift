@@ -22,7 +22,7 @@ struct DataExportSettingsView: View {
         Form {
             Section("数据导出") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("将日历事件导出为标准 ICS 格式文件，可用于备份或导入到其他日历应用。")
+                    Text("将日历事项导出为标准 ICS 格式文件，可用于备份或导入到其他日历应用。")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     
@@ -35,7 +35,7 @@ struct DataExportSettingsView: View {
                                     .controlSize(.small)
                             }
                             Image(systemName: "square.and.arrow.up")
-                            Text(isExporting ? "导出中..." : "导出所有日历事件")
+                            Text(isExporting ? "导出中..." : "导出所有日历事项")
                         }
                     }
                     .disabled(isExporting)
@@ -45,7 +45,7 @@ struct DataExportSettingsView: View {
             
             Section("数据管理") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("清除本地存储的事件数据，不会影响系统日历中的原始数据。")
+                    Text("清除本地存储的事项数据，不会影响系统日历中的原始数据。")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     
@@ -66,7 +66,7 @@ struct DataExportSettingsView: View {
                             } else {
                                 Image(systemName: "trash")
                             }
-                            Text(isClearing ? "清除中..." : "清除本地事件")
+                            Text(isClearing ? "清除中..." : "清除本地事项")
                         }
                     }
                     .disabled(isClearing)
@@ -77,7 +77,7 @@ struct DataExportSettingsView: View {
             
             Section("统计") {
                 HStack {
-                    Text("本地事件数")
+                    Text("本地事项数")
                     Spacer()
                     Text("\(cachedEventCount)")
                         .foregroundColor(.secondary)
@@ -99,7 +99,7 @@ struct DataExportSettingsView: View {
         .alert("导出成功", isPresented: $showExportSuccess) {
             Button("确定") {}
         } message: {
-            Text("日历事件已成功导出到桌面。")
+            Text("日历事项已成功导出到桌面。")
         }
         .alert("导出失败", isPresented: $showExportError) {
             Button("确定") {}
@@ -112,7 +112,7 @@ struct DataExportSettingsView: View {
                 clearEventCache()
             }
         } message: {
-            Text("此操作将清除本地存储的所有事件数据，但不会影响系统日历中的原始数据。")
+            Text("此操作将清除本地存储的所有事项数据，但不会影响系统日历中的原始数据。")
         }
     }
     
@@ -132,7 +132,7 @@ struct DataExportSettingsView: View {
         
         Task {
             do {
-                // 获取所有事件
+                // 获取所有事项
                 let calendarService = CalendarService.shared
                 let now = Date()
                 let endDate = Calendar.current.date(byAdding: .year, value: 2, to: now)!
