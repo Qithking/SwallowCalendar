@@ -205,9 +205,12 @@ struct ContentView: View {
 
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
 
-        // 只有开启的系统日历才同步
         if !enabledCals.isEmpty {
+            // 有开启的系统日历，同步数据
             await calendarService.cacheService.syncEvents(from: calendarService, calendars: enabledCals)
+        } else {
+            // 所有系统日历都关闭，清除系统日历缓存（不含订阅日历、用户事件和提醒）
+            await calendarService.cacheService.clearSystemCalendarCache()
         }
 
         // 同步系统提醒（如果开启）
@@ -218,9 +221,11 @@ struct ContentView: View {
             await calendarService.cacheService.clearRemindersCache()
         }
 
-        // 同步完成后刷新日历网格视图
+        // 同步完成后刷新日历网格视图（必须在主线程）
         if shouldRefreshUI {
-            calendarGridRefreshTrigger.toggle()
+            await MainActor.run {
+                calendarGridRefreshTrigger.toggle()
+            }
         }
     }
 

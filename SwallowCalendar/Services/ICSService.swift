@@ -134,6 +134,18 @@ final class ICSService {
 
     /// 预加载订阅日历数据
     func preloadSubscriptions(sources: [CustomCalendarSource]) async {
+        // 先清除禁用源的缓存数据
+        let enabledSourceURLs = Set(sources.filter { $0.isEnabled }.map { $0.icsURL })
+        for (key, events) in subscriptionCache {
+            let filtered = events.filter { enabledSourceURLs.contains($0.sourceURL) }
+            if filtered.isEmpty {
+                subscriptionCache.removeValue(forKey: key)
+            } else {
+                subscriptionCache[key] = filtered
+            }
+        }
+
+        // 加载启用的源
         for source in sources where source.isEnabled {
             let events: [ICSEvent]
             if let cached = loadCached(url: source.icsURL) {
@@ -149,7 +161,11 @@ final class ICSService {
             for event in events {
                 if let start = event.startDate {
                     let key = formatDateKey(start)
-                    subscriptionCache[key, default: []].append((sourceURL: source.icsURL, eventName: event.summary))
+                    // 避免重复添加
+                    let existing = subscriptionCache[key, default: []]
+                    if !existing.contains(where: { $0.sourceURL == source.icsURL && $0.eventName == event.summary }) {
+                        subscriptionCache[key, default: []].append((sourceURL: source.icsURL, eventName: event.summary))
+                    }
                 }
             }
         }

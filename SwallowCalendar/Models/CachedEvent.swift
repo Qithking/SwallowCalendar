@@ -380,6 +380,23 @@ final class EventCacheService {
         }
     }
 
+    /// 清除所有系统日历的缓存（不含订阅日历、用户事件和提醒）
+    /// 用于所有系统日历都关闭时，清除对应的缓存数据
+    @MainActor
+    func clearSystemCalendarCache() {
+        guard let context = modelContext else { return }
+
+        let descriptor = FetchDescriptor<CachedEvent>()
+        if let events = try? context.fetch(descriptor) {
+            // 只删除系统日历的缓存，保留订阅日历、用户事件和提醒
+            let eventsToDelete = events.filter { $0.category == .system }
+            for event in eventsToDelete {
+                context.delete(event)
+            }
+            try? context.save()
+        }
+    }
+
     /// 清除所有缓存
     func clearCache() {
         guard let context = modelContext else { return }
