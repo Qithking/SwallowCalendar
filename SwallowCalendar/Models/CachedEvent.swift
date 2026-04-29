@@ -235,15 +235,15 @@ final class EventCacheService {
         // 获取当前启用的日历ID集合
         let enabledCalendarIDs = Set(calendars.map { $0.calendarIdentifier })
         
-        // 删除已不存在的系统事件（但保留被禁用日历的事件和提醒）
+        // 删除已不存在的系统事件，以及被禁用日历的缓存事件
         let deletedIDs = Set(existingByID.keys).subtracting(newIDs)
         for eventID in deletedIDs {
             if let event = existingByID[eventID] {
                 // 跳过提醒事件（由 syncReminders 管理）
                 guard event.calendarTitle != "提醒" else { continue }
                 
-                // 只删除启用日历中的事件，保留被禁用日历的缓存
-                if enabledCalendarIDs.contains(event.calendarID) {
+                // 删除不在启用日历中的事件（即被禁用日历的缓存）
+                if !enabledCalendarIDs.contains(event.calendarID) {
                     context.delete(event)
                 }
             }
@@ -301,6 +301,7 @@ final class EventCacheService {
     @MainActor
     func syncReminders(from calendarService: CalendarService) async {
         guard let context = modelContext else { return }
+        guard AppSettings.shared.syncSystemReminders else { return }
 
         // 从系统提醒获取（不过滤日期，获取所有未完成提醒）
         let reminders = await calendarService.fetchReminders(includeCompleted: false)
@@ -365,6 +366,7 @@ final class EventCacheService {
     }
 
     /// 清除所有提醒缓存（category为user且calendarTitle为"提醒"的）
+    @MainActor
     func clearRemindersCache() {
         guard let context = modelContext else { return }
 

@@ -80,7 +80,7 @@ final class CalendarService {
     /// 获取已启用的日历（根据用户偏好过滤）
     /// - 新用户（preferences 为空）：返回所有系统日历
     /// - 所有日历已关闭（enabledIDs 为空）：返回空数组，不同步任何系统日历数据
-    /// - 有开启的日历：返回开启的日历 + 所有用户日历
+    /// - 有开启的日历：只返回开启的日历
     func enabledCalendars(preferences: [CalendarPreference]) -> [EKCalendar] {
         let enabledIDs = Set(preferences.filter(\.isEnabled).map(\.calendarID))
 
@@ -94,12 +94,8 @@ final class CalendarService {
             return []
         }
 
-        // 返回配置的日历 + 所有用户日历（确保用户创建的事件能显示）
-        var result = calendars.filter { enabledIDs.contains($0.calendarIdentifier) }
-        let userCalendars = calendars.filter { $0.type != .subscription && !enabledIDs.contains($0.calendarIdentifier) }
-        result.append(contentsOf: userCalendars)
-
-        return result
+        // 只返回用户明确开启的日历
+        return calendars.filter { enabledIDs.contains($0.calendarIdentifier) }
     }
 
     // MARK: - Events
@@ -778,6 +774,14 @@ final class CalendarService {
         }
 
         let enabledCals = enabledCalendars(preferences: preferences)
+        guard !enabledCals.isEmpty else {
+            // 没有开启的日历，直接返回成功
+            DispatchQueue.main.async {
+                completion?(true, "同步成功")
+            }
+            return
+        }
+
         Task {
             await cacheService.syncEvents(from: self, calendars: enabledCals)
             await MainActor.run {

@@ -321,6 +321,7 @@ struct CalendarSettingsView: View {
         }
         
         saveWithStatus()
+        NotificationCenter.default.post(name: NSNotification.Name("SystemCalendarPreferencesChanged"), object: nil)
     }
 
     private func updateCalendarImportant(calendarID: String, isImportant: Bool) {
@@ -337,6 +338,7 @@ struct CalendarSettingsView: View {
         }
         
         saveWithStatus()
+        NotificationCenter.default.post(name: NSNotification.Name("SystemCalendarPreferencesChanged"), object: nil)
     }
 
     private func updateSubscriptionEnabled(id: PersistentIdentifier, isEnabled: Bool) {
@@ -345,6 +347,7 @@ struct CalendarSettingsView: View {
         }
         
         saveWithStatus()
+        NotificationCenter.default.post(name: NSNotification.Name("SubscriptionSourcesChanged"), object: nil)
     }
 
     private func updateSubscriptionImportant(id: PersistentIdentifier, isImportant: Bool) {
@@ -358,6 +361,7 @@ struct CalendarSettingsView: View {
         }
         
         saveWithStatus()
+        NotificationCenter.default.post(name: NSNotification.Name("SubscriptionSourcesChanged"), object: nil)
     }
 
     private func clearAllImportantSources() {
@@ -379,6 +383,7 @@ struct CalendarSettingsView: View {
         modelContext.insert(source)
         
         saveWithStatus()
+        NotificationCenter.default.post(name: NSNotification.Name("SubscriptionSourcesChanged"), object: nil)
         
         newSourceName = ""
         newSourceURL = ""
@@ -390,15 +395,13 @@ struct CalendarSettingsView: View {
         }
         
         saveWithStatus()
+        NotificationCenter.default.post(name: NSNotification.Name("SubscriptionSourcesChanged"), object: nil)
     }
 
     private func saveWithStatus() {
         do {
             try modelContext.save()
             saveStatus = "已保存 \(Date().formatted(date: .omitted, time: .shortened))"
-            
-            // 发送通知，告知主窗口日历配置已更改
-            NotificationCenter.default.post(name: NSNotification.Name("CalendarPreferencesChanged"), object: nil)
         } catch {
             saveStatus = "保存失败"
             print("[CalendarSettings] 保存失败: \(error)")

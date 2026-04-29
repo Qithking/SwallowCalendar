@@ -22,6 +22,17 @@ struct EventPanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // 监听日历偏好变化和订阅源变化，刷新事件列表
+            EmptyView()
+                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SystemCalendarPreferencesChanged"))) { _ in
+                    refreshTrigger.toggle()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SubscriptionSourcesChanged"))) { _ in
+                    refreshTrigger.toggle()
+                }
+                .onChange(of: appSettings.syncSystemReminders) { _, _ in
+                    refreshTrigger.toggle()
+                }
             // 添加待办输入框（固定顶部）
             TaskInputView(
                 calendarService: calendarService,

@@ -73,8 +73,22 @@ struct ContentView: View {
         .onChange(of: appSettings.accentColorHex) { _, newColor in
             accentColor = Color(hex: newColor)
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("CalendarPreferencesChanged"))) { _ in
-            // 日历配置变化时，触发同步
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SystemCalendarPreferencesChanged"))) { _ in
+            // 系统日历偏好变化时，触发系统日历同步
+            Task {
+                await syncCalendarEvents()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SubscriptionSourcesChanged"))) { _ in
+            // 订阅日历源变化时，重新预加载订阅数据
+            // 增加短暂延迟确保 @Query 属性已更新
+            Task {
+                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1秒
+                await icsService.preloadSubscriptions(sources: customSources)
+            }
+        }
+        .onChange(of: appSettings.syncSystemReminders) { _, _ in
+            // 系统提醒开关变化时，触发同步（开启时同步，关闭时清除缓存）
             Task {
                 await syncCalendarEvents()
             }
@@ -202,10 +216,13 @@ struct ContentView: View {
         // 同步系统提醒（如果开启）
         if appSettings.syncSystemReminders && calendarService.reminderAuthorizationStatus == .fullAccess {
             await calendarService.cacheService.syncReminders(from: calendarService)
+        } else {
+            // 关闭提醒同步时，清除已缓存的提醒数据
+            await calendarService.cacheService.clearRemindersCache()
         }
 
-        // 同步完成后刷新视图
-        refreshTrigger.toggle()
+        // 同步完成后刷新日历网格视图
+        calendarGridRefreshTrigger.toggle()
     }
     
     /// 手动同步日历事件
@@ -224,8 +241,11 @@ struct ContentView: View {
         }
 
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        await calendarService.cacheService.syncEvents(from: calendarService, calendars: enabledCals)
-        refreshTrigger.toggle()
+        // 只有开启的系统日历才同步
+        if !enabledCals.isEmpty {
+            await calendarService.cacheService.syncEvents(from: calendarService, calendars: enabledCals)
+        }
+        calendarGridRefreshTrigger.toggle()
         await MainActor.run {
             showAlert(title: "同步成功", message: "日历数据同步完成", style: .informational)
         }
