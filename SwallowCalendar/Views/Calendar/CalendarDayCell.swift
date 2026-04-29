@@ -6,6 +6,14 @@
 import SwiftUI
 import EventKit
 
+/// 日历单元格中事件条目的统一数据结构，确保标题、颜色、分类三者始终对齐
+struct CalendarEventItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let colorHex: String
+    let category: String  // "系统" | "订阅" | "用户"
+}
+
 struct CalendarDayCell: View {
     @Environment(AppSettings.self) private var appSettings
     let date: Date
@@ -13,63 +21,37 @@ struct CalendarDayCell: View {
     let isToday: Bool
     let isCurrentMonth: Bool
     let lunarText: String
-    let subscriptionTitles: [String]
-    let eventCount: Int
     let isHovered: Bool
-    var eventTitles: [String] = []
-    var eventColors: [String] = []
-    var eventCategories: [String] = []  // 事件分类，用于判断是否为用户分类
+    var eventItems: [CalendarEventItem] = []  // 事件条目数组，标题/颜色/分类一一对应
     var systemCalendarColor: Color = Color(hex: "#007AFF")
     var subscriptionCalendarColor: Color = Color(hex: "#FF9500")
     var isImportant: Bool = false
     
     /// 计算属性：判断是否有系统日历事件（非订阅、非用户）
     private var hasSystemEvents: Bool {
-        if !eventCategories.isEmpty {
-            return eventCategories.contains { $0 == "系统" }
-        }
-        return eventCount > 0
+        eventItems.contains { $0.category == "系统" }
     }
     
     /// 计算属性：判断是否有用户事件
     private var hasUserEvents: Bool {
-        eventCategories.contains { $0 == "用户" }
+        eventItems.contains { $0.category == "用户" }
     }
     
     /// 计算属性：判断是否有订阅事件
     private var hasSubscriptionEvents: Bool {
-        !subscriptionTitles.isEmpty
-    }
-    
-    /// 获取事件对应的颜色
-    private func eventColor(for index: Int) -> Color {
-        // 如果是用户分类，使用主题色
-        if index < eventCategories.count && eventCategories[index] == "用户" {
-            return accentColor
-        }
-        if index < eventColors.count {
-            let color = Color(hex: eventColors[index])
-            return color
-        }
-        return systemCalendarColor
+        eventItems.contains { $0.category == "订阅" }
     }
 
     // MARK: - Holiday/Work Marks
     
     /// 是否显示"休"标记（标题包含"假期"或"（休）"）
     private var showRestMark: Bool {
-        let allTitles = subscriptionTitles + eventTitles
-        return allTitles.contains { title in
-            title.contains("假期") || title.contains("（休）")
-        }
+        eventItems.contains { $0.title.contains("假期") || $0.title.contains("（休）") }
     }
     
     /// 是否显示"班"标记（标题包含"补班"或"（班）"）
     private var showWorkMark: Bool {
-        let allTitles = subscriptionTitles + eventTitles
-        return allTitles.contains { title in
-            title.contains("补班") || title.contains("（班）")
-        }
+        eventItems.contains { $0.title.contains("补班") || $0.title.contains("（班）") }
     }
 
     @State private var showPopover = false
@@ -170,7 +152,7 @@ struct CalendarDayCell: View {
     // MARK: - Popover
 
     private var hasPopoverContent: Bool {
-        !subscriptionTitles.isEmpty || !eventTitles.isEmpty
+        !eventItems.isEmpty
     }
 
     private var popoverContent: some View {
@@ -179,31 +161,15 @@ struct CalendarDayCell: View {
             Text(dateString)
                 .font(.system(size: 12, weight: .semibold))
 
-            // 订阅事件（去重，保持顺序）
-            let uniqueSubscriptions = subscriptionTitles.uniqued()
-            if !uniqueSubscriptions.isEmpty {
-                ForEach(Array(uniqueSubscriptions.enumerated()), id: \.offset) { _, name in
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(subscriptionCalendarColor)
-                            .frame(width: 6, height: 6)
-                        Text(name)
-                            .font(.system(size: 11))
-                    }
-                }
-            }
-
-            // 事件（按照分类显示颜色，与日期下方一致）
-            if !eventTitles.isEmpty {
-                ForEach(Array(eventTitles.enumerated()), id: \.offset) { index, title in
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(popoverEventColor(for: index))
-                            .frame(width: 6, height: 6)
-                        Text(title)
-                            .font(.system(size: 11))
-                            .lineLimit(2)
-                    }
+            // 所有事件（每个条目独立包含标题、颜色、分类，数据始终对齐）
+            ForEach(eventItems) { item in
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(colorForItem(item))
+                        .frame(width: 6, height: 6)
+                    Text(item.title)
+                        .font(.system(size: 11))
+                        .lineLimit(2)
                 }
             }
         }
@@ -211,21 +177,18 @@ struct CalendarDayCell: View {
         .frame(minWidth: 140)
     }
     
-    /// 获取 popover 中事件对应的颜色（按照分类显示，与日期下方一致）
-    private func popoverEventColor(for index: Int) -> Color {
-        // 根据事件分类返回对应颜色
-        if index < eventCategories.count {
-            let category = eventCategories[index]
-            if category == "用户" {
-                return accentColor  // 用户分类使用主题色
-            } else if category == "系统" {
-                return systemCalendarColor  // 系统日历使用设置的颜色
-            } else if category == "订阅" {
-                return subscriptionCalendarColor  // 订阅日历使用设置的颜色
-            }
+    /// 根据事件条目的分类返回对应颜色
+    private func colorForItem(_ item: CalendarEventItem) -> Color {
+        switch item.category {
+        case "用户":
+            return accentColor
+        case "系统":
+            return systemCalendarColor
+        case "订阅":
+            return subscriptionCalendarColor
+        default:
+            return systemCalendarColor
         }
-        // 默认返回系统日历颜色
-        return systemCalendarColor
     }
 
     private var dateString: String {
@@ -287,14 +250,5 @@ struct CalendarDayCell: View {
         } else {
             Color.clear
         }
-    }
-}
-
-// MARK: - Array Deduplication
-
-extension Array where Element: Equatable & Hashable {
-    func uniqued() -> [Element] {
-        var seen = Set<Element>()
-        return filter { seen.insert($0).inserted }
     }
 }

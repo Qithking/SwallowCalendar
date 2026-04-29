@@ -10,20 +10,16 @@ struct CalendarGridView: View {
     @Environment(AppSettings.self) private var appSettings
     @Binding var selectedDate: Date
     let calendarService: CalendarService
-    let icsService: ICSService
     let customSources: [CustomCalendarSource]
     let calendarPreferences: [CalendarPreference]
     @Binding var externalRefreshTrigger: Bool  // 外部刷新信号
 
     @State private var currentMonth = Date()
     @State private var hoveredDate: Date?
-    @State private var subscriptionsLoaded = false  // 用于触发订阅日历数据刷新
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
     @State private var importantDatesCache: Set<String> = []  // 缓存重要日期
-    @State private var subscriptionTitlesCache: [String: [String]] = [:]  // 缓存订阅事件标题
-    @State private var eventTitlesCache: [String: [String]] = [:]  // 缓存事件标题
-    @State private var eventColorsCache: [String: [String]] = [:]  // 缓存事件颜色
-    @State private var eventCategoriesCache: [String: [String]] = [:]  // 缓存事件分类
+    @State private var eventItemsCache: [String: [CalendarEventItem]] = [:]  // 缓存事件条目（标题/颜色/分类三者对齐）
+    @State private var isComputing = false  // 计算缓存重入保护
 
     private let calendar = Calendar.current
     private let weekDaySymbols: [String] = {
@@ -62,12 +58,9 @@ struct CalendarGridView: View {
         .padding(.vertical, 4)
         .tint(Color(hex: appSettings.accentColorHex))
         .task {
-            // 预加载订阅日历数据
-            await icsService.preloadSubscriptions(sources: customSources)
-            subscriptionsLoaded = true
-            // 预计算重要日期和事件缓存
+            // 预计算重要日期和事件缓存（订阅同步由 ContentView 统一管理，CalendarGridView 只负责读取）
             await computeAllCaches()
-            print("[CalendarGridView] 订阅日历数据预加载完成")
+            print("[CalendarGridView] 初始化缓存完成")
         }
         .onChange(of: calendarPreferences.map { "\($0.calendarID):\($0.isEnabled):\($0.isImportant)" }.joined()) { _, _ in
             // 日历偏好改变时刷新缓存
@@ -77,11 +70,9 @@ struct CalendarGridView: View {
             }
         }
         .onChange(of: customSources.map { "\($0.icsURL):\($0.isEnabled):\($0.isImportant)" }.joined()) { _, _ in
-            // 订阅源改变时，先重新加载订阅数据，再刷新缓存
-            print("[CalendarGridView] 检测到订阅源变化，重新加载订阅数据并刷新缓存")
+            // 订阅源变化时只需刷新缓存（订阅同步由 ContentView 统一管理）
+            print("[CalendarGridView] 检测到订阅源变化，刷新缓存")
             Task {
-                await icsService.preloadSubscriptions(sources: customSources)
-                subscriptionsLoaded = true
                 await computeAllCaches()
             }
         }
@@ -126,12 +117,7 @@ struct CalendarGridView: View {
     private var dateGrid: some View {
         let days = daysInMonth()
         let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
-        // 使用缓存的订阅事件数据，不再实时计算
-        let cachedSubscriptions = subscriptionTitlesCache
-        let cachedEventTitles = eventTitlesCache
-        let cachedEventColors = eventColorsCache
-        let cachedEventCategories = eventCategoriesCache
-        _ = subscriptionsLoaded
+        let cachedEventItems = eventItemsCache
 
         return LazyVGrid(columns: columns, spacing: 2) {
             ForEach(days, id: \.self) { date in
@@ -141,12 +127,8 @@ struct CalendarGridView: View {
                     isToday: calendar.isDateInToday(date),
                     isCurrentMonth: calendar.isDate(date, equalTo: currentMonth, toGranularity: .month),
                     lunarText: LunarCalendarHelper.lunarString(for: date),
-                    subscriptionTitles: cachedSubscriptions[formatDateKey(date)] ?? [],
-                    eventCount: eventCount(for: date),
                     isHovered: hoveredDate.flatMap { calendar.isDate(date, inSameDayAs: $0) } ?? false,
-                    eventTitles: cachedEventTitles[formatDateKey(date)] ?? [],
-                    eventColors: cachedEventColors[formatDateKey(date)] ?? [],
-                    eventCategories: cachedEventCategories[formatDateKey(date)] ?? [],
+                    eventItems: cachedEventItems[formatDateKey(date)] ?? [],
                     systemCalendarColor: systemCalendarColor(),
                     subscriptionCalendarColor: subscriptionCalendarColor(),
                     isImportant: isImportantDate(for: date)
@@ -209,42 +191,9 @@ struct CalendarGridView: View {
     }
 
     private func eventCount(for date: Date) -> Int {
-        // 无授权时也从缓存读取
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
         return events.count
-    }
-
-    /// 获取所有事件标题（包括订阅日历）- 用于弹出列表显示
-    private func allEventTitles(for date: Date) -> [String] {
-        // 无授权时也从缓存读取
-        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
-        return events.map { $0.title }
-    }
-
-    /// 获取所有事件颜色（包括订阅日历）- 用于弹出列表显示
-    private func allEventColors(for date: Date) -> [String] {
-        // 无授权时也从缓存读取
-        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
-        return events.map { $0.calendarColorHex }
-    }
-
-    /// 获取用户事件标题（不包含订阅日历）- 用于提醒列表
-    private func eventTitles(for date: Date) -> [String] {
-        // 无授权时也从缓存读取
-        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
-        return events.filter { !$0.isSubscription }.map { $0.title }
-    }
-
-    /// 获取用户事件颜色（不包含订阅日历）- 用于提醒列表
-    private func eventColors(for date: Date) -> [String] {
-        // 无授权时也从缓存读取
-        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
-        return events.filter { !$0.isSubscription }.map { $0.calendarColorHex }
     }
 
     /// 获取系统日历分类颜色
@@ -257,36 +206,34 @@ struct CalendarGridView: View {
         return Color(hex: appSettings.subscriptionCalendarColorHex)
     }
     
-    /// 预计算所有缓存（重要日期、订阅事件、事件标题、事件颜色、事件分类）
+    /// 预计算所有缓存（事件条目，标题/颜色/分类三者对齐）
     func computeAllCaches() async {
-        // 预计算订阅事件和事件标题/颜色的缓存
-        var subCache: [String: [String]] = [:]
-        var titlesCache: [String: [String]] = [:]
-        var colorsCache: [String: [String]] = [:]
-        var categoriesCache: [String: [String]] = [:]
+        guard !isComputing else { return }
+        isComputing = true
+        defer { isComputing = false }
+
+        var itemsCache: [String: [CalendarEventItem]] = [:]
         
         let days = daysInMonth()
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         
         for date in days {
             let dateKey = formatDateKey(date)
-
-            // 订阅事件（始终更新缓存，空时设为空数组）
-            let subTitles = icsService.subscriptionEventsSync(for: date, sources: customSources)
-            subCache[dateKey] = subTitles
-
-            // 系统日历事件（始终更新缓存，空时设为空数组）
+            // 统一从 CachedEvent 读取所有事件（包括系统、订阅、用户分类）
             let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
-            titlesCache[dateKey] = events.map { $0.title }
-            colorsCache[dateKey] = events.map { $0.calendarColorHex }
-            categoriesCache[dateKey] = events.map { $0.category.rawValue }
+            // 按 eventID 去重兜底：同一日期同一事件只保留一条
+            let deduped = Dictionary(grouping: events, by: { $0.id }).compactMapValues { $0.first }.map { $0.value }
+            itemsCache[dateKey] = deduped.map { event in
+                CalendarEventItem(
+                    title: event.title,
+                    colorHex: event.calendarColorHex,
+                    category: event.category.rawValue
+                )
+            }
         }
         
-        subscriptionTitlesCache = subCache
-        eventTitlesCache = titlesCache
-        eventColorsCache = colorsCache
-        eventCategoriesCache = categoriesCache
-        print("[CalendarGridView] 事件缓存已更新，订阅事件: \(subCache.count) 天，事件: \(titlesCache.count) 天")
+        eventItemsCache = itemsCache
+        print("[CalendarGridView] 事件缓存已更新，事件: \(itemsCache.count) 天")
         
         // 预计算重要日期
         await computeImportantDates()
@@ -309,23 +256,23 @@ struct CalendarGridView: View {
         
         // 预计算当前月份的重要日期
         let days = daysInMonth()
+        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         
         for date in days {
             let dateKey = formatDateKey(date)
+            let events = calendarService.fetchCachedEvents(for: date, calendars: enabledCals)
             
-            // 检查系统日历
+            // 检查系统日历重要日历
             if let calendarID = importantCalendarID {
-                let cal = calendarService.calendars.first { $0.calendarIdentifier == calendarID }
-                if let calendar = cal, hasEventsOnDate(date, in: [calendar]) {
+                if events.contains(where: { $0.category == .system && $0.calendarTitle == calendarService.calendars.first(where: { $0.calendarIdentifier == calendarID })?.title }) {
                     dates.insert(dateKey)
                     continue
                 }
             }
             
-            // 检查订阅日历
+            // 检查订阅日历重要源
             if let source = importantSource {
-                let titles = icsService.subscriptionEventsSync(for: date, sources: [source])
-                if !titles.isEmpty {
+                if events.contains(where: { $0.category == .subscription && $0.calendarTitle == source.name }) {
                     dates.insert(dateKey)
                 }
             }
@@ -346,17 +293,5 @@ struct CalendarGridView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: date)
-    }
-    
-    /// 检查指定日历在日期是否有事件
-    private func hasEventsOnDate(_ date: Date, in calendars: [EKCalendar]) -> Bool {
-        guard !calendars.isEmpty, calendarService.authorizationStatus == .fullAccess else { return false }
-        
-        let cal = Calendar.current
-        let startOfDay = cal.startOfDay(for: date)
-        let endOfDay = cal.date(byAdding: .day, value: 1, to: startOfDay)!
-        
-        let events = calendarService.fetchEvents(from: startOfDay, to: endOfDay, calendars: calendars)
-        return !events.isEmpty
     }
 }

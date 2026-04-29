@@ -19,7 +19,6 @@ struct ContentView: View {
 
     @State private var selectedDate = Date()
     @State private var calendarService = CalendarService.shared
-    @State private var icsService = ICSService.shared
     @State private var refreshTrigger = false  // 用于触发视图刷新
     @State private var isSyncing = false  // 同步状态
     @State private var shouldSyncOnAppear = false  // 是否在显示时同步
@@ -41,7 +40,6 @@ struct ContentView: View {
                 CalendarGridView(
                     selectedDate: $selectedDate,
                     calendarService: calendarService,
-                    icsService: icsService,
                     customSources: customSources,
                     calendarPreferences: calendarPreferences,
                     externalRefreshTrigger: $calendarGridRefreshTrigger
@@ -80,11 +78,12 @@ struct ContentView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SubscriptionSourcesChanged"))) { _ in
-            // 订阅日历源变化时，重新预加载订阅数据
-            // 增加短暂延迟确保 @Query 属性已更新
+            // 订阅日历源变化时，重新预加载订阅数据并刷新 UI
             Task {
-                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1秒
-                await icsService.preloadSubscriptions(sources: customSources)
+                try? await Task.sleep(nanoseconds: 100_000_000) // 等待 SwiftData @Query 更新
+                await calendarService.cacheService.syncSubscriptionEvents(sources: customSources)
+                // 同步完成后刷新日历网格视图
+                calendarGridRefreshTrigger.toggle()
             }
         }
         .onChange(of: appSettings.syncSystemReminders) { _, _ in
@@ -99,13 +98,16 @@ struct ContentView: View {
                 shouldSyncOnAppear = true
             }
         }
-        .task(id: shouldSyncOnAppear ? "sync" : "idle") {
+        .task {
             // 首次启动或点击菜单栏图标时同步所有数据
-            if !hasInitialized || shouldSyncOnAppear {
+            // 注意：先设置标志避免动态 task id 导致中途取消
+            let needSync = !hasInitialized || shouldSyncOnAppear
+            shouldSyncOnAppear = false
+
+            if needSync {
+                hasInitialized = true
                 await initializeServices()
                 await syncAllData()
-                hasInitialized = true
-                shouldSyncOnAppear = false
             }
         }
     }
@@ -235,10 +237,10 @@ struct ContentView: View {
         // 1. 同步系统日历和提醒（不刷新 UI，由下方统一刷新）
         await syncCalendarEvents(shouldRefreshUI: false)
 
-        // 2. 同步开启的订阅日历
+        // 2. 同步开启的订阅日历到 CachedEvent 缓存
         let enabledSources = customSources.filter { $0.isEnabled }
         if !enabledSources.isEmpty {
-            await icsService.preloadSubscriptions(sources: enabledSources)
+            await calendarService.cacheService.syncSubscriptionEvents(sources: enabledSources)
         }
 
         // 3. 同步完成后刷新日历网格视图（必须在主线程）

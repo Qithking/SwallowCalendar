@@ -85,8 +85,8 @@ final class CalendarService {
         let enabledIDs = Set(preferences.filter(\.isEnabled).map(\.calendarID))
 
         if preferences.isEmpty {
-            // 新用户，还没有任何偏好配置，返回所有系统日历
-            return calendars.filter { $0.type != .subscription }
+            // 新用户，还没有任何偏好配置，返回所有系统日历（包括系统订阅日历，统一归为系统分类）
+            return calendars
         }
 
         if enabledIDs.isEmpty {
@@ -1043,7 +1043,8 @@ final class CalendarService {
     }
 
     private func mapToCalendarEvent(_ ekEvent: EKEvent) -> CalendarEvent {
-        let category: EventCategory = ekEvent.calendar.type == .subscription ? .subscription : .system
+        // 系统日历同步的事件统一归为系统分类（不管日历类型是 calDAV 还是 subscription）
+        let category: EventCategory = .system
         return CalendarEvent(
             id: ekEvent.eventIdentifier,
             title: ekEvent.title ?? "",

@@ -127,6 +127,9 @@ final class EventCacheService {
     /// 是否正在同步
     var isSyncing = false
 
+    /// 是否正在同步订阅日历
+    var isSubscriptionSyncing = false
+
     /// 最后同步时间（持久化到 UserDefaults）
     var lastSyncTime: Date? {
         didSet {
@@ -182,15 +185,16 @@ final class EventCacheService {
                     // 根据参数决定是否包含无日期的提醒
                     return includeNoDateReminders
                 }
-                return start < endDate && end >= startDate
+                return start < endDate && end > startDate
             }
             
-            // 如果指定了日历且非空，进一步过滤（但保留用户分类的事件，包括系统提醒）
+            // 如果指定了日历且非空，进一步过滤（但保留用户分类和订阅分类的事件）
             if let calendars = calendars, !calendars.isEmpty {
                 let calendarIDs = Set(calendars.map { $0.calendarIdentifier })
                 events = events.filter { event in
                     // 用户分类的事件（包括系统提醒）始终保留
-                    if event.category == .user { return true }
+                    // 订阅分类的事件始终保留（由 ICS 订阅源管理，不受系统日历过滤影响）
+                    if event.category == .user || event.category == .subscription { return true }
                     // 其他事件按日历ID过滤
                     return calendarIDs.contains(event.calendarID)
                 }
@@ -380,7 +384,90 @@ final class EventCacheService {
         }
     }
 
-    /// 清除所有系统日历的缓存（不含订阅日历、用户事件和提醒）
+    /// 同步 ICS 订阅日历事件到本地缓存
+    /// - Parameter sources: 启用的 ICS 订阅源列表
+    @MainActor
+    func syncSubscriptionEvents(sources: [CustomCalendarSource]) async {
+        guard let context = modelContext else { return }
+        guard !isSubscriptionSyncing else { return }
+        isSubscriptionSyncing = true
+        defer { isSubscriptionSyncing = false }
+
+        // 删除所有现有的订阅分类缓存
+        let descriptor = FetchDescriptor<CachedEvent>()
+        if let existing = try? context.fetch(descriptor) {
+            for event in existing where event.category == .subscription {
+                context.delete(event)
+            }
+        }
+
+        // 从每个启用的 ICS 源获取事件并写入缓存
+        let icsService = ICSService.shared
+        for source in sources where source.isEnabled {
+            let events: [ICSEvent]
+            if let cached = icsService.loadCached(url: source.icsURL) {
+                events = cached
+            } else {
+                do {
+                    events = try await icsService.fetchAndParse(url: source.icsURL)
+                } catch {
+                    continue
+                }
+            }
+
+            // 对同源事件按 uid 去重：相同 uid 只保留一条
+            var eventsByUID: [String: ICSEvent] = [:]
+            for icsEvent in events {
+                let uid = icsEvent.uid.isEmpty
+                    ? "\(icsEvent.summary)_\(icsEvent.startDate?.timeIntervalSince1970 ?? 0)"
+                    : icsEvent.uid
+                if eventsByUID[uid] == nil {
+                    eventsByUID[uid] = icsEvent
+                }
+            }
+
+            for (uid, icsEvent) in eventsByUID {
+                guard let startDate = icsEvent.startDate else { continue }
+                let endDate = icsEvent.endDate ?? startDate
+
+                // uid 为空时用 "summary_startTimestamp" 生成稳定 eventID
+                let stableUID = icsEvent.uid.isEmpty
+                    ? "\(icsEvent.summary)_\(startDate.timeIntervalSince1970)"
+                    : icsEvent.uid
+                let eventID = "ics-\(stableUID)"
+
+                // exists-before-insert 保护：并发 sync 时，检查该 eventID 是否已存在于数据库（删除已在上面完成，此处兜底）
+                let existingDescriptor = FetchDescriptor<CachedEvent>(
+                    predicate: #Predicate { $0.eventID == eventID }
+                )
+                if let existing = try? context.fetch(existingDescriptor), !existing.isEmpty {
+                    continue
+                }
+
+                let cached = CachedEvent(
+                    eventID: eventID,
+                    title: icsEvent.summary,
+                    startDate: startDate,
+                    endDate: endDate,
+                    isAllDay: true,
+                    calendarID: source.icsURL,
+                    calendarTitle: source.name,
+                    calendarColorHex: "#FF9500",
+                    category: .subscription
+                )
+                context.insert(cached)
+            }
+        }
+
+        do {
+            try context.save()
+            lastSyncTime = Date()
+        } catch {
+            // 保存失败
+        }
+    }
+
+    /// 清除所有系统日历的缓存（不含订阅日历事件、用户事件和提醒）
     /// 用于所有系统日历都关闭时，清除对应的缓存数据
     @MainActor
     func clearSystemCalendarCache() {
@@ -388,7 +475,7 @@ final class EventCacheService {
 
         let descriptor = FetchDescriptor<CachedEvent>()
         if let events = try? context.fetch(descriptor) {
-            // 只删除系统日历的缓存，保留订阅日历、用户事件和提醒
+            // 只删除系统日历的缓存，保留订阅日历事件、用户事件和提醒
             let eventsToDelete = events.filter { $0.category == .system }
             for event in eventsToDelete {
                 context.delete(event)
