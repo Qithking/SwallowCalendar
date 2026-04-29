@@ -100,10 +100,10 @@ struct ContentView: View {
             }
         }
         .task(id: shouldSyncOnAppear ? "sync" : "idle") {
-            // 首次启动或点击菜单栏图标时同步
+            // 首次启动或点击菜单栏图标时同步所有数据
             if !hasInitialized || shouldSyncOnAppear {
                 await initializeServices()
-                await syncCalendarEvents()
+                await syncAllData()
                 hasInitialized = true
                 shouldSyncOnAppear = false
             }
@@ -182,9 +182,6 @@ struct ContentView: View {
             modelContext.insert(defaultSource)
             try? modelContext.save()
         }
-
-        // 预加载订阅日历数据
-        await icsService.preloadSubscriptions(sources: customSources)
     }
 
     /// 弹窗引导用户去系统设置开启提醒权限
@@ -202,8 +199,8 @@ struct ContentView: View {
         }
     }
     
-    /// 后台同步日历事件到本地缓存
-    private func syncCalendarEvents() async {
+    /// 后台同步日历事件和提醒到本地缓存（不含订阅日历）
+    private func syncCalendarEvents(shouldRefreshUI: Bool = true) async {
         guard calendarService.authorizationStatus == .fullAccess else { return }
 
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
@@ -222,10 +219,30 @@ struct ContentView: View {
         }
 
         // 同步完成后刷新日历网格视图
-        calendarGridRefreshTrigger.toggle()
+        if shouldRefreshUI {
+            calendarGridRefreshTrigger.toggle()
+        }
+    }
+
+    /// 同步所有数据（开启的系统日历、订阅日历、系统提醒）
+    /// 主要用于应用启动及打开主窗口时同步数据
+    private func syncAllData() async {
+        // 1. 同步系统日历和提醒（不刷新 UI，由下方统一刷新）
+        await syncCalendarEvents(shouldRefreshUI: false)
+
+        // 2. 同步开启的订阅日历
+        let enabledSources = customSources.filter { $0.isEnabled }
+        if !enabledSources.isEmpty {
+            await icsService.preloadSubscriptions(sources: enabledSources)
+        }
+
+        // 3. 同步完成后刷新日历网格视图（必须在主线程）
+        await MainActor.run {
+            calendarGridRefreshTrigger.toggle()
+        }
     }
     
-    /// 手动同步日历事件
+    /// 手动同步所有数据
     private func manualSyncCalendarEvents() async {
         guard !isSyncing else { return }
 
@@ -240,12 +257,9 @@ struct ContentView: View {
             return
         }
 
-        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-        // 只有开启的系统日历才同步
-        if !enabledCals.isEmpty {
-            await calendarService.cacheService.syncEvents(from: calendarService, calendars: enabledCals)
-        }
-        calendarGridRefreshTrigger.toggle()
+        // 同步所有数据（开启的系统日历、订阅日历、系统提醒）
+        await syncAllData()
+
         await MainActor.run {
             showAlert(title: "同步成功", message: "日历数据同步完成", style: .informational)
         }
