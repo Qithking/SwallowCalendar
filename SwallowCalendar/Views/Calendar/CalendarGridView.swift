@@ -9,6 +9,17 @@ import AppKit
 
 // MARK: - NSPopover View Representable
 
+/// 独立的 Coordinator 类，不嵌套在泛型结构体内，
+/// 避免 Swift 6.2.4 编译器在 -O -whole-module-optimization 下
+/// 对泛型嵌套类的 deinit 进行 EarlyPerfInliner 优化时崩溃。
+final class PopoverCoordinator: NSObject, NSPopoverDelegate {
+    weak var popover: NSPopover?
+
+    func popoverDidClose(_ notification: Notification) {
+        popover = nil
+    }
+}
+
 /// 使用 NSPopover（独立窗口）不被父视图裁剪，
 /// 设置 .behavior = .transient 确保点击 anchor 时关闭 popover 并转发点击事件。
 /// placement: 放置在单个 cell 的 background 上，show(relativeTo:of:) 参数值为 cell 的 bounds，
@@ -18,17 +29,8 @@ struct CellPopoverPresenter<Content: View>: NSViewRepresentable {
     let positioningRect: CGRect
     let content: Content
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    final class Coordinator: NSObject, NSPopoverDelegate {
-        // weak 避免与 NSPopover.delegate 形成循环引用
-        weak var popover: NSPopover?
-
-        func popoverDidClose(_ notification: Notification) {
-            popover = nil
-        }
+    func makeCoordinator() -> PopoverCoordinator {
+        PopoverCoordinator()
     }
 
     func makeNSView(context: Context) -> NSView {
