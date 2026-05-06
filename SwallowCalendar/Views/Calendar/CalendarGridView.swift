@@ -5,6 +5,52 @@
 
 import SwiftUI
 import EventKit
+import AppKit
+
+// MARK: - NSPopover View Representable
+
+/// 使用 NSPopover（独立窗口）不被父视图裁剪，
+/// 设置 .behavior = .transient 确保点击 anchor 时关闭 popover 并转发点击事件。
+/// placement: 放置在单个 cell 的 background 上，show(relativeTo:of:) 参数值为 nsView.bounds
+/// 即可在 cell 自身坐标系中定位，preferredEdge: .minY 匹配 SwiftUI .popover(arrowEdge: .bottom)。
+struct CellPopoverPresenter<Content: View>: NSViewRepresentable {
+    let isPresented: Bool
+    let positioningRect: CGRect
+    let content: Content
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    final class Coordinator: NSObject, NSPopoverDelegate {
+        var popover: NSPopover?
+
+        func popoverDidClose(_ notification: Notification) {
+            popover = nil
+        }
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if isPresented {
+            guard context.coordinator.popover == nil || !context.coordinator.popover!.isShown else { return }
+            let popover = NSPopover()
+            popover.behavior = .transient
+            popover.delegate = context.coordinator
+            popover.contentViewController = NSHostingController(rootView: content)
+            popover.show(relativeTo: positioningRect, of: nsView, preferredEdge: .maxY)
+            context.coordinator.popover = popover
+        } else {
+            context.coordinator.popover?.close()
+            context.coordinator.popover = nil
+        }
+    }
+}
 
 struct CalendarGridView: View {
     @Environment(AppSettings.self) private var appSettings
@@ -16,7 +62,6 @@ struct CalendarGridView: View {
 
     @State private var currentMonth = Date()
     @State private var hoveredDate: Date?
-    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
     @State private var importantDatesCache: Set<String> = []  // 缓存重要日期
     @State private var eventItemsCache: [String: [CalendarEventItem]] = [:]  // 缓存事件条目（标题/颜色/分类三者对齐）
     @State private var isComputing = false  // 计算缓存重入保护
@@ -118,20 +163,36 @@ struct CalendarGridView: View {
         let days = daysInMonth()
         let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
         let cachedEventItems = eventItemsCache
+        let dateKeyMap = days.reduce(into: [Date: String]()) { dict, date in
+            dict[date] = formatDateKey(date)
+        }
 
         return LazyVGrid(columns: columns, spacing: 2) {
             ForEach(days, id: \.self) { date in
+                let dateKey = dateKeyMap[date]!
+                let items = cachedEventItems[dateKey] ?? []
+                let isHovering = hoveredDate.flatMap { calendar.isDate(date, inSameDayAs: $0) } ?? false
+
                 CalendarDayCell(
                     date: date,
                     isSelected: calendar.isDate(date, inSameDayAs: selectedDate),
                     isToday: calendar.isDateInToday(date),
                     isCurrentMonth: calendar.isDate(date, equalTo: currentMonth, toGranularity: .month),
                     lunarText: LunarCalendarHelper.lunarString(for: date),
-                    isHovered: hoveredDate.flatMap { calendar.isDate(date, inSameDayAs: $0) } ?? false,
-                    eventItems: cachedEventItems[formatDateKey(date)] ?? [],
+                    isHovered: isHovering,
+                    eventItems: items,
                     systemCalendarColor: systemCalendarColor(),
                     subscriptionCalendarColor: subscriptionCalendarColor(),
                     isImportant: isImportantDate(for: date)
+                )
+                .background(
+                    GeometryReader { geo in
+                        CellPopoverPresenter(
+                            isPresented: isHovering && !items.isEmpty,
+                            positioningRect: CGRect(origin: .zero, size: geo.size),
+                            content: popoverContent(for: date, items: items)
+                        )
+                    }
                 )
                 .onTapGesture {
                     withAnimation(.easeInOut(duration: 0.15)) {
@@ -143,6 +204,43 @@ struct CalendarGridView: View {
                 }
             }
         }
+    }
+
+    /// 构建指定日期的事件弹出层内容
+    private func popoverContent(for date: Date, items: [CalendarEventItem]) -> some View {
+        let accents = Color(hex: appSettings.accentColorHex)
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(popoverDateString(for: date))
+                .font(.system(size: 12, weight: .semibold))
+            ForEach(items) { item in
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(popoverItemColor(for: item, accent: accents))
+                        .frame(width: 6, height: 6)
+                    Text(item.title)
+                        .font(.system(size: 11))
+                        .lineLimit(2)
+                }
+            }
+        }
+        .padding(10)
+        .frame(minWidth: 140)
+    }
+
+    private func popoverItemColor(for item: CalendarEventItem, accent: Color) -> Color {
+        switch item.category {
+        case "用户": return accent
+        case "系统": return systemCalendarColor()
+        case "订阅": return subscriptionCalendarColor()
+        default: return systemCalendarColor()
+        }
+    }
+
+    private func popoverDateString(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日"
+        return formatter.string(from: date)
     }
 
     // MARK: - Helpers
