@@ -13,6 +13,7 @@ struct EventItemRow: View {
     let onUncomplete: ((CalendarEvent) -> Void)?
     var isOverdue: Bool = false
 
+    @Environment(AppSettings.self) private var appSettings
     @State private var isHovered = false
 
     init(
@@ -84,14 +85,21 @@ struct EventItemRow: View {
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(.red)
                         } else {
-                            Text(event.countdownText)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(countdownColor)
+                            countdownBorderedView
                         }
                     } else {
+                        // 全天事件：显示日期 + 倒计时
                         Text(formattedDate)
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
+
+                        if isOverdue {
+                            Text("已过期")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.red)
+                        } else {
+                            countdownBorderedView
+                        }
                     }
 
                     // 系统提醒标签
@@ -160,6 +168,19 @@ struct EventItemRow: View {
         if hours < 1 { return .red }
         if hours < 24 { return .orange }
         return .secondary
+    }
+
+    /// 带主题色背景的倒计时标签
+    private var countdownBorderedView: some View {
+        Text(event.countdownText)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(hex: appSettings.accentColorHex))
+            )
     }
 
     private var formattedDate: String {
