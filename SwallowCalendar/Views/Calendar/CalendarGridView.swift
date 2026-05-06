@@ -11,8 +11,8 @@ import AppKit
 
 /// 使用 NSPopover（独立窗口）不被父视图裁剪，
 /// 设置 .behavior = .transient 确保点击 anchor 时关闭 popover 并转发点击事件。
-/// placement: 放置在单个 cell 的 background 上，show(relativeTo:of:) 参数值为 nsView.bounds
-/// 即可在 cell 自身坐标系中定位，preferredEdge: .minY 匹配 SwiftUI .popover(arrowEdge: .bottom)。
+/// placement: 放置在单个 cell 的 background 上，show(relativeTo:of:) 参数值为 cell 的 bounds，
+/// positioningRect 来自 GeometryReader 的精确尺寸，箭头指向 rect 上边缘中心。
 struct CellPopoverPresenter<Content: View>: NSViewRepresentable {
     let isPresented: Bool
     let positioningRect: CGRect
@@ -23,7 +23,8 @@ struct CellPopoverPresenter<Content: View>: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSPopoverDelegate {
-        var popover: NSPopover?
+        // weak 避免与 NSPopover.delegate 形成循环引用
+        weak var popover: NSPopover?
 
         func popoverDidClose(_ notification: Notification) {
             popover = nil
@@ -38,7 +39,7 @@ struct CellPopoverPresenter<Content: View>: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         if isPresented {
-            guard context.coordinator.popover == nil || !context.coordinator.popover!.isShown else { return }
+            if let popover = context.coordinator.popover, popover.isShown { return }
             let popover = NSPopover()
             popover.behavior = .transient
             popover.delegate = context.coordinator
