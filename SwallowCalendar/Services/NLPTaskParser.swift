@@ -351,15 +351,15 @@ struct NLPTaskParser {
     /// 注意：农历Calendar使用佛历纪元，year不是公历年份
     /// 策略：从今年开始，逐天搜索，找到第一个匹配的农历日期
     private static func parseLunarDate(_ input: String, now: Date) -> (date: Date, matched: String, isLunar: Bool)? {
-        // 匹配"农历X月X日"或"阴历X月X日"格式
-        let lunarPattern = "(?:农历|阴历)(\\d+)月(\\d+)[日号]?"
+        // 匹配"农历X月X日"或"阴历X月X日"格式（支持数字前后有空格，如"农历 7 月 8 日"）
+        let lunarPattern = "(?:农历|阴历)\\s*(\\d+)\\s*月\\s*(\\d+)\\s*[日号]?"
         guard let match = input.range(of: lunarPattern, options: .regularExpression) else {
             return nil
         }
         
         let matched = String(input[match])
         // 提取月份和日期数字
-        let lunarRegex = try! NSRegularExpression(pattern: "(?:农历|阴历)(\\d+)月(\\d+)[日号]?")
+        let lunarRegex = try! NSRegularExpression(pattern: "(?:农历|阴历)\\s*(\\d+)\\s*月\\s*(\\d+)\\s*[日号]?")
         guard let fullMatch = lunarRegex.firstMatch(in: input, range: NSRange(match, in: input)),
               fullMatch.numberOfRanges >= 3,
               let monthRange = Range(fullMatch.range(at: 1), in: input),
@@ -548,8 +548,8 @@ struct NLPTaskParser {
             result = result.replacingOccurrences(of: kw, with: "")
         }
 
-        // 移除农历标记（包括农历日期）
-        if let lunarRange = result.range(of: "(?:农历|阴历)(?:\\d+)月(?:\\d+)[日号]?", options: .regularExpression) {
+        // 移除农历标记（包括农历日期，支持可选空格如"农历 7 月 8 日"）
+        if let lunarRange = result.range(of: "(?:农历|阴历)\\s*(?:\\d+)\\s*月\\s*(?:\\d+)\\s*[日号]?", options: .regularExpression) {
             result.removeSubrange(lunarRange)
         }
         result = result.replacingOccurrences(of: "农历", with: "")
