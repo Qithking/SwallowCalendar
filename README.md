@@ -79,6 +79,7 @@
 - **自定义主题色** - 随心所欲切换应用配色方案
 - **菜单栏图标样式** - 多种图标风格可选（实心日期/描边日期/日历图标）
 - **毛玻璃背景** - 系统级半透明效果
+- **窗口缩放** - 支持自由调整窗口大小，自动保存窗口尺寸
 
 ---
 
@@ -139,17 +140,25 @@ SwallowCalendar/
 ├── Models/              # 数据模型
 │   ├── CalendarEvent.swift
 │   ├── CachedEvent.swift
-│   └── CalendarPreference.swift
+│   ├── CalendarPreference.swift
+│   └── CustomCalendarSource.swift
 ├── Services/            # 核心服务
-│   ├── CalendarService.swift      # 日历服务
-│   ├── ICSService.swift           # ICS 解析服务
-│   ├── NLPTaskParser.swift        # 自然语言解析
+│   ├── AppDelegate.swift          # 应用代理（状态栏管理）
 │   ├── AppSettings.swift          # 设置管理
+│   ├── CalendarService.swift      # 日历服务
+│   ├── EditEventWindowManager.swift  # 事件编辑窗口管理
+│   ├── FloatingPanel.swift        # 可缩放浮动面板
+│   ├── ICSService.swift           # ICS 解析服务
+│   ├── IconStyle.swift            # 图标样式
+│   ├── NLPTaskParser.swift        # 自然语言解析
+│   ├── SettingsWindowManager.swift # 设置窗口管理
+│   ├── StatusBarIconManager.swift # 状态栏图标管理
 │   └── UpdateChecker.swift        # 更新检查
 ├── Views/               # 界面视图
 │   ├── Calendar/        # 日历相关视图
 │   ├── Events/          # 事件相关视图
-│   └── Settings/        # 设置页面
+│   ├── Settings/        # 设置页面
+│   └── VisualEffectView.swift     # 毛玻璃效果视图
 └── Utils/               # 工具函数
     └── LunarCalendarHelper.swift
 ```
