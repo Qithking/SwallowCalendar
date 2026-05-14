@@ -211,6 +211,7 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         super.close()
         isPresented = false
         statusBarButton?.isHighlighted = false
+        NotificationCenter.default.post(name: Notification.Name("AppDidEnterBackground"), object: nil)
         onClose()
     }
     

@@ -138,11 +138,15 @@ struct CalendarGridView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("CalendarCacheCleared"))) { _ in
-            // 清除事件缓存后刷新
             print("[CalendarGridView] 检测到缓存清除通知，刷新所有缓存")
             Task {
                 await computeAllCaches()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("AppDidEnterBackground"))) { _ in
+            print("[CalendarGridView] App 进入后台，清空 UI 缓存")
+            eventItemsCache = [:]
+            importantDatesCache = []
         }
     }
 
