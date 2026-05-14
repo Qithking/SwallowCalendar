@@ -21,8 +21,9 @@ final class StatusBarIconManager {
     private var refreshTimer: Timer?
 
     private init() {
-        let iconColor = NSColor(hexString: AppSettings.shared.accentColorHex) ?? .systemBlue
-        currentIcon = Self.generateIcon(style: .solidDate, customFormat: "d", iconColor: iconColor)
+        let settings = AppSettings.shared
+        let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
+        currentIcon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor)
     }
 
     /// 绑定 statusItem 按钮（由 AppDelegate 在创建 statusItem 后调用）
@@ -34,7 +35,7 @@ final class StatusBarIconManager {
     func updateIcon() {
         let settings = AppSettings.shared
         let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
-        let icon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, iconColor: iconColor)
+        let icon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor)
         currentIcon = icon
     }
 
@@ -45,7 +46,7 @@ final class StatusBarIconManager {
         }
     }
 
-    private static func generateIcon(style: IconStyle, customFormat: String, iconColor: NSColor = .systemBlue) -> NSImage {
+    private static func generateIcon(style: IconStyle, customFormat: String, customFormatStyle: AppSettings.CustomFormatStyle = .none, iconColor: NSColor = .systemBlue) -> NSImage {
         switch style {
         case .solidDate:
             return renderTextIcon(text: dayString(), filled: true, iconColor: iconColor)
@@ -54,7 +55,7 @@ final class StatusBarIconManager {
         case .calendarIcon:
             return renderCalendarIcon()
         case .customFormat:
-            return renderCustomFormatIcon(format: customFormat)
+            return renderCustomFormatIcon(format: customFormat, style: customFormatStyle, iconColor: iconColor)
         }
     }
 
@@ -137,28 +138,72 @@ final class StatusBarIconManager {
         return renderTextIcon(text: dayString(), filled: true)
     }
 
-    private static func renderCustomFormatIcon(format: String) -> NSImage {
+    private static func renderCustomFormatIcon(format: String, style: AppSettings.CustomFormatStyle, iconColor: NSColor) -> NSImage {
         let formatter = DateFormatter()
         formatter.dateFormat = format
         let text = formatter.string(from: Date())
-        let fontSize: CGFloat = text.count > 3 ? 10 : 14
-        let size = NSSize(width: max(22, CGFloat(text.count) * 10 + 4), height: 22)
+        
+        // 使用系统菜单栏标准字体（13pt, regular）
+        let fontSize: CGFloat = 13
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
+        
+        // 计算文本实际宽度
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let textSize = (text as NSString).size(withAttributes: attributes)
+        
+        // 宽度自适应：文本宽度 + 8pt 边距（左右各 4pt），最小 22pt
+        let width = max(22, textSize.width + 8)
+        let height: CGFloat = 22
+        
+        let size = NSSize(width: width, height: height)
         let image = NSImage(size: size)
         image.lockFocus()
+
+        // 根据样式绘制背景
+        let rect = NSRect(origin: .zero, size: size)
+        switch style {
+        case .none:
+            // 无背景，直接绘制文字
+            break
+        case .solid:
+            // 实心背景：使用主题色填充圆角矩形
+            let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
+            iconColor.setFill()
+            path.fill()
+        case .stroke:
+            // 描边背景：使用主题色绘制圆角矩形边框
+            let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
+            path.lineWidth = 1.5
+            iconColor.setStroke()
+            path.stroke()
+        }
 
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .center
 
+        // 根据背景样式调整文字颜色
+        let textColor: NSColor
+        switch style {
+        case .none:
+            textColor = NSColor.labelColor
+        case .solid:
+            textColor = .white  // 实心背景用白色文字
+        case .stroke:
+            textColor = iconColor  // 描边样式用主题色文字
+        }
+
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: fontSize, weight: .medium),
-            .foregroundColor: NSColor.labelColor,
+            .font: font,
+            .foregroundColor: textColor,
             .paragraphStyle: paragraphStyle,
         ]
 
-        let textRect = NSRect(x: 0, y: 2, width: size.width, height: size.height - 2)
+        // 文字垂直居中
+        let textY = (height - textSize.height) / 2
+        let textRect = NSRect(x: 0, y: textY, width: width, height: textSize.height)
         text.draw(in: textRect, withAttributes: attrs)
         image.unlockFocus()
-        image.isTemplate = true
+        image.isTemplate = false  // 不再使用模板，保留颜色信息
         return image
     }
 }

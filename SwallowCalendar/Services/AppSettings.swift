@@ -33,6 +33,14 @@ final class AppSettings {
         }
     }
 
+    /// 自定义格式样式
+    var customFormatStyle: CustomFormatStyle {
+        didSet {
+            UserDefaults.standard.set(customFormatStyle.rawValue, forKey: "customFormatStyle")
+            StatusBarIconManager.shared.updateIcon()
+        }
+    }
+
     var themeMode: ThemeMode {
         didSet {
             UserDefaults.standard.set(themeMode.rawValue, forKey: "themeModeRaw")
@@ -134,6 +142,21 @@ final class AppSettings {
         }
     }
 
+    /// 自定义格式样式
+    enum CustomFormatStyle: String, CaseIterable, Codable {
+        case none = "none"
+        case solid = "solid"
+        case stroke = "stroke"
+
+        var displayName: String {
+            switch self {
+            case .none: return "无"
+            case .solid: return "实心"
+            case .stroke: return "描边"
+            }
+        }
+    }
+
     /// 事项排序模式
     enum SortMode: String, CaseIterable {
         case `default` = "默认排序"
@@ -190,6 +213,7 @@ final class AppSettings {
         self.launchAtLogin = UserDefaults.standard.bool(forKey: "launchAtLogin")
         self.iconStyle = IconStyle(rawValue: UserDefaults.standard.string(forKey: "iconStyleRaw") ?? "") ?? .solidDate
         self.customIconFormat = UserDefaults.standard.string(forKey: "customIconFormat") ?? "d"
+        self.customFormatStyle = CustomFormatStyle(rawValue: UserDefaults.standard.string(forKey: "customFormatStyle") ?? "") ?? .none
         self.themeMode = ThemeMode(rawValue: UserDefaults.standard.string(forKey: "themeModeRaw") ?? "") ?? .system
         self.weekdayStart = UserDefaults.standard.object(forKey: "weekdayStart") as? Int ?? 2
         self.showLunarCalendar = UserDefaults.standard.object(forKey: "showLunarCalendar") as? Bool ?? true

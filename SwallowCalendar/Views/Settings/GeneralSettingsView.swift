@@ -38,6 +38,14 @@ struct GeneralSettingsView: View {
                     Text("预览: \(customFormatPreview)")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
+                    
+                    // 自定义格式样式选项
+                    Picker("自定义图标样式", selection: $settings.customFormatStyle) {
+                        ForEach(AppSettings.CustomFormatStyle.allCases, id: \.self) { style in
+                            Text(style.displayName).tag(style)
+                        }
+                    }
+                    .disabled(appSettings.customIconFormat.isEmpty)
                 }
 
                 // 主题
