@@ -247,6 +247,9 @@ struct ContentView: View {
         await MainActor.run {
             calendarGridRefreshTrigger.toggle()
         }
+        
+        // 4. 数据同步完成后检查过期事项并弹出提醒
+        await ReminderAlertService.shared.checkExpiredEvents()
     }
     
     /// 手动同步所有数据

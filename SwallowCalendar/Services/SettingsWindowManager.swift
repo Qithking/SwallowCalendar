@@ -55,9 +55,12 @@ final class SettingsWindowManager {
         
         let settings = AppSettings.shared
         
+        // 使用共享的 ModelContainer，确保数据一致性
+        let container = modelContainer ?? AppDelegate.sharedModelContainer ?? createFallbackModelContainer()
+        
         let settingsView = SettingsView()
             .environment(settings)
-            .modelContainer(createModelContainer())
+            .modelContainer(container)
             .tint(Color(hex: settings.accentColorHex))
         
         let hostingView = NSHostingView(rootView: settingsView.frame(minWidth: 450, minHeight: 400))
@@ -101,7 +104,7 @@ final class SettingsWindowManager {
         settingsWindow = nil
     }
     
-    private func createModelContainer() -> ModelContainer {
+    private func createFallbackModelContainer() -> ModelContainer {
         let schema = Schema([CalendarPreference.self, CustomCalendarSource.self, CachedEvent.self])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         

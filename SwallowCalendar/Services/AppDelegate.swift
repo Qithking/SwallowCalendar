@@ -11,6 +11,9 @@ import SwiftData
 class AppDelegate: NSObject, NSApplicationDelegate {
     var panel: FloatingPanel<AnyView>?
     
+    // 全局共享的 ModelContainer
+    static var sharedModelContainer: ModelContainer!
+    
     // 状态栏图标
     private lazy var statusItem: NSStatusItem = {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -27,28 +30,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 设置状态栏图标
         updateStatusItemIcon()
         
-        // 配置事件缓存服务
-        let container = Self.createModelContainer()
-        EventCacheService.shared.configure(with: container)
+        // 创建全局共享的 ModelContainer
+        Self.sharedModelContainer = Self.createModelContainer()
+        
+        // 配置事件缓存服务（使用共享容器）
+        EventCacheService.shared.configure(with: Self.sharedModelContainer)
+        
+        // 配置设置窗口管理器（使用共享容器）
+        SettingsWindowManager.shared.modelContainer = Self.sharedModelContainer
         
         // 检查更新
         UpdateChecker.shared.checkOnStartup()
         UpdateChecker.shared.startPeriodicCheck()
         
-        // 创建 FloatingPanel
+        // 启动待办事项到期提醒服务
+        ReminderAlertService.shared.configure(with: Self.sharedModelContainer)
+        ReminderAlertService.shared.startMonitoring()
+        
+        // 创建 FloatingPanel（使用共享容器）
         panel = FloatingPanel(
             contentRect: NSRect(origin: .zero, size: CGSize(width: 340, height: 600)),
             identifier: "SwallowCalendarMainWindow",
             statusBarButton: statusItem.button,
             onClose: {}
         ) {
-            let container = Self.createModelContainer()
             let settings = AppSettings.shared
             
             AnyView(
                 ContentView()
                     .environment(settings)
-                    .modelContainer(container)
+                    .modelContainer(Self.sharedModelContainer)
             )
         }
     }
