@@ -226,8 +226,12 @@ final class ReminderAlertService {
         
         do {
             if let event = try context.fetch(descriptor).first {
-                event.isCompleted = true
-                try context.save()
+                // 使用 CalendarService 的双向同步方法（同时更新 EventKit 和 SwiftData）
+                CalendarService.shared.toggleEventCompleted(
+                    eventID: eventID,
+                    isCompleted: true,
+                    isReminder: event.calendarTitle == "提醒"
+                )
                 print("[ReminderAlertService] 已标记事件完成: \(eventID)")
             }
         } catch {

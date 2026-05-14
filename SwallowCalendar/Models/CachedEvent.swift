@@ -307,8 +307,8 @@ final class EventCacheService {
         guard let context = modelContext else { return }
         guard AppSettings.shared.syncSystemReminders else { return }
 
-        // 从系统提醒获取（不过滤日期，获取所有未完成提醒）
-        let reminders = await calendarService.fetchReminders(includeCompleted: false)
+        // 从系统提醒获取（获取所有提醒，包括已完成的，以正确同步外部状态变化）
+        let reminders = await calendarService.fetchReminders(includeCompleted: true)
 
         // 获取现有的提醒，构建字典以优化查询
         var existingByID: [String: CachedEvent] = [:]
