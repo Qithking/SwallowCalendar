@@ -12,7 +12,7 @@ struct CalendarSettingsView: View {
     @Environment(AppSettings.self) private var appSettings
     @Query private var calendarPreferences: [CalendarPreference]
     @Query private var customSources: [CustomCalendarSource]
-    @State private var calendarService = CalendarService.shared
+    private let calendarService = CalendarService.shared
 
     @State private var newSourceName = ""
     @State private var newSourceURL = ""
@@ -20,6 +20,8 @@ struct CalendarSettingsView: View {
     @State private var showingSaveConfirmation = false
     @State private var isRefreshing = false
     @State private var refreshSuccess = false
+    @State private var reminderAuthStatus: EKAuthorizationStatus = .notDetermined
+    @State private var calendarAuthStatus: EKAuthorizationStatus = .notDetermined
 
     var body: some View {
         @Bindable var settings = appSettings
@@ -38,8 +40,7 @@ struct CalendarSettingsView: View {
                     // 提醒权限状态提示
                     if settings.syncSystemReminders {
                         HStack(spacing: 6) {
-                            let status = CalendarService.shared.reminderAuthorizationStatus
-                            switch status {
+                            switch reminderAuthStatus {
                             case .notDetermined:
                                 Text("需要授权访问提醒")
                                     .font(.system(size: 10))
@@ -80,8 +81,7 @@ struct CalendarSettingsView: View {
                     
                     if settings.syncEventsToSystem {
                         HStack(spacing: 6) {
-                            let status = CalendarService.shared.authorizationStatus
-                            switch status {
+                            switch calendarAuthStatus {
                             case .notDetermined:
                                 Text("需要授权访问日历")
                                     .font(.system(size: 10))
@@ -203,6 +203,8 @@ struct CalendarSettingsView: View {
         .padding()
         .tint(Color(hex: appSettings.accentColorHex))
         .task {
+            reminderAuthStatus = calendarService.reminderAuthorizationStatus
+            calendarAuthStatus = calendarService.authorizationStatus
             calendarService.loadCalendars()
         }
         .onDisappear {

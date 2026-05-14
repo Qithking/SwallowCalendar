@@ -16,7 +16,8 @@ struct DataExportSettingsView: View {
     @State private var errorMessage = ""
     @State private var showClearConfirm = false
     @State private var isClearing = false
-    @State private var clearStatus: ClearStatus?  // 清除操作的状态反馈
+    @State private var clearStatus: ClearStatus?
+    @State private var cachedEventCount: Int = 0
     
     var body: some View {
         Form {
@@ -87,7 +88,7 @@ struct DataExportSettingsView: View {
                     HStack {
                         Text("上次同步")
                         Spacer()
-                        Text(lastSync, formatter: dateFormatter)
+                        Text(lastSync, formatter: Self.dateFormatter)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -96,6 +97,9 @@ struct DataExportSettingsView: View {
         .formStyle(.grouped)
         .padding()
         .tint(Color(hex: appSettings.accentColorHex))
+        .onAppear {
+            loadEventCount()
+        }
         .alert("导出成功", isPresented: $showExportSuccess) {
             Button("确定") {}
         } message: {
@@ -116,16 +120,16 @@ struct DataExportSettingsView: View {
         }
     }
     
-    private var cachedEventCount: Int {
+    private func loadEventCount() {
         let descriptor = FetchDescriptor<CachedEvent>()
-        return (try? modelContext.fetch(descriptor).count) ?? 0
+        cachedEventCount = (try? modelContext.fetchCount(descriptor)) ?? 0
     }
 
-    private var dateFormatter: DateFormatter {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return formatter
-    }
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f
+    }()
     
     private func exportToICS() {
         isExporting = true

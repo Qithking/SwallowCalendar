@@ -20,6 +20,25 @@ final class StatusBarIconManager {
 
     private var refreshTimer: Timer?
 
+    private var refreshInterval: TimeInterval {
+        let settings = AppSettings.shared
+        switch settings.iconStyle {
+        case .calendarIcon:
+            return 0
+        case .solidDate, .strokeDate:
+            return 60
+        case .customFormat:
+            let fmt = settings.customIconFormat
+            if fmt.contains("ss") || fmt.contains("s") {
+                return 1
+            }
+            if fmt.contains("mm") || fmt.contains("m") || fmt.contains("HH") || fmt.contains("H") {
+                return 60
+            }
+            return 60
+        }
+    }
+
     private init() {
         let settings = AppSettings.shared
         let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
@@ -30,6 +49,7 @@ final class StatusBarIconManager {
     func bind(statusItem: NSStatusItem) {
         statusItemButton = statusItem.button
         statusItemButton?.image = currentIcon
+        startRefreshTimer()
     }
 
     func updateIcon() {
@@ -39,11 +59,26 @@ final class StatusBarIconManager {
         currentIcon = icon
     }
 
-    private func startDayChangeTimer() {
+    func updateIconAndRestartTimer() {
+        updateIcon()
+        startRefreshTimer()
+    }
+
+    private func startRefreshTimer() {
         refreshTimer?.invalidate()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        refreshTimer = nil
+
+        let interval = refreshInterval
+        guard interval > 0 else { return }
+
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.updateIcon()
         }
+    }
+
+    private func stopRefreshTimer() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
     }
 
     private static func generateIcon(style: IconStyle, customFormat: String, customFormatStyle: AppSettings.CustomFormatStyle = .none, iconColor: NSColor = .systemBlue) -> NSImage {

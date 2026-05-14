@@ -22,14 +22,14 @@ final class AppSettings {
     var iconStyle: IconStyle {
         didSet {
             UserDefaults.standard.set(iconStyle.rawValue, forKey: "iconStyleRaw")
-            StatusBarIconManager.shared.updateIcon()
+            StatusBarIconManager.shared.updateIconAndRestartTimer()
         }
     }
 
     var customIconFormat: String {
         didSet {
             UserDefaults.standard.set(customIconFormat, forKey: "customIconFormat")
-            StatusBarIconManager.shared.updateIcon()
+            StatusBarIconManager.shared.updateIconAndRestartTimer()
         }
     }
 
@@ -37,7 +37,7 @@ final class AppSettings {
     var customFormatStyle: CustomFormatStyle {
         didSet {
             UserDefaults.standard.set(customFormatStyle.rawValue, forKey: "customFormatStyle")
-            StatusBarIconManager.shared.updateIcon()
+            StatusBarIconManager.shared.updateIconAndRestartTimer()
         }
     }
 
@@ -65,7 +65,7 @@ final class AppSettings {
     var accentColorHex: String {
         didSet {
             UserDefaults.standard.set(accentColorHex, forKey: "accentColorHex")
-            StatusBarIconManager.shared.updateIcon()
+            StatusBarIconManager.shared.updateIconAndRestartTimer()
         }
     }
 
