@@ -12,11 +12,14 @@ struct EventItemRow: View {
     let onComplete: ((CalendarEvent) -> Void)?
     let onUncomplete: ((CalendarEvent) -> Void)?
     var isOverdue: Bool = false
+    /// 是否启用倒计时刷新
+    private let enableCountdownRefresh: Bool
+    
+    /// 倒计时管理器
+    @ObservedObject private var timerManager: CountdownTimerManager
 
     @Environment(AppSettings.self) private var appSettings
     @State private var isHovered = false
-    @State private var updateTrigger = 0  // 用于触发视图更新的触发器
-    @State private var timer: Timer?  // 倒计时更新定时器
 
     init(
         event: CalendarEvent,
@@ -24,7 +27,8 @@ struct EventItemRow: View {
         onDelete: ((CalendarEvent) -> Void)? = nil,
         onComplete: ((CalendarEvent) -> Void)? = nil,
         onUncomplete: ((CalendarEvent) -> Void)? = nil,
-        isOverdue: Bool = false
+        isOverdue: Bool = false,
+        timerManager: CountdownTimerManager? = nil
     ) {
         self.event = event
         self.onEdit = onEdit
@@ -32,6 +36,8 @@ struct EventItemRow: View {
         self.onComplete = onComplete
         self.onUncomplete = onUncomplete
         self.isOverdue = isOverdue
+        self.enableCountdownRefresh = timerManager != nil
+        self.timerManager = timerManager ?? CountdownTimerManager.shared
     }
 
     var body: some View {
@@ -163,15 +169,16 @@ struct EventItemRow: View {
             }
         }
         .onAppear {
-            // 启动定时器，每分钟更新一次倒计时
-            timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
-                updateTrigger += 1
+            // 标记为可见，接收倒计时刷新
+            if enableCountdownRefresh && event.needsDynamicCountdown {
+                timerManager.markVisible(eventID: event.id)
             }
         }
         .onDisappear {
-            // 停止定时器，避免内存泄漏
-            timer?.invalidate()
-            timer = nil
+            // 标记为不可见，停止接收倒计时刷新
+            if enableCountdownRefresh && event.needsDynamicCountdown {
+                timerManager.markInvisible(eventID: event.id)
+            }
         }
     }
 
@@ -185,9 +192,8 @@ struct EventItemRow: View {
 
     /// 带主题色背景的倒计时标签
     private var countdownBorderedView: some View {
-        // 使用 updateTrigger 触发重新计算
-        let _ = updateTrigger
-        return Text(event.countdownText)
+        Text(event.countdownText)
+            .id(enableCountdownRefresh && timerManager.shouldRefresh(eventID: event.id) ? "\(event.id)-\(timerManager.refreshTrigger)" : event.id)
             .font(.system(size: 10, weight: .medium))
             .foregroundColor(.white)
             .padding(.horizontal, 6)

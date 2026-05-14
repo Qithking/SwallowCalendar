@@ -102,6 +102,13 @@ struct CalendarEvent: Identifiable {
     var hasTime: Bool {
         !isAllDay && startDate != nil
     }
+    
+    /// 是否需要动态倒计时刷新（倒计时 < 1 天且有 startDate）
+    var needsDynamicCountdown: Bool {
+        guard let start = startDate else { return false }
+        let remainingTime = start.timeIntervalSinceNow
+        return remainingTime > 0 && remainingTime < 86400 // 大于 0 且小于 1 天
+    }
 
     /// 倒计时文本
     var countdownText: String {
@@ -112,6 +119,7 @@ struct CalendarEvent: Identifiable {
         let days = Int(interval) / 86400
         let hours = (Int(interval) % 86400) / 3600
         let minutes = (Int(interval) % 3600) / 60
+        let seconds = Int(interval) % 60
 
         if days >= 365 {
             let years = days / 365
@@ -122,7 +130,12 @@ struct CalendarEvent: Identifiable {
         } else if hours >= 1 {
             return "\(hours)小时"
         } else {
-            return "\(max(minutes, 1))分钟"
+            // 小于1小时：显示"X分Y秒"或"X秒"
+            if minutes > 0 {
+                return "\(minutes)分\(seconds)秒"
+            } else {
+                return "\(seconds)秒"
+            }
         }
     }
 }

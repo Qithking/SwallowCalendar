@@ -19,6 +19,9 @@ struct EventTodoListView: View {
     let onCompleteEvent: ((CalendarEvent) -> Void)?
     let onDeleteEvent: ((CalendarEvent) -> Void)?
     @Binding var refreshTrigger: Bool
+    
+    /// 倒计时管理器
+    @StateObject private var timerManager = CountdownTimerManager.shared
 
     /// 排序后的所有未完成事件
     private var sortedEvents: [CalendarEvent] {
@@ -108,6 +111,16 @@ struct EventTodoListView: View {
 
         return allEvents
     }
+    
+    /// 需要动态刷新的事件列表（用于更新堆）
+    private var dynamicEventsForHeap: [(eventID: String, deadline: Date)] {
+        sortedEvents
+            .filter { $0.needsDynamicCountdown }
+            .compactMap { event -> (eventID: String, deadline: Date)? in
+                guard let deadline = event.startDate else { return nil }
+                return (eventID: event.id, deadline: deadline)
+            }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -146,7 +159,8 @@ struct EventTodoListView: View {
                                     onEdit: onEditEvent,
                                     onDelete: onDeleteEvent,
                                     onComplete: onCompleteEvent,
-                                    isOverdue: event.startDate != nil && event.startDate! < Date()
+                                    isOverdue: event.startDate != nil && event.startDate! < Date(),
+                                    timerManager: timerManager
                                 )
                             }
                         }
@@ -155,6 +169,14 @@ struct EventTodoListView: View {
                 .padding(.top, 6)
                 .frame(maxHeight: .infinity)
             }
+        }
+        .onChange(of: refreshTrigger) { _ in
+            // 事件列表刷新时同步更新堆
+            timerManager.updateHeap(with: dynamicEventsForHeap)
+        }
+        .onAppear {
+            // 视图出现时初始化堆
+            timerManager.updateHeap(with: dynamicEventsForHeap)
         }
     }
 }
