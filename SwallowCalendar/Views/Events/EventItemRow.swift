@@ -15,6 +15,8 @@ struct EventItemRow: View {
 
     @Environment(AppSettings.self) private var appSettings
     @State private var isHovered = false
+    @State private var updateTrigger = 0  // 用于触发视图更新的触发器
+    @State private var timer: Timer?  // 倒计时更新定时器
 
     init(
         event: CalendarEvent,
@@ -160,6 +162,17 @@ struct EventItemRow: View {
                 isHovered = hovering
             }
         }
+        .onAppear {
+            // 启动定时器，每分钟更新一次倒计时
+            timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+                updateTrigger += 1
+            }
+        }
+        .onDisappear {
+            // 停止定时器，避免内存泄漏
+            timer?.invalidate()
+            timer = nil
+        }
     }
 
     private var countdownColor: Color {
@@ -172,7 +185,9 @@ struct EventItemRow: View {
 
     /// 带主题色背景的倒计时标签
     private var countdownBorderedView: some View {
-        Text(event.countdownText)
+        // 使用 updateTrigger 触发重新计算
+        let _ = updateTrigger
+        return Text(event.countdownText)
             .font(.system(size: 10, weight: .medium))
             .foregroundColor(.white)
             .padding(.horizontal, 6)
