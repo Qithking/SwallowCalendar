@@ -12,11 +12,6 @@ struct EventItemRow: View {
     let onComplete: ((CalendarEvent) -> Void)?
     let onUncomplete: ((CalendarEvent) -> Void)?
     var isOverdue: Bool = false
-    /// 是否启用倒计时刷新
-    private let enableCountdownRefresh: Bool
-    
-    /// 倒计时管理器
-    @ObservedObject private var timerManager: CountdownTimerManager
 
     @Environment(AppSettings.self) private var appSettings
     @State private var isHovered = false
@@ -27,8 +22,7 @@ struct EventItemRow: View {
         onDelete: ((CalendarEvent) -> Void)? = nil,
         onComplete: ((CalendarEvent) -> Void)? = nil,
         onUncomplete: ((CalendarEvent) -> Void)? = nil,
-        isOverdue: Bool = false,
-        timerManager: CountdownTimerManager? = nil
+        isOverdue: Bool = false
     ) {
         self.event = event
         self.onEdit = onEdit
@@ -36,8 +30,6 @@ struct EventItemRow: View {
         self.onComplete = onComplete
         self.onUncomplete = onUncomplete
         self.isOverdue = isOverdue
-        self.enableCountdownRefresh = timerManager != nil
-        self.timerManager = timerManager ?? CountdownTimerManager.shared
     }
 
     var body: some View {
@@ -168,18 +160,6 @@ struct EventItemRow: View {
                 isHovered = hovering
             }
         }
-        .onAppear {
-            // 标记为可见，接收倒计时刷新
-            if enableCountdownRefresh && event.needsDynamicCountdown {
-                timerManager.markVisible(eventID: event.id)
-            }
-        }
-        .onDisappear {
-            // 标记为不可见，停止接收倒计时刷新
-            if enableCountdownRefresh && event.needsDynamicCountdown {
-                timerManager.markInvisible(eventID: event.id)
-            }
-        }
     }
 
     private var countdownColor: Color {
@@ -190,32 +170,105 @@ struct EventItemRow: View {
         return .secondary
     }
 
-    /// 带主题色背景的倒计时标签
+    /// 带主题色背景的倒计时标签（使用独立刷新机制）
     private var countdownBorderedView: some View {
-        Text(event.countdownText)
-            .id(enableCountdownRefresh && timerManager.shouldRefresh(eventID: event.id) ? "\(event.id)-\(timerManager.refreshTrigger)" : event.id)
+        CountdownTextView(
+            startDate: event.startDate,
+            accentColorHex: appSettings.accentColorHex
+        )
+    }
+
+    private var formattedDate: String {
+        guard let start = event.startDate else { return "" }
+        return Self.dateFormatter.string(from: start)
+    }
+
+    private var formattedDateTime: String {
+        guard let start = event.startDate else { return "" }
+        return Self.dateTimeFormatter.string(from: start)
+    }
+    
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy/MM/dd"
+        return f
+    }()
+    
+    private static let dateTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy/MM/dd HH:mm"
+        return f
+    }()
+}
+
+/// 独立的倒计时文本视图，使用内部定时器刷新
+private struct CountdownTextView: View {
+    let startDate: Date?
+    let accentColorHex: String
+    
+    @State private var countdownText: String = ""
+    @State private var timer: Timer?
+    
+    var body: some View {
+        Text(countdownText)
             .font(.system(size: 10, weight: .medium))
             .foregroundColor(.white)
             .padding(.horizontal, 6)
             .padding(.vertical, 1)
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(hex: appSettings.accentColorHex))
+                    .fill(Color(hex: accentColorHex))
             )
+            .onAppear {
+                updateCountdown()
+                startTimerIfNeeded()
+            }
+            .onDisappear {
+                timer?.invalidate()
+                timer = nil
+            }
     }
-
-    private var formattedDate: String {
-        guard let start = event.startDate else { return "" }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy/MM/dd"
-        return formatter.string(from: start)
+    
+    private func updateCountdown() {
+        guard let start = startDate else {
+            countdownText = ""
+            return
+        }
+        let now = Date()
+        guard start > now else {
+            countdownText = "已过期"
+            return
+        }
+        let interval = start.timeIntervalSince(now)
+        let days = Int(interval) / 86400
+        let hours = (Int(interval) % 86400) / 3600
+        let minutes = (Int(interval) % 3600) / 60
+        let seconds = Int(interval) % 60
+        
+        if days >= 365 {
+            let years = days / 365
+            let remainDays = days % 365
+            countdownText = remainDays > 0 ? "\(years)年\(remainDays)天" : "\(years)年"
+        } else if days >= 1 {
+            countdownText = "\(days)天"
+        } else if hours >= 1 {
+            countdownText = "\(hours)小时"
+        } else if minutes > 0 {
+            countdownText = "\(minutes)分\(seconds)秒"
+        } else {
+            countdownText = "\(seconds)秒"
+        }
     }
-
-    private var formattedDateTime: String {
-        guard let start = event.startDate else { return "" }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy/MM/dd HH:mm"
-        return formatter.string(from: start)
+    
+    private func startTimerIfNeeded() {
+        guard let start = startDate else { return }
+        let remainingTime = start.timeIntervalSinceNow
+        guard remainingTime > 0 && remainingTime < 86400 else { return }
+        
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            updateCountdown()
+        }
     }
 }
 

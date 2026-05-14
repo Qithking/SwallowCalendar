@@ -374,10 +374,10 @@ struct NLPTaskParser {
         let chineseCalendar = Calendar(identifier: .chinese)
         let gregorianCalendar = Calendar.current
         
-        // 从今天开始，逐天搜索，最多搜索3年
-        // 农历年约354天，3年约1062天，性能可接受
+        // 从今天开始，逐天搜索，最多搜索1年
+        // 农历年约354天，1年约365天，性能更好
         var currentDate = gregorianCalendar.startOfDay(for: now)
-        let maxDate = gregorianCalendar.date(byAdding: .year, value: 3, to: currentDate)!
+        let maxDate = gregorianCalendar.date(byAdding: .year, value: 1, to: currentDate)!
         
         while currentDate < maxDate {
             // 将公历日期转为农历，检查是否匹配

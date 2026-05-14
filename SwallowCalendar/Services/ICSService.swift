@@ -12,6 +12,9 @@ final class ICSService {
     /// 缓存：日期 -> [(来源URL, 事件名称)]
     private var subscriptionCache: [String: [(sourceURL: String, eventName: String)]] = [:]
     private var lastFetchDate: Date?
+    
+    /// 缓存保留天数
+    private let cacheRetentionDays = 90
 
     private init() {}
 
@@ -87,6 +90,9 @@ final class ICSService {
 
     /// 获取某天的订阅日历事件
     func subscriptionEvents(for date: Date, sources: [CustomCalendarSource]) async -> [String] {
+        // 定期清理过期缓存
+        cleanupExpiredCache()
+        
         let dateKey = formatDateKey(date)
 
         // 如果缓存有效且来源未变，直接返回
@@ -134,6 +140,9 @@ final class ICSService {
 
     /// 预加载订阅日历数据
     func preloadSubscriptions(sources: [CustomCalendarSource]) async {
+        // 清理过期缓存
+        cleanupExpiredCache()
+        
         // 先清除禁用源的缓存数据
         let enabledSourceURLs = Set(sources.filter { $0.isEnabled }.map { $0.icsURL })
         for (key, events) in subscriptionCache {
@@ -181,6 +190,22 @@ final class ICSService {
             .appendingPathComponent("SwallowCalendar/ICS", isDirectory: true)
         try? FileManager.default.removeItem(at: cacheDir)
         print("[ICSService] 订阅日历缓存已清除（内存 + 磁盘）")
+    }
+    
+    /// 清理过期的缓存条目（只保留最近 cacheRetentionDays 天）
+    private func cleanupExpiredCache() {
+        let calendar = Calendar.current
+        let cutoffDate = calendar.date(byAdding: .day, value: -cacheRetentionDays, to: Date())!
+        let cutoffKey = formatDateKey(cutoffDate)
+        
+        let keysToRemove = subscriptionCache.keys.filter { $0 < cutoffKey }
+        for key in keysToRemove {
+            subscriptionCache.removeValue(forKey: key)
+        }
+        
+        if !keysToRemove.isEmpty {
+            print("[ICSService] 清理了 \(keysToRemove.count) 个过期缓存条目")
+        }
     }
 
     // MARK: - ICS Date Parsing

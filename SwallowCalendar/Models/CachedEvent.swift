@@ -124,38 +124,41 @@ final class EventCacheService {
     private var modelContainer: ModelContainer?
     private var modelContext: ModelContext?
 
-    /// 是否正在同步
     var isSyncing = false
 
-    /// 是否正在同步订阅日历
     var isSubscriptionSyncing = false
 
-    /// 最后同步时间（持久化到 UserDefaults）
     var lastSyncTime: Date? {
         didSet {
             UserDefaults.standard.set(lastSyncTime, forKey: "EventCacheService.lastSyncTime")
         }
     }
 
+    private var allEventsCache: [CachedEvent]?
+    private var allEventsCacheTime: Date?
+
+    private let cacheValidDuration: TimeInterval = 5
+
     private init() {
         self.lastSyncTime = UserDefaults.standard.object(forKey: "EventCacheService.lastSyncTime") as? Date
     }
     
-    /// 设置 ModelContainer
     func configure(with container: ModelContainer) {
         self.modelContainer = container
         self.modelContext = ModelContext(container)
     }
     
-    /// 获取 ModelContext
     var context: ModelContext? {
         return modelContext
+    }
+
+    func invalidateCache() {
+        allEventsCache = nil
+        allEventsCacheTime = nil
     }
     
     // MARK: - 查询（从缓存）
     
-    /// 获取某天的事件
-    /// - Parameter includeNoDateReminders: 是否包含无到期时间的系统提醒，默认 false（日历视图不需要）
     func getEvents(for date: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CachedEvent] {
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: date)
@@ -164,46 +167,48 @@ final class EventCacheService {
         return getEvents(from: startOfDay, to: endOfDay, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
     }
     
-    /// 获取日期范围内的事件
-    /// - Parameters:
-    ///   - includeNoDateReminders: 是否包含无到期时间的系统提醒，默认 false（日历视图不需要）
     func getEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CachedEvent] {
         guard let context = modelContext else { return [] }
         
-        // 获取所有事件后手动过滤
+        let now = Date()
+        if let cache = allEventsCache,
+           let cacheTime = allEventsCacheTime,
+           now.timeIntervalSince(cacheTime) < cacheValidDuration {
+            return filterEvents(cache, from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
+        }
+        
         let descriptor = FetchDescriptor<CachedEvent>(
             sortBy: [SortDescriptor(\.startDate)]
         )
         
         do {
-            var events = try context.fetch(descriptor)
+            let events = try context.fetch(descriptor)
+            allEventsCache = events
+            allEventsCacheTime = now
             
-            // 过滤日期范围
-            events = events.filter { event in
-                // 无日期的提醒（没有到期时间的系统提醒）
-                guard let start = event.startDate, let end = event.endDate else {
-                    // 根据参数决定是否包含无日期的提醒
-                    return includeNoDateReminders
-                }
-                return start < endDate && end > startDate
-            }
-            
-            // 如果指定了日历且非空，进一步过滤（但保留用户分类和订阅分类的事件）
-            if let calendars = calendars, !calendars.isEmpty {
-                let calendarIDs = Set(calendars.map { $0.calendarIdentifier })
-                events = events.filter { event in
-                    // 用户分类的事件（包括系统提醒）始终保留
-                    // 订阅分类的事件始终保留（由 ICS 订阅源管理，不受系统日历过滤影响）
-                    if event.category == .user || event.category == .subscription { return true }
-                    // 其他事件按日历ID过滤
-                    return calendarIDs.contains(event.calendarID)
-                }
-            }
-            
-            return events
+            return filterEvents(events, from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
         } catch {
             return []
         }
+    }
+    
+    private func filterEvents(_ events: [CachedEvent], from startDate: Date, to endDate: Date, calendars: [EKCalendar]?, includeNoDateReminders: Bool) -> [CachedEvent] {
+        var filtered = events.filter { event in
+            guard let start = event.startDate, let end = event.endDate else {
+                return includeNoDateReminders
+            }
+            return start < endDate && end > startDate
+        }
+        
+        if let calendars = calendars, !calendars.isEmpty {
+            let calendarIDs = Set(calendars.map { $0.calendarIdentifier })
+            filtered = filtered.filter { event in
+                if event.category == .user || event.category == .subscription { return true }
+                return calendarIDs.contains(event.calendarID)
+            }
+        }
+        
+        return filtered
     }
     
     // MARK: - 同步
@@ -215,7 +220,10 @@ final class EventCacheService {
         guard !isSyncing else { return }
         
         isSyncing = true
-        defer { isSyncing = false }
+        defer {
+            isSyncing = false
+            invalidateCache()
+        }
         
         // 同步过去1年和未来2年的事件
         let now = Date()
@@ -230,7 +238,10 @@ final class EventCacheService {
         let descriptor = FetchDescriptor<CachedEvent>()
         if let existing = try? context.fetch(descriptor) {
             for event in existing {
-                existingByID[event.eventID] = event
+                // 过滤出在同步时间范围内的事件，减少内存占用
+                if let start = event.startDate, let end = event.endDate, start >= startDate && end <= endDate {
+                    existingByID[event.eventID] = event
+                }
             }
         }
         
@@ -295,6 +306,8 @@ final class EventCacheService {
         do {
             try context.save()
             lastSyncTime = Date()
+            // 清理超过保留期限的旧事件
+            cleanupOldEvents(context: context, before: startDate)
         } catch {
             // 保存失败，记录到日志系统（待实现）
         }
@@ -373,10 +386,16 @@ final class EventCacheService {
     @MainActor
     func clearRemindersCache() {
         guard let context = modelContext else { return }
-
-        let descriptor = FetchDescriptor<CachedEvent>()
+        
+        let userCategory = EventCategory.user.rawValue
+        let descriptor = FetchDescriptor<CachedEvent>(
+            predicate: #Predicate<CachedEvent> { event in
+                event.categoryRaw == userCategory
+            }
+        )
+        
         if let events = try? context.fetch(descriptor) {
-            let remindersToDelete = events.filter { $0.category == .user && $0.calendarTitle == "提醒" }
+            let remindersToDelete = events.filter { $0.calendarTitle == "提醒" }
             for event in remindersToDelete {
                 context.delete(event)
             }
@@ -394,9 +413,14 @@ final class EventCacheService {
         defer { isSubscriptionSyncing = false }
 
         // 删除所有现有的订阅分类缓存
-        let descriptor = FetchDescriptor<CachedEvent>()
+        let subscriptionCategory = EventCategory.subscription.rawValue
+        let descriptor = FetchDescriptor<CachedEvent>(
+            predicate: #Predicate<CachedEvent> { event in
+                event.categoryRaw == subscriptionCategory
+            }
+        )
         if let existing = try? context.fetch(descriptor) {
-            for event in existing where event.category == .subscription {
+            for event in existing {
                 context.delete(event)
             }
         }
@@ -488,12 +512,38 @@ final class EventCacheService {
     func clearCache() {
         guard let context = modelContext else { return }
         
+        invalidateCache()
+        
         let descriptor = FetchDescriptor<CachedEvent>()
         if let events = try? context.fetch(descriptor) {
             for event in events {
                 context.delete(event)
             }
             try? context.save()
+        }
+    }
+    
+    /// 清理超过保留期限的旧事件（保留 startDate 之前的事件）
+    private func cleanupOldEvents(context: ModelContext, before cutoffDate: Date) {
+        let descriptor = FetchDescriptor<CachedEvent>()
+        guard let events = try? context.fetch(descriptor) else { return }
+        
+        var deletedCount = 0
+        for event in events {
+            // 跳过用户分类、订阅分类和提醒事件
+            if event.category == .user || event.category == .subscription || event.calendarTitle == "提醒" {
+                continue
+            }
+            // 删除早于保留期限且已过期的事件
+            if let endDate = event.endDate, endDate < cutoffDate {
+                context.delete(event)
+                deletedCount += 1
+            }
+        }
+        
+        if deletedCount > 0 {
+            try? context.save()
+            print("[EventCacheService] 清理了 \(deletedCount) 个过期系统日历事件")
         }
     }
 }

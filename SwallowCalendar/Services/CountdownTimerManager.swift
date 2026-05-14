@@ -117,22 +117,10 @@ final class CountdownTimerManager: ObservableObject {
     
     // MARK: - Private Methods
     
-    /// 启动 Timer
+    /// 启动 Timer（由于 CountdownTextView 独立管理定时器，此方法不再实际启动定时器）
     private func startTimer() {
-        stopTimer()
-        
-        let queue = DispatchQueue(label: "com.swallowcalendar.countdown.timer")
-        timer = DispatchSource.makeTimerSource(queue: queue)
-        
-        timer?.setEventHandler { [weak self] in
-            self?.onTimerFired()
-        }
-        
-        // 初始间隔设为 1 秒，后续会根据堆顶事件动态调整
-        timer?.schedule(deadline: .now() + 1, repeating: 1)
-        timer?.resume()
-        
-        currentInterval = 1
+        // 不再需要启动定时器，CountdownTextView 已独立管理倒计时刷新
+        currentInterval = 0
     }
     
     /// 停止 Timer
@@ -144,17 +132,8 @@ final class CountdownTimerManager: ObservableObject {
     
     /// Timer 触发时的处理
     private func onTimerFired() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            // 检查堆顶事件，调整刷新频率
-            self.adjustRefreshInterval()
-            
-            // 如果有可见且需要刷新的事件，触发 UI 更新
-            if !self.visibleEventIDs.isEmpty {
-                self.refreshTrigger += 1
-            }
-        }
+        // 注意：由于 CountdownTextView 现在独立管理自己的定时器，
+        // 此处的 refreshTrigger 不再被用于 UI 更新，为节省资源禁用此定时器
     }
     
     /// 根据堆顶事件的剩余时间调整刷新频率

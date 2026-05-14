@@ -19,33 +19,36 @@ struct EventTodoListView: View {
     let onCompleteEvent: ((CalendarEvent) -> Void)?
     let onDeleteEvent: ((CalendarEvent) -> Void)?
     @Binding var refreshTrigger: Bool
-    
-    /// 倒计时管理器
-    @StateObject private var timerManager = CountdownTimerManager.shared
 
-    /// 排序后的所有未完成事件
-    private var sortedEvents: [CalendarEvent] {
-        _ = refreshTrigger
+    @State private var cachedEvents: [CalendarEvent] = []
+    @State private var displayLimit = 50
+
+    private var displayedEvents: [CalendarEvent] {
+        Array(cachedEvents.prefix(displayLimit))
+    }
+
+    private var hasMoreEvents: Bool {
+        cachedEvents.count > displayLimit
+    }
+
+    private func refreshCachedEvents() {
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let range = filterMode.dateRange(from: selectedDate)
 
-        // 收集所有未完成的事件（有时间和全天）
         var timedEvents: [CalendarEvent] = []
         var allDayEvents: [CalendarEvent] = []
-        var noDateEvents: [CalendarEvent] = []  // 无到期时间的提醒
+        var noDateEvents: [CalendarEvent] = []
 
-        // 有时间的事件（包括系统提醒，包含无到期时间的）
-        let cachedEvents = calendarService.fetchCachedEvents(
+        let cached = calendarService.fetchCachedEvents(
             from: range.start,
             to: range.end,
             calendars: enabledCals,
             includeNoDateReminders: true
         )
-        for event in cachedEvents {
+        for event in cached {
             guard event.category == .user && !event.isCompleted else { continue }
             
             if event.startDate == nil {
-                // 无到期时间的提醒
                 noDateEvents.append(event)
             } else if event.hasTime {
                 timedEvents.append(event)
@@ -54,15 +57,12 @@ struct EventTodoListView: View {
             }
         }
 
-        // 合并所有待办事项
         var allEvents: [CalendarEvent] = timedEvents + allDayEvents
         
         let isAscending = appSettings.sortOrder == .ascending
         
-        // 根据 sortMode 和 sortOrder 排序
         switch appSettings.sortMode {
         case .default:
-            // 默认排序：时间 + 优先级
             allEvents.sort {
                 let date0 = $0.startDate ?? .distantPast
                 let date1 = $1.startDate ?? .distantPast
@@ -72,31 +72,26 @@ struct EventTodoListView: View {
                 return isAscending ? $0.priority < $1.priority : $0.priority > $1.priority
             }
         case .createTime:
-            // 创建时间（按 startDate）
             allEvents.sort {
                 let date0 = $0.startDate ?? .distantPast
                 let date1 = $1.startDate ?? .distantPast
                 return isAscending ? date0 < date1 : date0 > date1
             }
         case .deadline:
-            // 截止时间
             allEvents.sort {
                 let date0 = $0.endDate ?? $0.startDate ?? .distantPast
                 let date1 = $1.endDate ?? $1.startDate ?? .distantPast
                 return isAscending ? date0 < date1 : date0 > date1
             }
         case .priority:
-            // 优先级
             allEvents.sort {
                 return isAscending ? $0.priority < $1.priority : $0.priority > $1.priority
             }
         case .title:
-            // 标题
             allEvents.sort {
                 return isAscending ? $0.title < $1.title : $0.title > $1.title
             }
         case .reminder:
-            // 系统提醒
             allEvents.sort {
                 if isAscending {
                     return !$0.isReminder && $1.isReminder
@@ -106,25 +101,12 @@ struct EventTodoListView: View {
             }
         }
         
-        // 无到期时间的提醒放在最后
         allEvents.append(contentsOf: noDateEvents)
-
-        return allEvents
-    }
-    
-    /// 需要动态刷新的事件列表（用于更新堆）
-    private var dynamicEventsForHeap: [(eventID: String, deadline: Date)] {
-        sortedEvents
-            .filter { $0.needsDynamicCountdown }
-            .compactMap { event -> (eventID: String, deadline: Date)? in
-                guard let deadline = event.startDate else { return nil }
-                return (eventID: event.id, deadline: deadline)
-            }
+        cachedEvents = allEvents
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // 固定标题
             Button {
                 onToggle()
             } label: {
@@ -134,7 +116,7 @@ struct EventTodoListView: View {
                         .foregroundColor(.secondary)
                     Text("待办事项")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("(\(sortedEvents.count))")
+                    Text("(\(cachedEvents.count))")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                     Spacer()
@@ -142,10 +124,9 @@ struct EventTodoListView: View {
             }
             .buttonStyle(.plain)
 
-            // 可滚动的内容区域
             if isExpanded {
                 ScrollView {
-                    if sortedEvents.isEmpty {
+                    if cachedEvents.isEmpty {
                         Text("暂无待办事项")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
@@ -153,15 +134,26 @@ struct EventTodoListView: View {
                             .padding(.leading, 16)
                     } else {
                         LazyVStack(spacing: 4) {
-                            ForEach(sortedEvents) { event in
+                            ForEach(displayedEvents) { event in
                                 EventItemRow(
                                     event: event,
                                     onEdit: onEditEvent,
                                     onDelete: onDeleteEvent,
                                     onComplete: onCompleteEvent,
-                                    isOverdue: event.startDate != nil && event.startDate! < Date(),
-                                    timerManager: timerManager
+                                    isOverdue: event.startDate != nil && event.startDate! < Date()
                                 )
+                            }
+                            if hasMoreEvents {
+                                Button {
+                                    displayLimit += 50
+                                } label: {
+                                    Text("加载更多 (\(cachedEvents.count - displayLimit) 项)")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.secondary)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 4)
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
                     }
@@ -170,13 +162,14 @@ struct EventTodoListView: View {
                 .frame(maxHeight: .infinity)
             }
         }
-        .onChange(of: refreshTrigger) { _ in
-            // 事件列表刷新时同步更新堆
-            timerManager.updateHeap(with: dynamicEventsForHeap)
-        }
         .onAppear {
-            // 视图出现时初始化堆
-            timerManager.updateHeap(with: dynamicEventsForHeap)
+            refreshCachedEvents()
+        }
+        .onChange(of: refreshTrigger) { _, _ in
+            refreshCachedEvents()
+        }
+        .onChange(of: filterMode) { _, _ in
+            refreshCachedEvents()
         }
     }
 }

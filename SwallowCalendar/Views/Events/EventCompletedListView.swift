@@ -22,33 +22,39 @@ struct EventCompletedListView: View {
     let onDeleteEvent: ((CalendarEvent) -> Void)?
     @Binding var refreshTrigger: Bool
 
-    private var events: [CalendarEvent] {
-        _ = refreshTrigger
+    @State private var cachedEvents: [CalendarEvent] = []
+    @State private var displayLimit = 50
+
+    private var displayedEvents: [CalendarEvent] {
+        Array(cachedEvents.prefix(displayLimit))
+    }
+
+    private var hasMoreEvents: Bool {
+        cachedEvents.count > displayLimit
+    }
+
+    private func refreshCachedEvents() {
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let range = filterMode.dateRange(from: selectedDate)
 
-        // 从缓存读取事件（包括全天事件和系统提醒，包含无到期时间的）
-        let cachedEvents = calendarService.fetchCachedEvents(
+        let cached = calendarService.fetchCachedEvents(
             from: range.start,
             to: range.end,
             calendars: enabledCals,
             includeNoDateReminders: true
         )
         
-        // 过滤用户创建且已完成的非空事件
-        let result = cachedEvents.filter { event in
+        let result = cached.filter { event in
             event.category == .user &&
             event.isCompleted &&
             !event.title.trimmingCharacters(in: .whitespaces).isEmpty
         }
 
-        // 根据 sortMode 和 sortOrder 排序
         var sorted = result
         let isAscending = appSettings.sortOrder == .ascending
         
         switch appSettings.sortMode {
         case .default:
-            // 默认排序：优先级 + 时间
             sorted.sort {
                 if $0.priority != $1.priority {
                     return isAscending ? $0.priority < $1.priority : $0.priority > $1.priority
@@ -56,29 +62,24 @@ struct EventCompletedListView: View {
                 return isAscending ? ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) : ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
             }
         case .createTime:
-            // 创建时间（按 startDate）
             sorted.sort {
                 return isAscending ? ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) : ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
             }
         case .deadline:
-            // 截止时间
             sorted.sort {
                 let date0 = $0.endDate ?? $0.startDate ?? .distantPast
                 let date1 = $1.endDate ?? $1.startDate ?? .distantPast
                 return isAscending ? date0 < date1 : date0 > date1
             }
         case .priority:
-            // 优先级
             sorted.sort {
                 return isAscending ? $0.priority < $1.priority : $0.priority > $1.priority
             }
         case .title:
-            // 标题
             sorted.sort {
                 return isAscending ? $0.title < $1.title : $0.title > $1.title
             }
         case .reminder:
-            // 系统提醒
             sorted.sort {
                 if isAscending {
                     return !$0.isReminder && $1.isReminder
@@ -88,12 +89,11 @@ struct EventCompletedListView: View {
             }
         }
         
-        return sorted
+        cachedEvents = sorted
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // 固定标题
             Button {
                 onToggle()
             } label: {
@@ -103,7 +103,7 @@ struct EventCompletedListView: View {
                         .foregroundColor(.secondary)
                     Text("已办事项")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("(\(events.count))")
+                    Text("(\(cachedEvents.count))")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                     Spacer()
@@ -111,10 +111,9 @@ struct EventCompletedListView: View {
             }
             .buttonStyle(.plain)
 
-            // 可滚动的内容区域
             if isExpanded {
                 ScrollView {
-                    if events.isEmpty {
+                    if cachedEvents.isEmpty {
                         Text("暂无已办事项")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
@@ -122,7 +121,7 @@ struct EventCompletedListView: View {
                             .padding(.leading, 16)
                     } else {
                         LazyVStack(spacing: 4) {
-                            ForEach(events) { event in
+                            ForEach(displayedEvents) { event in
                                 EventItemRow(
                                     event: event,
                                     onEdit: onEditEvent,
@@ -130,12 +129,33 @@ struct EventCompletedListView: View {
                                     onUncomplete: onUncompleteEvent
                                 )
                             }
+                            if hasMoreEvents {
+                                Button {
+                                    displayLimit += 50
+                                } label: {
+                                    Text("加载更多 (\(cachedEvents.count - displayLimit) 项)")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.secondary)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 4)
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
                     }
                 }
                 .padding(.top, 6)
                 .frame(maxHeight: .infinity)
             }
+        }
+        .onAppear {
+            refreshCachedEvents()
+        }
+        .onChange(of: refreshTrigger) { _, _ in
+            refreshCachedEvents()
+        }
+        .onChange(of: filterMode) { _, _ in
+            refreshCachedEvents()
         }
     }
 }

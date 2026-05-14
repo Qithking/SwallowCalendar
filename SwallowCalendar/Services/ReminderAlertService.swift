@@ -17,6 +17,8 @@ final class ReminderAlertService {
     private var timer: Timer?
     private var lastAlertedEventIDs: Set<String> = []
     private var modelContainer: ModelContainer?
+    /// 已提醒事件ID的最大缓存数量
+    private let maxAlertedEventIDs = 1000
     
     private init() {}
     
@@ -79,29 +81,19 @@ final class ReminderAlertService {
         
         do {
             let allUserEvents = try context.fetch(baseDescriptor)
-            print("[ReminderAlertService] 获取到 \(allUserEvents.count) 个用户事件")
-            
-            // 调试：打印所有用户事件
-            for event in allUserEvents {
-                print("[ReminderAlertService] 事件: \(event.title), categoryRaw: \(event.categoryRaw), isCompleted: \(event.isCompleted), startDate: \(String(describing: event.startDate))")
-            }
             
             // 在内存中过滤日期范围
             let dueEvents = allUserEvents.filter { event in
                 guard let startDate = event.startDate else { return false }
                 
                 if includeExpired {
-                    // 应用启动时：检查所有已过期的事项
                     return startDate < now
                 } else {
-                    // 定时检查：检查当前时间前后5分钟内到期的事项
                     let startOfWindow = calendar.date(byAdding: .minute, value: -5, to: now)!
                     let endOfWindow = calendar.date(byAdding: .minute, value: 5, to: now)!
                     return startDate >= startOfWindow && startDate <= endOfWindow
                 }
             }
-            
-            print("[ReminderAlertService] 发现 \(dueEvents.count) 个\(includeExpired ? "过期" : "即将到期")事项")
             
             // 过滤掉已经提醒过的事件
             let newEvents = dueEvents.filter { !lastAlertedEventIDs.contains($0.eventID) }
@@ -112,6 +104,8 @@ final class ReminderAlertService {
                 showCombinedAlert(for: newEvents, isExpired: isExpired)
                 // 记录已提醒的事件ID
                 newEvents.forEach { lastAlertedEventIDs.insert($0.eventID) }
+                // 限制 Set 大小，避免内存泄漏
+                trimAlertedEventIDsIfNeeded()
                 // 5分钟后允许再次提醒
                 DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak self] in
                     newEvents.forEach { self?.lastAlertedEventIDs.remove($0.eventID) }
@@ -248,6 +242,20 @@ final class ReminderAlertService {
         formatter.locale = Locale(identifier: "zh_CN")
         
         return formatter.string(from: date)
+    }
+    
+    /// 限制 lastAlertedEventIDs 的大小，避免内存泄漏
+    private func trimAlertedEventIDsIfNeeded() {
+        if lastAlertedEventIDs.count > maxAlertedEventIDs {
+            // 保留最近的 maxAlertedEventIDs 条记录
+            let overflow = lastAlertedEventIDs.count - maxAlertedEventIDs
+            // 由于 Set 无序，移除前半部分
+            let toRemove = Array(lastAlertedEventIDs.prefix(overflow))
+            for id in toRemove {
+                lastAlertedEventIDs.remove(id)
+            }
+            print("[ReminderAlertService] 清理了 \(overflow) 个过期提醒记录")
+        }
     }
     
     /// 清除已提醒记录（用于重置）
