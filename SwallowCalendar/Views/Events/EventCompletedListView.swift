@@ -24,6 +24,7 @@ struct EventCompletedListView: View {
 
     @State private var cachedEvents: [CalendarEvent] = []
     @State private var displayLimit = 50
+    @State private var refreshTask: Task<Void, Never>?
 
     private var displayedEvents: [CalendarEvent] {
         Array(cachedEvents.prefix(displayLimit))
@@ -31,6 +32,15 @@ struct EventCompletedListView: View {
 
     private var hasMoreEvents: Bool {
         cachedEvents.count > displayLimit
+    }
+
+    private func debouncedRefresh() {
+        refreshTask?.cancel()
+        refreshTask = Task {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled else { return }
+            refreshCachedEvents()
+        }
     }
 
     private func refreshCachedEvents() {
@@ -149,13 +159,13 @@ struct EventCompletedListView: View {
             }
         }
         .onAppear {
-            refreshCachedEvents()
+            debouncedRefresh()
         }
         .onChange(of: refreshTrigger) { _, _ in
-            refreshCachedEvents()
+            debouncedRefresh()
         }
         .onChange(of: filterMode) { _, _ in
-            refreshCachedEvents()
+            debouncedRefresh()
         }
     }
 }

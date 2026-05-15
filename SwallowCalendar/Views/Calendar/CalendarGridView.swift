@@ -65,7 +65,6 @@ struct CalendarGridView: View {
 
     @State private var currentMonth = Date()
     @State private var hoveredDate: Date?
-    @State private var activePopoverId: UUID?
     @Query private var cachedEvents: [CachedEvent]
 
     private let calendar = Calendar.current

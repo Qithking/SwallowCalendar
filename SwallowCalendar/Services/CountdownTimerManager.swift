@@ -39,13 +39,13 @@ final class CountdownTimerManager: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
-            // 添加到最小堆
             self.minHeap.insert(eventID: eventID, deadline: deadline)
+            self.visibleEventIDs.insert(eventID)
             
-            // 如果这是第一个需要动态刷新的事件，启动 Timer
             if self.timer == nil {
                 self.startTimer()
             }
+            self.adjustRefreshInterval()
         }
     }
     
@@ -117,10 +117,20 @@ final class CountdownTimerManager: ObservableObject {
     
     // MARK: - Private Methods
     
-    /// 启动 Timer（由于 CountdownTextView 独立管理定时器，此方法不再实际启动定时器）
+    /// 启动 GCD Timer
     private func startTimer() {
-        // 不再需要启动定时器，CountdownTextView 已独立管理倒计时刷新
-        currentInterval = 0
+        stopTimer()
+        
+        let newTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .background))
+        newTimer.schedule(deadline: .now(), repeating: .seconds(1), leeway: .milliseconds(100))
+        newTimer.setEventHandler { [weak self] in
+            DispatchQueue.main.async {
+                self?.onTimerFired()
+            }
+        }
+        newTimer.resume()
+        timer = newTimer
+        currentInterval = 1
     }
     
     /// 停止 Timer
@@ -132,8 +142,8 @@ final class CountdownTimerManager: ObservableObject {
     
     /// Timer 触发时的处理
     private func onTimerFired() {
-        // 注意：由于 CountdownTextView 现在独立管理自己的定时器，
-        // 此处的 refreshTrigger 不再被用于 UI 更新，为节省资源禁用此定时器
+        refreshTrigger += 1
+        adjustRefreshInterval()
     }
     
     /// 根据堆顶事件的剩余时间调整刷新频率

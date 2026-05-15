@@ -174,7 +174,8 @@ struct EventItemRow: View {
     private var countdownBorderedView: some View {
         CountdownTextView(
             startDate: event.startDate,
-            accentColorHex: appSettings.accentColorHex
+            accentColorHex: appSettings.accentColorHex,
+            eventID: event.id
         )
     }
 
@@ -201,13 +202,14 @@ struct EventItemRow: View {
     }()
 }
 
-/// 独立的倒计时文本视图，使用内部定时器刷新
+/// 倒计时文本视图，使用 CountdownTimerManager 统一管理刷新
 private struct CountdownTextView: View {
     let startDate: Date?
     let accentColorHex: String
+    let eventID: String
     
     @State private var countdownText: String = ""
-    @State private var timer: Timer?
+    @ObservedObject private var timerManager = CountdownTimerManager.shared
     
     var body: some View {
         Text(countdownText)
@@ -221,11 +223,17 @@ private struct CountdownTextView: View {
             )
             .onAppear {
                 updateCountdown()
-                startTimerIfNeeded()
+                if let start = startDate, start > Date() {
+                    CountdownTimerManager.shared.register(eventID: eventID, deadline: start)
+                }
             }
             .onDisappear {
-                timer?.invalidate()
-                timer = nil
+                CountdownTimerManager.shared.unregister(eventID: eventID)
+            }
+            .onChange(of: timerManager.refreshTrigger) { _, _ in
+                if CountdownTimerManager.shared.shouldRefresh(eventID: eventID) {
+                    updateCountdown()
+                }
             }
     }
     
@@ -257,17 +265,6 @@ private struct CountdownTextView: View {
             countdownText = "\(minutes)分\(seconds)秒"
         } else {
             countdownText = "\(seconds)秒"
-        }
-    }
-    
-    private func startTimerIfNeeded() {
-        guard let start = startDate else { return }
-        let remainingTime = start.timeIntervalSinceNow
-        guard remainingTime > 0 && remainingTime < 86400 else { return }
-        
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-            updateCountdown()
         }
     }
 }
