@@ -64,6 +64,9 @@ struct ContentView: View {
         .cornerRadius(Popup.totalCornerRadius)
         .preferredColorScheme(appSettings.colorScheme)
         .tint(accentColor)
+        .task {
+            await initializeServices()
+        }
         .onChange(of: appSettings.accentColorHex) { _, newColor in
             accentColor = Color(hex: newColor)
         }
