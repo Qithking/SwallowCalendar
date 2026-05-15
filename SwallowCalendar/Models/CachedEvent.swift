@@ -134,11 +134,6 @@ final class EventCacheService {
         }
     }
 
-    private var allEventsCache: [CachedEvent]?
-    private var allEventsCacheTime: Date?
-
-    private let cacheValidDuration: TimeInterval = 5
-
     private init() {
         self.lastSyncTime = UserDefaults.standard.object(forKey: "EventCacheService.lastSyncTime") as? Date
     }
@@ -151,13 +146,8 @@ final class EventCacheService {
     var context: ModelContext? {
         return modelContext
     }
-
-    func invalidateCache() {
-        allEventsCache = nil
-        allEventsCacheTime = nil
-    }
     
-    // MARK: - 查询（从缓存）
+    // MARK: - 查询（从 SwiftData）
     
     func getEvents(for date: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CachedEvent] {
         let calendar = Calendar.current
@@ -170,22 +160,12 @@ final class EventCacheService {
     func getEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CachedEvent] {
         guard let context = modelContext else { return [] }
         
-        let now = Date()
-        if let cache = allEventsCache,
-           let cacheTime = allEventsCacheTime,
-           now.timeIntervalSince(cacheTime) < cacheValidDuration {
-            return filterEvents(cache, from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
-        }
-        
         let descriptor = FetchDescriptor<CachedEvent>(
             sortBy: [SortDescriptor(\.startDate)]
         )
         
         do {
             let events = try context.fetch(descriptor)
-            allEventsCache = events
-            allEventsCacheTime = now
-            
             return filterEvents(events, from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
         } catch {
             return []
@@ -222,7 +202,6 @@ final class EventCacheService {
         isSyncing = true
         defer {
             isSyncing = false
-            invalidateCache()
         }
         
         // 同步过去1年和未来2年的事件
@@ -511,8 +490,6 @@ final class EventCacheService {
     /// 清除所有缓存
     func clearCache() {
         guard let context = modelContext else { return }
-        
-        invalidateCache()
         
         let descriptor = FetchDescriptor<CachedEvent>()
         if let events = try? context.fetch(descriptor) {

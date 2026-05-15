@@ -655,7 +655,6 @@ final class CalendarService {
             cacheService.context?.delete(cached)
             do {
                 try cacheService.context?.save()
-                cacheService.invalidateCache()
             } catch {
             }
         }
@@ -677,7 +676,6 @@ final class CalendarService {
             cached.isCompleted = isCompleted
             do {
                 try cacheService.context?.save()
-                cacheService.invalidateCache()
             } catch {
                 // 更新缓存失败，记录到日志系统（待实现）
             }
