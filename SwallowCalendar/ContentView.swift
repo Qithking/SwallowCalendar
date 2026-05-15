@@ -19,11 +19,7 @@ struct ContentView: View {
 
     @State private var selectedDate = Date()
     @State private var calendarService = CalendarService.shared
-    @State private var refreshTrigger = false  // 用于触发视图刷新
     @State private var isSyncing = false  // 同步状态
-    @State private var shouldSyncOnAppear = false  // 是否在显示时同步
-    @State private var hasInitialized = false  // 是否已初始化
-    @State private var calendarGridRefreshTrigger = false  // 用于触发日历网格刷新
     
     // 用于强制视图响应主题色变化
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
@@ -41,8 +37,7 @@ struct ContentView: View {
                     selectedDate: $selectedDate,
                     calendarService: calendarService,
                     customSources: customSources,
-                    calendarPreferences: calendarPreferences,
-                    externalRefreshTrigger: $calendarGridRefreshTrigger
+                    calendarPreferences: calendarPreferences
                 )
 
                 Divider()
@@ -53,8 +48,9 @@ struct ContentView: View {
                     calendarService: calendarService,
                     calendarPreferences: calendarPreferences,
                     onEventsChanged: {
-                        // 事件变更时刷新日历网格缓存
-                        calendarGridRefreshTrigger.toggle()
+                        Task {
+                            await BackgroundSyncService.shared.syncOnce()
+                        }
                     }
                 )
                 .frame(maxHeight: .infinity)
@@ -74,40 +70,17 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SystemCalendarPreferencesChanged"))) { _ in
             // 系统日历偏好变化时，触发系统日历同步
             Task {
-                await syncCalendarEvents()
+                await BackgroundSyncService.shared.syncOnce()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SubscriptionSourcesChanged"))) { _ in
-            // 订阅日历源变化时，重新预加载订阅数据并刷新 UI
             Task {
-                try? await Task.sleep(nanoseconds: 100_000_000) // 等待 SwiftData @Query 更新
-                await calendarService.cacheService.syncSubscriptionEvents(sources: customSources)
-                // 同步完成后刷新日历网格视图
-                calendarGridRefreshTrigger.toggle()
+                await BackgroundSyncService.shared.syncOnce()
             }
         }
         .onChange(of: appSettings.syncSystemReminders) { _, _ in
-            // 系统提醒开关变化时，触发同步（开启时同步，关闭时清除缓存）
             Task {
-                await syncCalendarEvents()
-            }
-        }
-        .onChange(of: scenePhase) { oldPhase, newPhase in
-            // 从非活跃状态切换到活跃状态时，说明是用户点击了菜单栏图标
-            if oldPhase != .active && newPhase == .active {
-                shouldSyncOnAppear = true
-            }
-        }
-        .task {
-            // 首次启动或点击菜单栏图标时同步所有数据
-            // 注意：先设置标志避免动态 task id 导致中途取消
-            let needSync = !hasInitialized || shouldSyncOnAppear
-            shouldSyncOnAppear = false
-
-            if needSync {
-                hasInitialized = true
-                await initializeServices()
-                await syncAllData()
+                await BackgroundSyncService.shared.syncOnce()
             }
         }
     }
@@ -125,6 +98,18 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .help("设置")
+            
+            // 同步按钮
+            Button {
+                Task {
+                    await BackgroundSyncService.shared.syncOnce()
+                }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 13))
+            }
+            .buttonStyle(.plain)
+            .help("同步数据")
             
             // 固定窗口按钮
             Button {
@@ -199,82 +184,6 @@ struct ContentView: View {
         if response == .alertFirstButtonReturn {
             calendarService.openReminderSettings()
         }
-    }
-    
-    /// 后台同步日历事件和提醒到本地缓存（不含订阅日历）
-    private func syncCalendarEvents(shouldRefreshUI: Bool = true) async {
-        guard calendarService.authorizationStatus == .fullAccess else { return }
-
-        let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
-
-        if !enabledCals.isEmpty {
-            // 有开启的系统日历，同步数据
-            await calendarService.cacheService.syncEvents(from: calendarService, calendars: enabledCals)
-        } else {
-            // 所有系统日历都关闭，清除系统日历缓存（不含订阅日历、用户事件和提醒）
-            await calendarService.cacheService.clearSystemCalendarCache()
-        }
-
-        // 同步系统提醒（如果开启）
-        if appSettings.syncSystemReminders && calendarService.reminderAuthorizationStatus == .fullAccess {
-            await calendarService.cacheService.syncReminders(from: calendarService)
-        } else {
-            // 关闭提醒同步时，清除已缓存的提醒数据
-            await calendarService.cacheService.clearRemindersCache()
-        }
-
-        // 同步完成后刷新日历网格视图（必须在主线程）
-        if shouldRefreshUI {
-            await MainActor.run {
-                calendarGridRefreshTrigger.toggle()
-            }
-        }
-    }
-
-    /// 同步所有数据（开启的系统日历、订阅日历、系统提醒）
-    /// 主要用于应用启动及打开主窗口时同步数据
-    private func syncAllData() async {
-        // 1. 同步系统日历和提醒（不刷新 UI，由下方统一刷新）
-        await syncCalendarEvents(shouldRefreshUI: false)
-
-        // 2. 同步开启的订阅日历到 CachedEvent 缓存
-        let enabledSources = customSources.filter { $0.isEnabled }
-        if !enabledSources.isEmpty {
-            await calendarService.cacheService.syncSubscriptionEvents(sources: enabledSources)
-        }
-
-        // 3. 同步完成后刷新日历网格视图（必须在主线程）
-        await MainActor.run {
-            calendarGridRefreshTrigger.toggle()
-        }
-        
-        // 4. 数据同步完成后检查过期事项并弹出提醒
-        await ReminderAlertService.shared.checkExpiredEvents()
-    }
-    
-    /// 手动同步所有数据
-    private func manualSyncCalendarEvents() async {
-        guard !isSyncing else { return }
-
-        isSyncing = true
-
-        // 检查日历权限
-        if calendarService.authorizationStatus != .fullAccess {
-            await MainActor.run {
-                showAlert(title: "同步失败", message: "日历权限不足，请在系统设置中授权", style: .warning)
-            }
-            isSyncing = false
-            return
-        }
-
-        // 同步所有数据（开启的系统日历、订阅日历、系统提醒）
-        await syncAllData()
-
-        await MainActor.run {
-            showAlert(title: "同步成功", message: "日历数据同步完成", style: .informational)
-        }
-
-        isSyncing = false
     }
 
     private func showAlert(title: String, message: String, style: NSAlert.Style) {

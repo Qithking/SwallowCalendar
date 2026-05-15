@@ -35,6 +35,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // 配置事件缓存服务（使用共享容器）
         EventCacheService.shared.configure(with: Self.sharedModelContainer)
+
+        BackgroundSyncService.shared.configure(with: Self.sharedModelContainer)
+        BackgroundSyncService.shared.start()
         
         // 配置设置窗口管理器（使用共享容器）
         SettingsWindowManager.shared.modelContainer = Self.sharedModelContainer
