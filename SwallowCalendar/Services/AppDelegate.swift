@@ -90,16 +90,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     /// 创建 ModelContainer
     private static func createModelContainer() -> ModelContainer {
-        let schema = Schema([
-            CalendarPreference.self,
-            CustomCalendarSource.self,
-            CachedEvent.self,
-        ])
+        // 指定明确的存储路径，确保数据持久化稳定
+        let storeURL = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first!
+            .appendingPathComponent("SwallowCalendar")
+            .appendingPathComponent("default.store")
         
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        // 确保目录存在
+        try? FileManager.default.createDirectory(
+            at: storeURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        
+        let modelConfiguration = ModelConfiguration(
+            url: storeURL,
+            isStoredInMemoryOnly: false,
+            allowsSave: true
+        )
         
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            return try ModelContainer(
+                for: AppSchemaMigrationPlan.self,
+                configurations: modelConfiguration
+            )
         } catch {
             fatalError("创建 ModelContainer 失败: \(error)")
         }
