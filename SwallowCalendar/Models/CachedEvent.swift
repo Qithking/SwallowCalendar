@@ -332,7 +332,10 @@ final class EventCacheService {
                 existing.startDate = reminder.startDate
                 existing.endDate = reminder.endDate
                 existing.isAllDay = reminder.isAllDay
-                existing.isCompleted = reminder.isCompleted
+                // 保护已标记完成的事项，不被同步覆盖
+                if !existing.isCompleted {
+                    existing.isCompleted = reminder.isCompleted
+                }
                 existing.lastUpdated = Date()
             } else {
                 // 插入新提醒（支持无到期时间的提醒）
