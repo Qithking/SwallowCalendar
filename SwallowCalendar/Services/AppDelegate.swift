@@ -103,16 +103,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             withIntermediateDirectories: true
         )
         
+        let schema = Schema(AppSchemaV2.models)
         let modelConfiguration = ModelConfiguration(
-            url: storeURL,
-            isStoredInMemoryOnly: false,
-            allowsSave: true
+            "SwallowCalendar",
+            schema: schema,
+            url: storeURL
         )
         
         do {
             return try ModelContainer(
-                for: AppSchemaMigrationPlan.self,
-                configurations: modelConfiguration
+                for: schema,
+                migrationPlan: AppSchemaMigrationPlan.self,
+                configurations: [modelConfiguration]
             )
         } catch {
             fatalError("创建 ModelContainer 失败: \(error)")

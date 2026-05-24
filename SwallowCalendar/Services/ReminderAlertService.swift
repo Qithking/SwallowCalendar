@@ -134,7 +134,7 @@ final class ReminderAlertService {
         
         let dateText = formatDate(event.startDate)
         let expiredText = isExpired ? "（已过期）" : ""
-        alert.informativeText = "\(event.title ?? "未命名事项")\n\n\(dateText)\(expiredText)"
+        alert.informativeText = "\(event.title)\n\n\(dateText)\(expiredText)"
         
         alert.addButton(withTitle: "知道了")
         alert.addButton(withTitle: "标记完成")
@@ -159,7 +159,7 @@ final class ReminderAlertService {
         // 构建事项列表
         let itemsList = events.enumerated().map { index, event in
             let dateText = formatDate(event.startDate)
-            return "\(index + 1). \(event.title ?? "未命名事项")\n   \(dateText)"
+            return "\(index + 1). \(event.title)\n   \(dateText)"
         }.joined(separator: "\n\n")
         
         alert.informativeText = itemsList

@@ -339,10 +339,10 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         // 注意：此方法已在主线程调用（delegateQueue: .main）
         // 必须立即移动临时文件，否则系统会自动清理
-        let fileManager = FileManager.default
+        let fm = FileManager.default
         
         // 先验证临时文件是否存在
-        guard fileManager.fileExists(atPath: location.path) else {
+        guard fm.fileExists(atPath: location.path) else {
             Task { @MainActor in
                 self.downloadError = "下载文件不存在，请重试"
                 self.isDownloading = false
@@ -351,12 +351,12 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         }
         
         // 立即将文件移动到安全位置（使用 UUID 避免冲突）
-        let tempDir = FileManager.default.temporaryDirectory
+        let tempDir = fm.temporaryDirectory
         let tempFileName = "SwallowCalendar_\(UUID().uuidString).tmp"
         let tempDestURL = tempDir.appendingPathComponent(tempFileName)
         
         do {
-            try fileManager.moveItem(at: location, to: tempDestURL)
+            try fm.moveItem(at: location, to: tempDestURL)
         } catch {
             Task { @MainActor in
                 self.downloadError = "保存失败: \(error.localizedDescription)"
@@ -369,7 +369,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         Task { @MainActor in
             do {
                 // 获取下载目录
-                guard let downloadsFolder = fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
+                guard let downloadsFolder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
                     self.downloadError = "无法访问下载文件夹"
                     self.isDownloading = false
                     return
@@ -386,12 +386,12 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
                 let destinationUrl = downloadsFolder.appendingPathComponent(fileName)
 
                 // 如果目标文件已存在，先删除
-                if fileManager.fileExists(atPath: destinationUrl.path) {
-                    try fileManager.removeItem(at: destinationUrl)
+                if FileManager.default.fileExists(atPath: destinationUrl.path) {
+                    try FileManager.default.removeItem(at: destinationUrl)
                 }
 
                 // 移动文件到下载文件夹
-                try fileManager.moveItem(at: tempDestURL, to: destinationUrl)
+                try FileManager.default.moveItem(at: tempDestURL, to: destinationUrl)
 
                 self.downloadProgress = 1.0
                 self.isDownloading = false

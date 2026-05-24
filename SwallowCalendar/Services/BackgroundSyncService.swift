@@ -50,13 +50,13 @@ final class BackgroundSyncService {
         if !enabledCals.isEmpty {
             await CalendarService.shared.cacheService.syncEvents(from: CalendarService.shared, calendars: enabledCals)
         } else {
-            await CalendarService.shared.cacheService.clearSystemCalendarCache()
+            CalendarService.shared.cacheService.clearSystemCalendarCache()
         }
 
         if AppSettings.shared.syncSystemReminders && CalendarService.shared.reminderAuthorizationStatus == .fullAccess {
             await CalendarService.shared.cacheService.syncReminders(from: CalendarService.shared)
         } else {
-            await CalendarService.shared.cacheService.clearRemindersCache()
+            CalendarService.shared.cacheService.clearRemindersCache()
         }
 
         let enabledSources = customSources.filter { $0.isEnabled }
