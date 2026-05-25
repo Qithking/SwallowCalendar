@@ -53,6 +53,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     @Published var downloadError: String?
     @Published var showDownloadWindow = false
     @Published var usingProxy = false  // 是否正在使用代理下载
+    @Published var isInstalling = false  // 是否正在安装
 
     private var downloadSession: URLSession?
     private var downloadTask: URLSessionDownloadTask?
@@ -397,8 +398,8 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
                 self.isDownloading = false
                 self.closeDownloadWindow()
 
-                // 立即打开下载的文件（.dmg 会自动挂载，.zip 会自动解压）
-                NSWorkspace.shared.open(destinationUrl)
+                // 下载完成，提示用户是否安装并重启
+                self.promptInstallAndRestart(downloadedFileUrl: destinationUrl)
             } catch {
                 self.downloadError = "保存失败: \(error.localizedDescription)"
                 self.isDownloading = false
@@ -440,6 +441,295 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
             if isDownloading {
                 cancelDownload()
             }
+        }
+    }
+
+    // MARK: - Install & Restart
+
+    /// 下载完成后提示用户是否安装并重启
+    private func promptInstallAndRestart(downloadedFileUrl: URL) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "下载完成"
+        alert.informativeText = "SwallowCalendar v\(latestVersion) 已下载完成，是否立即安装并重启应用？"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "安装并重启")
+        alert.addButton(withTitle: "稍后手动安装")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            installAndRestart(downloadedFileUrl: downloadedFileUrl)
+        } else {
+            // 稍后手动安装，打开文件所在文件夹
+            NSWorkspace.shared.activateFileViewerSelecting([downloadedFileUrl])
+        }
+    }
+
+    /// 自动安装新版本并重启应用
+    private func installAndRestart(downloadedFileUrl: URL) {
+        isInstalling = true
+
+        // 在后台线程执行安装操作
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let appBundleURL = try self.extractAppBundle(from: downloadedFileUrl)
+
+                // 切回主线程执行替换和重启
+                DispatchQueue.main.async {
+                    do {
+                        try self.replaceAppBundle(with: appBundleURL)
+                        self.isInstalling = false
+                        self.restartApplication()
+                    } catch {
+                        self.isInstalling = false
+                        self.showInstallError("替换应用失败: \(error.localizedDescription)\n\n文件已保存到下载文件夹，请手动安装。", fileUrl: downloadedFileUrl)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.isInstalling = false
+                    self.showInstallError("解压失败: \(error.localizedDescription)\n\n文件已保存到下载文件夹，请手动安装。", fileUrl: downloadedFileUrl)
+                }
+            }
+        }
+    }
+
+    /// 显示安装错误，并提供打开文件的选项
+    private func showInstallError(_ message: String, fileUrl: URL) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "自动安装失败"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "打开文件")
+        alert.addButton(withTitle: "确定")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(fileUrl)
+        }
+    }
+
+    /// 从 DMG 或 ZIP 文件中提取 .app 包
+    nonisolated private func extractAppBundle(from fileUrl: URL) throws -> URL {
+        let fileExtension = fileUrl.pathExtension.lowercased()
+
+        if fileExtension == "dmg" {
+            return try extractAppFromDMG(dmgUrl: fileUrl)
+        } else if fileExtension == "zip" {
+            return try extractAppFromZip(zipUrl: fileUrl)
+        } else {
+            throw InstallError.unsupportedFormat
+        }
+    }
+
+    /// 从 DMG 中挂载并提取 .app 包
+    nonisolated private func extractAppFromDMG(dmgUrl: URL) throws -> URL {
+        let mountPoint = NSTemporaryDirectory() + "SwallowCalendar_Install_\(UUID().uuidString)"
+
+        // 创建挂载点目录
+        try FileManager.default.createDirectory(atPath: mountPoint, withIntermediateDirectories: true)
+
+        // 挂载 DMG
+        let attachProcess = Process()
+        attachProcess.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        attachProcess.arguments = ["attach", dmgUrl.path, "-mountpoint", mountPoint, "-nobrowse", "-quiet"]
+        let attachPipe = Pipe()
+        attachProcess.standardError = attachPipe
+        try attachProcess.run()
+        attachProcess.waitUntilExit()
+
+        guard attachProcess.terminationStatus == 0 else {
+            let errorData = attachPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorMessage = String(data: errorData, encoding: .utf8) ?? "未知错误"
+            // 尝试清理
+            try? FileManager.default.removeItem(atPath: mountPoint)
+            throw InstallError.dmgMountFailed(errorMessage)
+        }
+
+        // 查找 .app 文件
+        let contents = try FileManager.default.contentsOfDirectory(atPath: mountPoint)
+        guard let appName = contents.first(where: { $0.hasSuffix(".app") }) else {
+            // 卸载并清理
+            detachDMG(at: mountPoint)
+            throw InstallError.appNotFoundInArchive
+        }
+
+        // 将 .app 复制到临时目录
+        let tempAppURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("SwallowCalendar_\(UUID().uuidString).app")
+
+        // 如果临时位置已存在同名文件，先删除
+        if FileManager.default.fileExists(atPath: tempAppURL.path) {
+            try FileManager.default.removeItem(at: tempAppURL)
+        }
+
+        try FileManager.default.copyItem(
+            at: URL(fileURLWithPath: mountPoint).appendingPathComponent(appName),
+            to: tempAppURL
+        )
+
+        // 卸载 DMG
+        detachDMG(at: mountPoint)
+
+        return tempAppURL
+    }
+
+    /// 卸载 DMG
+    nonisolated private func detachDMG(at mountPoint: String) {
+        let detachProcess = Process()
+        detachProcess.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        detachProcess.arguments = ["detach", mountPoint, "-quiet"]
+        try? detachProcess.run()
+        detachProcess.waitUntilExit()
+    }
+
+    /// 从 ZIP 中提取 .app 包
+    nonisolated private func extractAppFromZip(zipUrl: URL) throws -> URL {
+        let tempDir = NSTemporaryDirectory() + "SwallowCalendar_Install_\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
+
+        // 使用 unzip 命令解压
+        let unzipProcess = Process()
+        unzipProcess.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+        unzipProcess.arguments = ["-o", "-q", zipUrl.path, "-d", tempDir]
+        let unzipPipe = Pipe()
+        unzipProcess.standardError = unzipPipe
+        try unzipProcess.run()
+        unzipProcess.waitUntilExit()
+
+        guard unzipProcess.terminationStatus == 0 else {
+            let errorData = unzipPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorMessage = String(data: errorData, encoding: .utf8) ?? "未知错误"
+            try? FileManager.default.removeItem(atPath: tempDir)
+            throw InstallError.zipExtractFailed(errorMessage)
+        }
+
+        // 递归查找 .app 文件
+        let appURL = try findAppBundle(in: URL(fileURLWithPath: tempDir))
+
+        // 将 .app 复制到临时目录（避免路径嵌套过深）
+        let tempAppURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("SwallowCalendar_\(UUID().uuidString).app")
+
+        if FileManager.default.fileExists(atPath: tempAppURL.path) {
+            try FileManager.default.removeItem(at: tempAppURL)
+        }
+
+        try FileManager.default.copyItem(at: appURL, to: tempAppURL)
+
+        // 清理解压临时目录
+        try? FileManager.default.removeItem(atPath: tempDir)
+
+        return tempAppURL
+    }
+
+    /// 递归查找 .app 包
+    nonisolated private func findAppBundle(in directory: URL) throws -> URL {
+        let contents = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+
+        // 优先在当前目录找 .app
+        if let appURL = contents.first(where: { $0.pathExtension == "app" }) {
+            return appURL
+        }
+
+        // 递归搜索子目录
+        for item in contents {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: item.path, isDirectory: &isDir), isDir.boolValue {
+                if let found = try? findAppBundle(in: item) {
+                    return found
+                }
+            }
+        }
+
+        throw InstallError.appNotFoundInArchive
+    }
+
+    /// 替换当前应用包
+    nonisolated private func replaceAppBundle(with newAppURL: URL) throws {
+        let currentAppURL = Bundle.main.bundleURL
+
+        // 如果新 app 和当前 app 名称不同，先重命名为当前 app 的名称
+        let currentAppName = currentAppURL.lastPathComponent
+        let newAppName = newAppURL.lastPathComponent
+
+        let finalNewAppURL: URL
+        if currentAppName != newAppName {
+            finalNewAppURL = newAppURL.deletingLastPathComponent().appendingPathComponent(currentAppName)
+            if FileManager.default.fileExists(atPath: finalNewAppURL.path) {
+                try FileManager.default.removeItem(at: finalNewAppURL)
+            }
+            try FileManager.default.moveItem(at: newAppURL, to: finalNewAppURL)
+        } else {
+            finalNewAppURL = newAppURL
+        }
+
+        // 删除旧应用
+        try FileManager.default.removeItem(at: currentAppURL)
+
+        // 将新应用移动到原位置
+        try FileManager.default.moveItem(at: finalNewAppURL, to: currentAppURL)
+    }
+
+    /// 重启应用
+    private func restartApplication() {
+        let appPath = Bundle.main.bundleURL.path
+        // 对路径中的空格进行转义，以便 shell 正确解析
+        let escapedPath = appPath.replacingOccurrences(of: " ", with: "\\ ")
+        let shellCommand = "sleep 1 && open \(escapedPath)"
+
+        // 优先尝试使用管理员权限执行（适用于 /Applications 目录下的应用）
+        let scriptWithAdmin = "do shell script \"\(shellCommand)\" with administrator privileges"
+
+        let appleScript = NSAppleScript(source: scriptWithAdmin)
+        var errorDict: NSDictionary?
+        appleScript?.executeAndReturnError(&errorDict)
+
+        if errorDict != nil {
+            // 管理员权限执行失败，尝试无特权方式（适用于用户目录下的应用）
+            restartWithoutPrivileges(appPath: appPath)
+            return
+        }
+
+        // 退出当前应用
+        NSApp.terminate(nil)
+    }
+
+    /// 无需管理员权限的重启方式（适用于用户目录下的应用）
+    private func restartWithoutPrivileges(appPath: String? = nil) {
+        let path = appPath ?? Bundle.main.bundleURL.path
+        let escapedPath = path.replacingOccurrences(of: " ", with: "\\ ")
+        let shellCommand = "sleep 1 && open \(escapedPath)"
+
+        let script = "do shell script \"\(shellCommand)\""
+
+        let appleScript = NSAppleScript(source: script)
+        var errorDict: NSDictionary?
+        appleScript?.executeAndReturnError(&errorDict)
+
+        NSApp.terminate(nil)
+    }
+}
+
+// MARK: - Install Errors
+
+enum InstallError: LocalizedError {
+    case unsupportedFormat
+    case dmgMountFailed(String)
+    case zipExtractFailed(String)
+    case appNotFoundInArchive
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedFormat:
+            return "不支持的安装包格式"
+        case .dmgMountFailed(let msg):
+            return "DMG 挂载失败: \(msg)"
+        case .zipExtractFailed(let msg):
+            return "ZIP 解压失败: \(msg)"
+        case .appNotFoundInArchive:
+            return "在安装包中未找到应用程序"
         }
     }
 }
@@ -486,7 +776,15 @@ struct DownloadProgressView: View {
 
             // 下面一行：错误信息/成功提示 + 操作按钮
             HStack {
-                if let error = updateChecker.downloadError {
+                if updateChecker.isInstalling {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                        Text("正在安装...")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                } else if let error = updateChecker.downloadError {
                     HStack(spacing: 4) {
                         ErrorTextView(message: error) {
                             errorCopied = true
@@ -511,7 +809,10 @@ struct DownloadProgressView: View {
 
                 Spacer()
 
-                if updateChecker.downloadError != nil {
+                if updateChecker.isInstalling {
+                    // 安装中不显示任何按钮
+                    EmptyView()
+                } else if updateChecker.downloadError != nil {
                     Button("重试") {
                         updateChecker.retryDownload()
                     }
@@ -533,13 +834,13 @@ struct DownloadProgressView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .disabled(linkCopied)
+                } else {
+                    Button("取消") {
+                        updateChecker.cancelDownload()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
-
-                Button("取消") {
-                    updateChecker.cancelDownload()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
