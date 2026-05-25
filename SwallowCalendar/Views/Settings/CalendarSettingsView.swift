@@ -22,6 +22,7 @@ struct CalendarSettingsView: View {
     @State private var refreshSuccess = false
     @State private var reminderAuthStatus: EKAuthorizationStatus = .notDetermined
     @State private var calendarAuthStatus: EKAuthorizationStatus = .notDetermined
+    @State private var hasLoadedCalendars = false
 
     var body: some View {
         @Bindable var settings = appSettings
@@ -205,11 +206,17 @@ struct CalendarSettingsView: View {
         .task {
             reminderAuthStatus = calendarService.reminderAuthorizationStatus
             calendarAuthStatus = calendarService.authorizationStatus
-            calendarService.loadCalendars()
+            // 仅在日历列表为空时加载，避免每次切换 tab 都重新加载
+            if !hasLoadedCalendars {
+                calendarService.loadCalendars()
+                hasLoadedCalendars = true
+            }
         }
         .onDisappear {
             // 窗口关闭时确保保存所有更改
             saveAllChanges()
+            // 重置加载状态，下次进入时重新加载日历
+            hasLoadedCalendars = false
         }
         .alert("刷新失败", isPresented: $showingSaveConfirmation) {
             Button("确定", role: .cancel) {}
@@ -460,6 +467,7 @@ struct CalendarSettingsView: View {
 struct CheckBox: View {
     let title: String
     @Binding var isChecked: Bool
+    var accentColorHex: String = AppSettings.shared.accentColorHex
 
     var body: some View {
         Button {
@@ -468,7 +476,7 @@ struct CheckBox: View {
             HStack(spacing: 4) {
                 Image(systemName: isChecked ? "checkmark.square.fill" : "square")
                     .font(.system(size: 12))
-                    .foregroundColor(isChecked ? Color(hex: AppSettings.shared.accentColorHex) : .secondary)
+                    .foregroundColor(isChecked ? Color(hex: accentColorHex) : .secondary)
                 Text(title)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
