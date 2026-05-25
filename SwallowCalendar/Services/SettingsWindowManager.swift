@@ -111,7 +111,36 @@ final class SettingsWindowManager {
         do {
             return try ModelContainer(for: schema, configurations: [config])
         } catch {
-            fatalError("创建 ModelContainer 失败: \(error)")
+            let errorDescription = error.localizedDescription
+            // 仅在 schema 与旧数据库不匹配时删除旧库重建
+            if errorDescription.contains("schema") || errorDescription.contains("migration") || errorDescription.contains("version") || errorDescription.contains("PersistentModel") {
+                print("[SettingsWindowManager] Schema 不匹配，删除旧数据库重建: \(error)")
+                Self.deleteDatabase()
+                do {
+                    return try ModelContainer(for: schema, configurations: [config])
+                } catch {
+                    fatalError("删除旧库后重建 ModelContainer 仍然失败: \(error)")
+                }
+            } else {
+                fatalError("创建 ModelContainer 失败（非 schema 问题）: \(error)")
+            }
+        }
+    }
+    
+    /// 删除 SwiftData 数据库文件
+    private static func deleteDatabase() {
+        let urls = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+        guard let appSupport = urls.first else { return }
+        
+        let defaultDB = appSupport
+            .appendingPathComponent("default.store", isDirectory: true)
+        let defaultDBWal = appSupport
+            .appendingPathComponent("default.store-wal", isDirectory: false)
+        let defaultDBShm = appSupport
+            .appendingPathComponent("default.store-shm", isDirectory: false)
+        
+        for url in [defaultDB, defaultDBWal, defaultDBShm] {
+            try? FileManager.default.removeItem(at: url)
         }
     }
 }

@@ -65,8 +65,6 @@ final class BackgroundSyncService {
         }
 
         await ReminderAlertService.shared.checkExpiredEvents()
-
-        NotificationCenter.default.post(name: Notification.Name("CalendarCacheCleared"), object: nil)
     }
 
     private func startTimer() {

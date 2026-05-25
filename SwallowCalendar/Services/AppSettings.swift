@@ -210,7 +210,7 @@ final class AppSettings {
     var isWindowPinned: Bool = false
 
     private init() {
-        self.launchAtLogin = UserDefaults.standard.bool(forKey: "launchAtLogin")
+        self.launchAtLogin = UserDefaults.standard.object(forKey: "launchAtLogin") as? Bool ?? false
         self.iconStyle = IconStyle(rawValue: UserDefaults.standard.string(forKey: "iconStyleRaw") ?? "") ?? .solidDate
         self.customIconFormat = UserDefaults.standard.string(forKey: "customIconFormat") ?? "d"
         self.customFormatStyle = CustomFormatStyle(rawValue: UserDefaults.standard.string(forKey: "customFormatStyle") ?? "") ?? .none

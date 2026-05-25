@@ -88,7 +88,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = StatusBarIconManager.shared.currentIcon
     }
     
-    /// 创建 ModelContainer
+    /// 创建 ModelContainer（不向下兼容，schema 变更时直接删除旧库重建）
     private static func createModelContainer() -> ModelContainer {
         let schema = Schema([
             CalendarPreference.self,
@@ -101,7 +101,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
-            fatalError("创建 ModelContainer 失败: \(error)")
+            let errorDescription = error.localizedDescription
+            // 仅在 schema 与旧数据库不匹配时删除旧库重建
+            // 其他错误（权限、磁盘满等）删除后也无法恢复，不应丢失数据
+            if errorDescription.contains("schema") || errorDescription.contains("migration") || errorDescription.contains("version") || errorDescription.contains("PersistentModel") {
+                print("[AppDelegate] Schema 不匹配，删除旧数据库重建: \(error)")
+                deleteDatabase()
+                do {
+                    return try ModelContainer(for: schema, configurations: [modelConfiguration])
+                } catch {
+                    fatalError("删除旧库后重建 ModelContainer 仍然失败: \(error)")
+                }
+            } else {
+                // 非迁移类错误，不删除数据，直接崩溃报告
+                fatalError("创建 ModelContainer 失败（非 schema 问题）: \(error)")
+            }
+        }
+    }
+    
+    /// 删除 SwiftData 数据库文件
+    private static func deleteDatabase() {
+        let urls = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+        guard let appSupport = urls.first else { return }
+        
+        // SwiftData 默认数据库路径
+        let defaultDB = appSupport
+            .appendingPathComponent("default.store", isDirectory: true)
+        let defaultDBWal = appSupport
+            .appendingPathComponent("default.store-wal", isDirectory: false)
+        let defaultDBShm = appSupport
+            .appendingPathComponent("default.store-shm", isDirectory: false)
+        
+        for url in [defaultDB, defaultDBWal, defaultDBShm] {
+            try? FileManager.default.removeItem(at: url)
         }
     }
 }
