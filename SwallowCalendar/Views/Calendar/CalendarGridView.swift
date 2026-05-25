@@ -198,11 +198,15 @@ struct CalendarGridView: View {
         }
     }
 
-    private func popoverDateString(for date: Date) -> String {
+    private static let popoverDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "M月d日"
-        return formatter.string(from: date)
+        return formatter
+    }()
+    
+    private func popoverDateString(for date: Date) -> String {
+        return Self.popoverDateFormatter.string(from: date)
     }
 
     // MARK: - Helpers

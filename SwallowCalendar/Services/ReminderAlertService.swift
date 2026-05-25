@@ -234,14 +234,16 @@ final class ReminderAlertService {
     }
     
     /// 格式化日期显示（统一格式：yyyy/MM/dd HH:mm）
-    private func formatDate(_ date: Date?) -> String {
-        guard let date = date else { return "" }
-        
+    private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy/MM/dd HH:mm"
         formatter.locale = Locale(identifier: "zh_CN")
-        
-        return formatter.string(from: date)
+        return formatter
+    }()
+    
+    private func formatDate(_ date: Date?) -> String {
+        guard let date = date else { return "" }
+        return Self.dateFormatter.string(from: date)
     }
     
     /// 限制 lastAlertedEventIDs 的大小，避免内存泄漏

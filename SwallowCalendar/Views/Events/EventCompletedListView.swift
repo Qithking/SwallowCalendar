@@ -167,5 +167,8 @@ struct EventCompletedListView: View {
         .onChange(of: filterMode) { _, _ in
             debouncedRefresh()
         }
+        .onChange(of: selectedDate) { _, _ in
+            debouncedRefresh()
+        }
     }
 }

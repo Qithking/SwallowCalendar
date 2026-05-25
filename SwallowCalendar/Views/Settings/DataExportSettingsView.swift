@@ -255,17 +255,31 @@ struct DataExportSettingsView: View {
         return lines.joined(separator: "\r\n")
     }
     
-    private func formatICSDate(_ date: Date) -> String {
+    private static let icsDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
         formatter.timeZone = TimeZone(identifier: "UTC")
-        return formatter.string(from: date)
+        return formatter
+    }()
+    
+    private static let icsDateOnlyFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd"
+        return formatter
+    }()
+    
+    private static let fileNameDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        return formatter
+    }()
+    
+    private func formatICSDate(_ date: Date) -> String {
+        return Self.icsDateFormatter.string(from: date)
     }
     
     private func formatICSDateOnly(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd"
-        return formatter.string(from: date)
+        return Self.icsDateOnlyFormatter.string(from: date)
     }
     
     private func escapeICSText(_ text: String) -> String {
@@ -277,9 +291,7 @@ struct DataExportSettingsView: View {
     }
     
     private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd_HHmmss"
-        return formatter.string(from: date)
+        return Self.fileNameDateFormatter.string(from: date)
     }
 }
 

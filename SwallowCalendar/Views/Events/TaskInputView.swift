@@ -25,6 +25,7 @@ struct TaskInputView: View {
     @State private var showAttributeEditor = false
     @State private var createAsReminder = false  // 是否创建为系统提醒
     @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
+    @State private var nlpTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 6) {
@@ -40,9 +41,16 @@ struct TaskInputView: View {
                         addTask()
                     }
                     .onChange(of: inputText) { _, newValue in
-                        updateFromNLP(newValue)
+                        // 防抖：取消之前的 NLP 解析任务
+                        nlpTask?.cancel()
                         if !newValue.isEmpty {
                             showAttributeEditor = true
+                            nlpTask = Task {
+                                // 等待 200ms，如果用户继续输入则取消
+                                try? await Task.sleep(nanoseconds: 200_000_000)
+                                guard !Task.isCancelled else { return }
+                                updateFromNLP(newValue)
+                            }
                         }
                     }
 

@@ -661,7 +661,9 @@ final class CalendarService {
     }
     
     /// 标记事件完成/未完成
-    /// - Note: 对于系统提醒，会同步更新到系统；对于日历事件，仅更新本地缓存
+    /// - Note: 对于系统提醒，会同步更新到系统提醒应用
+    /// - Note: 对于系统日历事件，在 EKEvent 的 notes 中追加完成标记以持久化状态；
+    ///         同步时会恢复 notes 中标记为已完成的事件状态
     /// - Note: 如果是周期任务，完成时会自动追加新的实例
     @MainActor
     func toggleEventCompleted(eventID: String, isCompleted: Bool, isReminder: Bool = false) {
@@ -669,6 +671,26 @@ final class CalendarService {
             guard let reminder = eventStore.calendarItem(withIdentifier: eventID) as? EKReminder else { return }
             reminder.isCompleted = isCompleted
             try? eventStore.save(reminder, commit: true)
+        } else {
+            // 日历事件：在 EKEvent 的 notes 中追加完成标记，确保同步后能恢复完成状态
+            if let event = eventStore.event(withIdentifier: eventID) {
+                let completedMarker = "[SC_COMPLETED]"
+                if isCompleted {
+                    // 追加完成标记（避免重复添加）
+                    if let notes = event.notes, !notes.contains(completedMarker) {
+                        event.notes = notes + " " + completedMarker
+                    } else if event.notes == nil {
+                        event.notes = completedMarker
+                    }
+                } else {
+                    // 移除完成标记
+                    if let notes = event.notes {
+                        event.notes = notes.replacingOccurrences(of: " " + completedMarker, with: "")
+                            .replacingOccurrences(of: completedMarker, with: "")
+                    }
+                }
+                try? eventStore.save(event, span: .thisEvent)
+            }
         }
         
         // 更新本地缓存

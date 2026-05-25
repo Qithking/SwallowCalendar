@@ -222,7 +222,6 @@ enum EventFilterMode: String, CaseIterable, Codable {
 
     func dateRange(from base: Date) -> (start: Date, end: Date) {
         let calendar = Calendar.current
-        let now = Date()
         
         // 根据设置确定一周起始日（1=周日，2=周一）
         var cal = calendar
@@ -230,26 +229,26 @@ enum EventFilterMode: String, CaseIterable, Codable {
 
         switch self {
         case .today:
-            return (cal.startOfDay(for: now), cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: now))!)
+            return (cal.startOfDay(for: base), cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: base))!)
         case .thisWeek:
-            // 手动计算本周开始（考虑 firstWeekday）
-            let weekday = cal.component(.weekday, from: now)
+            // 手动计算 base 所在周的开始（考虑 firstWeekday）
+            let weekday = cal.component(.weekday, from: base)
             let daysFromWeekStart = weekday - cal.firstWeekday
             let normalizedDaysFromStart = daysFromWeekStart < 0 ? daysFromWeekStart + 7 : daysFromWeekStart
-            let start = cal.startOfDay(for: cal.date(byAdding: .day, value: -normalizedDaysFromStart, to: now)!)
+            let start = cal.startOfDay(for: cal.date(byAdding: .day, value: -normalizedDaysFromStart, to: base)!)
             let end = cal.date(byAdding: .day, value: 7, to: start)!
             return (start, end)
         case .thisMonth:
-            let start = cal.date(from: cal.dateComponents([.year, .month], from: now))!
+            let start = cal.date(from: cal.dateComponents([.year, .month], from: base))!
             let end = cal.date(byAdding: .month, value: 1, to: start)!
             return (start, end)
         case .thisYear:
-            let start = cal.date(from: cal.dateComponents([.year], from: now))!
+            let start = cal.date(from: cal.dateComponents([.year], from: base))!
             let end = cal.date(byAdding: .year, value: 1, to: start)!
             return (start, end)
         case .all:
-            let past = cal.date(byAdding: .year, value: -5, to: now)!
-            let future = cal.date(byAdding: .year, value: 5, to: now)!
+            let past = cal.date(byAdding: .year, value: -5, to: base)!
+            let future = cal.date(byAdding: .year, value: 5, to: base)!
             return (past, future)
         }
     }

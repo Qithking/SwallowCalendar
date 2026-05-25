@@ -253,6 +253,13 @@ final class EventCacheService {
                 existing.isAllDay = event.isAllDay
                 // 保留原有的分类（如果是SwallowCalendar事项，保持为用户分类）
                 existing.lastUpdated = Date()
+                
+                // 从 EKEvent 的 notes 中恢复完成状态
+                if let ekEvent = CalendarService.shared.getEvent(withIdentifier: event.id) {
+                    if let notes = ekEvent.notes, notes.contains("[SC_COMPLETED]") {
+                        existing.isCompleted = true
+                    }
+                }
             } else {
                 // 查找对应的EKCalendar获取ID
                 let targetCalendar = calendars.first { $0.title == event.calendarTitle }

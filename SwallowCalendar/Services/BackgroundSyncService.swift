@@ -16,6 +16,8 @@ final class BackgroundSyncService {
     private var modelContainer: ModelContainer?
     private var syncTimer: Timer?
     private var isSyncing = false
+    /// 复用 ModelContext 避免频繁创建导致内存增长
+    private var syncContext: ModelContext?
 
     private let syncIntervalSeconds: TimeInterval = 60 * 60
 
@@ -23,6 +25,7 @@ final class BackgroundSyncService {
 
     func configure(with container: ModelContainer) {
         self.modelContainer = container
+        self.syncContext = ModelContext(container)
     }
 
     func start() {
@@ -40,7 +43,14 @@ final class BackgroundSyncService {
         isSyncing = true
         defer { isSyncing = false }
 
-        let context = ModelContext(container)
+        guard let container = modelContainer else { return }
+        guard CalendarService.shared.authorizationStatus == .fullAccess else { return }
+        
+        // 复用 ModelContext，避免每次创建新的导致内存增长
+        let context = syncContext ?? ModelContext(container)
+        if syncContext == nil {
+            syncContext = context
+        }
 
         let preferences = fetchPreferences(context: context)
         let customSources = fetchCustomSources(context: context)

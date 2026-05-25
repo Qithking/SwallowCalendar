@@ -37,9 +37,12 @@ struct EditEventSheet: View {
         let context = EventCacheService.shared.context
         var originalRec = RecurrenceType.none
         if let context = context {
-            let descriptor = FetchDescriptor<CachedEvent>()
-            if let allCached = try? context.fetch(descriptor),
-               let cached = allCached.first(where: { $0.eventID == event.id }) {
+            let targetID = event.id
+            var descriptor = FetchDescriptor<CachedEvent>(
+                predicate: #Predicate { $0.eventID == targetID }
+            )
+            descriptor.fetchLimit = 1
+            if let cached = try? context.fetch(descriptor).first {
                 originalRec = cached.recurrenceType
                 _taskRecurrence = State(initialValue: cached.recurrenceType)
             }
