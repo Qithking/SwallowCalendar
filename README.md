@@ -204,31 +204,6 @@ SwallowCalendar/
 
 ---
 
-## ☕ 赞助支持
-
-如果你觉得这个项目对你有帮助，欢迎请我喝杯咖啡 ☕
-
-<table>
-  <tr>
-    <td align="center">
-      <img src="./assets/sponsor/wxpay.png" alt="微信支付" width="200">
-      <br>
-      <strong>微信支付</strong>
-    </td>
-    <td align="center">
-      <img src="./assets/sponsor/alipay.jpg" alt="支付宝" width="200">
-      <br>
-      <strong>支付宝</strong>
-    </td>
-  </tr>
-</table>
-
-<p align="center">
-  <sub>感谢你的支持！每一笔赞助都是我持续维护和改进的动力 💪</sub>
-</p>
-
----
-
 <p align="center">
   <sub>⭐️ 如果觉得这个项目有帮助，欢迎 Star 支持一下！</sub>
 </p>
