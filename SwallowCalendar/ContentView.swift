@@ -145,6 +145,10 @@ struct ContentView: View {
     // MARK: - Services Init
 
     private func initializeServices() async {
+        // 将环境 ModelContext 注入服务层，确保服务写入与 @Query 读取使用同一上下文
+        EventCacheService.shared.setMainContext(modelContext)
+        BackgroundSyncService.shared.setMainContext(modelContext)
+
         // 请求日历和提醒权限（同时请求，只弹一次授权框）
         var reminderGranted = calendarService.reminderAuthorizationStatus == .fullAccess
         if calendarService.authorizationStatus == .notDetermined {

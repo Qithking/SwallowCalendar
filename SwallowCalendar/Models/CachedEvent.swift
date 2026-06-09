@@ -122,7 +122,10 @@ final class EventCacheService {
     static let shared = EventCacheService()
 
     private var modelContainer: ModelContainer?
-    private var modelContext: ModelContext?
+    /// 主上下文：由 ContentView 注入环境 ModelContext，确保与 @Query 使用同一上下文
+    private var mainContext: ModelContext?
+    /// 备用上下文：在 mainContext 设置前使用，由 configure() 创建
+    private var fallbackContext: ModelContext?
 
     var isSyncing = false
 
@@ -140,11 +143,17 @@ final class EventCacheService {
     
     func configure(with container: ModelContainer) {
         self.modelContainer = container
-        self.modelContext = ModelContext(container)
+        self.fallbackContext = ModelContext(container)
     }
     
+    /// 设置主上下文（由 ContentView 注入环境 ModelContext，确保 @Query 能响应变更）
+    func setMainContext(_ context: ModelContext) {
+        self.mainContext = context
+    }
+    
+    /// 统一获取上下文：优先使用 mainContext（与 @Query 共享），否则使用 fallbackContext
     var context: ModelContext? {
-        return modelContext
+        return mainContext ?? fallbackContext
     }
     
     // MARK: - 查询（从 SwiftData）
@@ -158,7 +167,7 @@ final class EventCacheService {
     }
     
     func getEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CachedEvent] {
-        guard let context = modelContext else { return [] }
+        guard let context = self.context else { return [] }
         
         let descriptor = FetchDescriptor<CachedEvent>(
             sortBy: [SortDescriptor(\.startDate)]
@@ -196,7 +205,7 @@ final class EventCacheService {
     /// 同步日历事件到本地缓存
     @MainActor
     func syncEvents(from calendarService: CalendarService, calendars: [EKCalendar]) async {
-        guard let context = modelContext else { return }
+        guard let context = self.context else { return }
         guard !isSyncing else { return }
         
         isSyncing = true
@@ -303,7 +312,7 @@ final class EventCacheService {
     /// - Note: 无到期时间的提醒也会同步，但不受日期范围限制
     @MainActor
     func syncReminders(from calendarService: CalendarService) async {
-        guard let context = modelContext else { return }
+        guard let context = self.context else { return }
         guard AppSettings.shared.syncSystemReminders else { return }
 
         // 从系统提醒获取（获取所有提醒，包括已完成的，以正确同步外部状态变化）
@@ -371,7 +380,7 @@ final class EventCacheService {
     /// 清除所有提醒缓存（category为user且calendarTitle为"提醒"的）
     @MainActor
     func clearRemindersCache() {
-        guard let context = modelContext else { return }
+        guard let context = self.context else { return }
         
         let userCategory = EventCategory.user.rawValue
         let descriptor = FetchDescriptor<CachedEvent>(
@@ -393,7 +402,7 @@ final class EventCacheService {
     /// - Parameter sources: 启用的 ICS 订阅源列表
     @MainActor
     func syncSubscriptionEvents(sources: [CustomCalendarSource]) async {
-        guard let context = modelContext else { return }
+        guard let context = self.context else { return }
         guard !isSubscriptionSyncing else { return }
         isSubscriptionSyncing = true
         defer { isSubscriptionSyncing = false }
@@ -481,7 +490,7 @@ final class EventCacheService {
     /// 用于所有系统日历都关闭时，清除对应的缓存数据
     @MainActor
     func clearSystemCalendarCache() {
-        guard let context = modelContext else { return }
+        guard let context = self.context else { return }
 
         let descriptor = FetchDescriptor<CachedEvent>()
         if let events = try? context.fetch(descriptor) {
@@ -496,7 +505,7 @@ final class EventCacheService {
 
     /// 清除所有缓存
     func clearCache() {
-        guard let context = modelContext else { return }
+        guard let context = self.context else { return }
         
         let descriptor = FetchDescriptor<CachedEvent>()
         if let events = try? context.fetch(descriptor) {

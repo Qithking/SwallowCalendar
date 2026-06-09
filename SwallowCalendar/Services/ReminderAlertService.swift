@@ -16,15 +16,21 @@ final class ReminderAlertService {
     
     private var timer: Timer?
     private var lastAlertedEventIDs: Set<String> = []
-    private var modelContainer: ModelContainer?
+    /// 持久化已提醒事件ID的 UserDefaults 键
+    private static let alertedEventIDsKey = "ReminderAlertService.lastAlertedEventIDs"
     /// 已提醒事件ID的最大缓存数量
     private let maxAlertedEventIDs = 1000
     
-    private init() {}
+    private init() {
+        // 从 UserDefaults 恢复已提醒事件ID，避免应用重启后重复弹窗
+        if let saved = UserDefaults.standard.stringArray(forKey: Self.alertedEventIDsKey) {
+            self.lastAlertedEventIDs = Set(saved)
+        }
+    }
     
     /// 配置服务
     func configure(with container: ModelContainer) {
-        self.modelContainer = container
+        // modelContainer 已不再需要，保留方法以兼容调用方
     }
     
     /// 启动提醒检查
@@ -104,6 +110,8 @@ final class ReminderAlertService {
                 showCombinedAlert(for: newEvents, isExpired: isExpired)
                 // 记录已提醒的事件ID
                 newEvents.forEach { lastAlertedEventIDs.insert($0.eventID) }
+                // 持久化到 UserDefaults，避免应用重启后重复弹窗
+                persistAlertedEventIDs()
                 // 限制 Set 大小，避免内存泄漏
                 trimAlertedEventIDsIfNeeded()
                 // 5分钟后允许再次提醒
@@ -210,14 +218,13 @@ final class ReminderAlertService {
     
     /// 标记事件为完成
     private func markAsCompleted(eventID: String) {
-        guard let container = modelContainer else { return }
-        
-        let context = ModelContext(container)
-        
+        // 使用 EventCacheService 的统一上下文，确保与 @Query 同步
+        guard let context = EventCacheService.shared.context else { return }
+
         let descriptor = FetchDescriptor<CachedEvent>(
             predicate: #Predicate { $0.eventID == eventID }
         )
-        
+
         do {
             if let event = try context.fetch(descriptor).first {
                 // 使用 CalendarService 的双向同步方法（同时更新 EventKit 和 SwiftData）
@@ -246,6 +253,11 @@ final class ReminderAlertService {
         return Self.dateFormatter.string(from: date)
     }
     
+    /// 将已提醒事件ID持久化到 UserDefaults
+    private func persistAlertedEventIDs() {
+        UserDefaults.standard.set(Array(lastAlertedEventIDs), forKey: Self.alertedEventIDsKey)
+    }
+
     /// 限制 lastAlertedEventIDs 的大小，避免内存泄漏
     private func trimAlertedEventIDsIfNeeded() {
         if lastAlertedEventIDs.count > maxAlertedEventIDs {
@@ -258,10 +270,12 @@ final class ReminderAlertService {
             }
             print("[ReminderAlertService] 清理了 \(overflow) 个过期提醒记录")
         }
+        persistAlertedEventIDs()
     }
     
     /// 清除已提醒记录（用于重置）
     func clearAlertHistory() {
         lastAlertedEventIDs.removeAll()
+        persistAlertedEventIDs()
     }
 }

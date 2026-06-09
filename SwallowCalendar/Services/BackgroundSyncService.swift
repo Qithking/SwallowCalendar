@@ -16,8 +16,6 @@ final class BackgroundSyncService {
     private var modelContainer: ModelContainer?
     private var syncTimer: Timer?
     private var isSyncing = false
-    /// 复用 ModelContext 避免频繁创建导致内存增长
-    private var syncContext: ModelContext?
 
     private let syncIntervalSeconds: TimeInterval = 60 * 60
 
@@ -25,7 +23,11 @@ final class BackgroundSyncService {
 
     func configure(with container: ModelContainer) {
         self.modelContainer = container
-        self.syncContext = ModelContext(container)
+    }
+
+    /// 设置主上下文（由 ContentView 注入，确保与 @Query 共享同一上下文）
+    func setMainContext(_ context: ModelContext) {
+        EventCacheService.shared.setMainContext(context)
     }
 
     func start() {
@@ -43,14 +45,8 @@ final class BackgroundSyncService {
         isSyncing = true
         defer { isSyncing = false }
 
-        guard let container = modelContainer else { return }
-        guard CalendarService.shared.authorizationStatus == .fullAccess else { return }
-        
-        // 复用 ModelContext，避免每次创建新的导致内存增长
-        let context = syncContext ?? ModelContext(container)
-        if syncContext == nil {
-            syncContext = context
-        }
+        // 使用 EventCacheService 的统一上下文（优先为环境上下文，与 @Query 共享）
+        guard let context = EventCacheService.shared.context else { return }
 
         let preferences = fetchPreferences(context: context)
         let customSources = fetchCustomSources(context: context)
