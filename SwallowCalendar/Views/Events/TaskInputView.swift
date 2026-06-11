@@ -170,7 +170,7 @@ struct TaskInputView: View {
                         .foregroundColor(.secondary)
                     Picker("", selection: $taskRecurrence) {
                         Text("1次").tag(RecurrenceType.none)
-                        Text("不限").tag(RecurrenceType.daily)
+                        Text("不限").tag(RecurrenceType.unlimited)
                         Text("每天").tag(RecurrenceType.daily)
                         Text("每周").tag(RecurrenceType.weekly)
                         Text("每月").tag(RecurrenceType.monthly)

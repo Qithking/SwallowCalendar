@@ -407,7 +407,7 @@ final class CalendarService {
         if let recurrence = recurrence, recurrence != .none {
             let freq: EKRecurrenceFrequency
             switch recurrence {
-            case .daily: freq = .daily
+            case .daily, .unlimited: freq = .daily
             case .weekly: freq = .weekly
             case .monthly: freq = .monthly
             case .yearly: freq = .yearly
@@ -850,7 +850,7 @@ final class CalendarService {
         let calendar = Calendar.current
         
         switch recurrenceType {
-        case .daily:
+        case .unlimited, .daily:
             return calendar.date(byAdding: .day, value: 1, to: date)
         case .weekly:
             return calendar.date(byAdding: .weekOfYear, value: 1, to: date)
@@ -880,7 +880,7 @@ final class CalendarService {
         
         // 根据周期类型增加农历时间
         switch recurrenceType {
-        case .daily:
+        case .unlimited, .daily:
             // 农历每天：加1天
             lunarComponents.day = lunarDay + 1
         case .weekly:
@@ -989,50 +989,22 @@ final class CalendarService {
                     return
                 }
                 
-                // 创建新的事件
-                let newEventID = UUID().uuidString
+                // 判断是否全天事件
                 let isAllDay = Calendar.current.component(.hour, from: lastDate) == 0
                     && Calendar.current.component(.minute, from: lastDate) == 0
                 
-                // 全天事件的结束日期是第二天
-                let cachedEndDate: Date? = {
-                    if isAllDay {
-                        return Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: finalDate))
-                    } else {
-                        return finalDate.addingTimeInterval(3600)
-                    }
-                }()
-                
-                // 保存到本地缓存
-                let cached = CachedEvent(
-                    eventID: newEventID,
-                    title: completedEvent.title,
-                    startDate: finalDate,
-                    endDate: cachedEndDate,
-                    isAllDay: isAllDay,
-                    calendarID: completedEvent.calendarID,
-                    calendarTitle: completedEvent.calendarTitle,
-                    calendarColorHex: completedEvent.calendarColorHex,
-                    category: .user,
-                    isCompleted: false,
-                    priority: completedEvent.priority,
-                    groupId: groupId,
-                    groupIndex: nextIndex,
-                    recurrenceType: completedEvent.recurrenceType,
-                    isLunar: completedEvent.isLunar
-                )
-                context.insert(cached)
-                try context.save()
-                
-                // 同步到系统日历/提醒
+                // 同步到系统日历/提醒（create 方法会同时插入缓存，避免重复插入）
                 if completedEvent.calendarTitle == "提醒" {
-                    // 创建系统提醒
-                    try createReminder(
+                    // 创建系统提醒（带组信息）
+                    try createReminderWithGroupInfo(
                         title: completedEvent.title,
                         dueDate: finalDate,
                         isAllDay: isAllDay,
                         priority: completedEvent.priority > 0 ? EventPriority(rawValue: completedEvent.priority) : nil,
-                        recurrence: nil  // 每个实例都是独立的
+                        groupId: groupId,
+                        groupIndex: nextIndex,
+                        recurrenceType: completedEvent.recurrenceType,
+                        isLunar: completedEvent.isLunar
                     )
                 } else {
                     // 全天事件的结束日期是第二天
@@ -1044,17 +1016,20 @@ final class CalendarService {
                         }
                     }()
                     
-                    // 创建系统日历事件
-                    try createCalendarEvent(
+                    // 创建系统日历事件（带组信息）
+                    try createCalendarEventWithGroupInfo(
                         title: completedEvent.title,
                         startDate: finalDate,
                         endDate: calendarEndDate,
                         isAllDay: isAllDay,
                         calendar: calendars.first { $0.calendarIdentifier == completedEvent.calendarID },
                         priority: completedEvent.priority > 0 ? EventPriority(rawValue: completedEvent.priority) : nil,
-                        recurrence: nil,
                         reminderMinutes: nil,
-                        category: .user
+                        category: .user,
+                        groupId: groupId,
+                        groupIndex: nextIndex,
+                        recurrenceType: completedEvent.recurrenceType,
+                        isLunar: completedEvent.isLunar
                     )
                 }
             } catch {
@@ -1159,7 +1134,7 @@ extension CalendarService {
         // 循环推进直到时间在未来
         while currentDate <= now {
             switch recurrenceType {
-            case .daily:
+            case .unlimited, .daily:
                 currentDate = Calendar.current.date(byAdding: .day, value: 1, to: currentDate) ?? currentDate
             case .weekly:
                 currentDate = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: currentDate) ?? currentDate

@@ -15,7 +15,7 @@ final class ReminderAlertService {
     static let shared = ReminderAlertService()
     
     private var timer: Timer?
-    private var lastAlertedEventIDs: Set<String> = []
+    private var lastAlertedEventIDs: [String] = []
     /// 持久化已提醒事件ID的 UserDefaults 键
     private static let alertedEventIDsKey = "ReminderAlertService.lastAlertedEventIDs"
     /// 已提醒事件ID的最大缓存数量
@@ -24,7 +24,7 @@ final class ReminderAlertService {
     private init() {
         // 从 UserDefaults 恢复已提醒事件ID，避免应用重启后重复弹窗
         if let saved = UserDefaults.standard.stringArray(forKey: Self.alertedEventIDsKey) {
-            self.lastAlertedEventIDs = Set(saved)
+            self.lastAlertedEventIDs = saved
         }
     }
     
@@ -111,15 +111,21 @@ final class ReminderAlertService {
                 // 合并显示所有到期/即将到期的事项
                 let isExpired = includeExpired || newEvents.allSatisfy { ($0.startDate ?? now) < now }
                 showCombinedAlert(for: newEvents, isExpired: isExpired)
-                // 记录已提醒的事件ID
-                newEvents.forEach { lastAlertedEventIDs.insert($0.eventID) }
+                // 记录已提醒的事件ID（追加到末尾，保持插入顺序）
+                newEvents.forEach { event in
+                    if !lastAlertedEventIDs.contains(event.eventID) {
+                        lastAlertedEventIDs.append(event.eventID)
+                    }
+                }
                 // 持久化到 UserDefaults，避免应用重启后重复弹窗
                 persistAlertedEventIDs()
-                // 限制 Set 大小，避免内存泄漏
+                // 限制数组大小，避免内存泄漏
                 trimAlertedEventIDsIfNeeded()
                 // 5分钟后允许再次提醒
                 DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak self] in
-                    newEvents.forEach { self?.lastAlertedEventIDs.remove($0.eventID) }
+                    newEvents.forEach { event in
+                        self?.lastAlertedEventIDs.removeAll { $0 == event.eventID }
+                    }
                 }
             }
         } catch {
@@ -293,19 +299,15 @@ final class ReminderAlertService {
     
     /// 将已提醒事件ID持久化到 UserDefaults
     private func persistAlertedEventIDs() {
-        UserDefaults.standard.set(Array(lastAlertedEventIDs), forKey: Self.alertedEventIDsKey)
+        UserDefaults.standard.set(lastAlertedEventIDs, forKey: Self.alertedEventIDsKey)
     }
 
     /// 限制 lastAlertedEventIDs 的大小，避免内存泄漏
+    /// 淘汰最早添加的记录（数组头部），保留最近的记录（数组尾部）
     private func trimAlertedEventIDsIfNeeded() {
         if lastAlertedEventIDs.count > maxAlertedEventIDs {
-            // 保留最近的 maxAlertedEventIDs 条记录
             let overflow = lastAlertedEventIDs.count - maxAlertedEventIDs
-            // 由于 Set 无序，移除前半部分
-            let toRemove = Array(lastAlertedEventIDs.prefix(overflow))
-            for id in toRemove {
-                lastAlertedEventIDs.remove(id)
-            }
+            lastAlertedEventIDs.removeFirst(overflow)
             print("[ReminderAlertService] 清理了 \(overflow) 个过期提醒记录")
         }
         persistAlertedEventIDs()

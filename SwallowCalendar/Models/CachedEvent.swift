@@ -236,17 +236,16 @@ final class EventCacheService {
         // 获取当前启用的日历ID集合
         let enabledCalendarIDs = Set(calendars.map { $0.calendarIdentifier })
         
-        // 删除已不存在的系统事件，以及被禁用日历的缓存事件
+        // 删除已不存在的系统事件（缓存中存在但系统中已不存在）
         let deletedIDs = Set(existingByID.keys).subtracting(newIDs)
         for eventID in deletedIDs {
             if let event = existingByID[eventID] {
                 // 跳过提醒事件（由 syncReminders 管理）
                 guard event.calendarTitle != "提醒" else { continue }
-                
-                // 删除不在启用日历中的事件（即被禁用日历的缓存）
-                if !enabledCalendarIDs.contains(event.calendarID) {
-                    context.delete(event)
-                }
+                // 跳过用户分类事件（由用户操作管理，不在系统同步中删除）
+                guard event.category != .user else { continue }
+                // 删除系统中已不存在的事件
+                context.delete(event)
             }
         }
         
@@ -258,6 +257,12 @@ final class EventCacheService {
                 existing.startDate = event.startDate ?? now
                 existing.endDate = event.endDate ?? now
                 existing.isAllDay = event.isAllDay
+                existing.calendarColorHex = event.calendarColorHex
+                existing.calendarTitle = event.calendarTitle
+                // 同步日历ID（系统日历可能被重新配置）
+                if let targetCal = calendars.first(where: { $0.title == event.calendarTitle }) {
+                    existing.calendarID = targetCal.calendarIdentifier
+                }
                 // 保留原有的分类（如果是SwallowCalendar事项，保持为用户分类）
                 existing.lastUpdated = Date()
                 

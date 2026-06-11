@@ -27,6 +27,7 @@ enum EventPriority: Int, CaseIterable {
 
 enum RecurrenceType: String, CaseIterable {
     case none = "1次"           // 不重复
+    case unlimited = "不限"     // 不限次数（每天重复，无结束日期）
     case daily = "每天"
     case weekly = "每周"
     case monthly = "每月"

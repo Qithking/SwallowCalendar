@@ -108,12 +108,13 @@ final class ICSService {
                 formatter.timeZone = TimeZone(identifier: "UTC")
                 formatter.dateFormat = "yyyyMMdd'T'HHmmss"
             } else {
-                formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+                // 非 UTC 时间，使用本地时区
+                formatter.timeZone = TimeZone.current
                 formatter.dateFormat = "yyyyMMdd'T'HHmmss"
             }
         } else {
-            // 全天事件 - 使用本地时区的日期
-            formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+            // 全天事件 - 使用本地时区
+            formatter.timeZone = TimeZone.current
             formatter.dateFormat = "yyyyMMdd"
         }
 
