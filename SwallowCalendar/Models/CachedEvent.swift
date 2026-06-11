@@ -117,6 +117,7 @@ final class CachedEvent {
 
 // MARK: - 缓存服务
 
+@MainActor
 @Observable
 final class EventCacheService {
     static let shared = EventCacheService()
@@ -124,8 +125,6 @@ final class EventCacheService {
     private var modelContainer: ModelContainer?
     /// 主上下文：由 ContentView 注入环境 ModelContext，确保与 @Query 使用同一上下文
     private var mainContext: ModelContext?
-    /// 备用上下文：在 mainContext 设置前使用，由 configure() 创建
-    private var fallbackContext: ModelContext?
 
     var isSyncing = false
 
@@ -143,7 +142,6 @@ final class EventCacheService {
     
     func configure(with container: ModelContainer) {
         self.modelContainer = container
-        self.fallbackContext = ModelContext(container)
     }
     
     /// 设置主上下文（由 ContentView 注入环境 ModelContext，确保 @Query 能响应变更）
@@ -151,9 +149,9 @@ final class EventCacheService {
         self.mainContext = context
     }
     
-    /// 统一获取上下文：优先使用 mainContext（与 @Query 共享），否则使用 fallbackContext
+    /// 统一获取上下文：优先使用 mainContext（与 @Query 共享），否则使用容器的 mainContext
     var context: ModelContext? {
-        return mainContext ?? fallbackContext
+        return mainContext ?? modelContainer?.mainContext
     }
     
     // MARK: - 查询（从 SwiftData）
@@ -313,6 +311,7 @@ final class EventCacheService {
     @MainActor
     func syncReminders(from calendarService: CalendarService) async {
         guard let context = self.context else { return }
+        guard !isSyncing else { return }
         guard AppSettings.shared.syncSystemReminders else { return }
 
         // 从系统提醒获取（获取所有提醒，包括已完成的，以正确同步外部状态变化）

@@ -30,11 +30,9 @@ final class BackgroundSyncService {
         EventCacheService.shared.setMainContext(context)
     }
 
-    func start() {
-        Task {
-            await syncOnce()
-            startTimer()
-        }
+    func start() async {
+        await syncOnce()
+        startTimer()
     }
 
     func syncOnce() async {

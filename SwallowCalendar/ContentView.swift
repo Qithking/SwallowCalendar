@@ -176,6 +176,9 @@ struct ContentView: View {
             modelContext.insert(defaultSource)
             try? modelContext.save()
         }
+
+        // 在 mainContext 注入后启动后台同步，确保使用同一 ModelContext
+        await BackgroundSyncService.shared.start()
     }
 
     /// 弹窗引导用户去系统设置开启提醒权限

@@ -37,10 +37,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         EventCacheService.shared.configure(with: Self.sharedModelContainer)
 
         BackgroundSyncService.shared.configure(with: Self.sharedModelContainer)
-        BackgroundSyncService.shared.start()
-        
-        // 配置设置窗口管理器（使用共享容器）
-        SettingsWindowManager.shared.modelContainer = Self.sharedModelContainer
+        // 注意：BackgroundSyncService.start() 不在此处调用，
+        // 改由 ContentView.task 注入 mainContext 后再启动，确保使用同一 ModelContext
         
         // 检查更新
         UpdateChecker.shared.checkOnStartup()
