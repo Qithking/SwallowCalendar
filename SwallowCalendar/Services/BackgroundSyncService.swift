@@ -67,8 +67,6 @@ final class BackgroundSyncService {
         if !enabledSources.isEmpty {
             await CalendarService.shared.cacheService.syncSubscriptionEvents(sources: enabledSources)
         }
-
-        await ReminderAlertService.shared.checkExpiredEvents()
     }
 
     private func startTimer() {

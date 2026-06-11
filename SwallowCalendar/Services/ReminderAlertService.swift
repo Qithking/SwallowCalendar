@@ -50,8 +50,9 @@ final class ReminderAlertService {
     }
     
     /// 检查过期事项（供数据同步完成后调用）
+    /// 启动时的检查会忽略 lastAlertedEventIDs 过滤，确保过期事项始终被提示
     func checkExpiredEvents() async {
-        await checkDueEvents(includeExpired: true)
+        await checkDueEvents(includeExpired: true, ignoreAlertedCache: true)
         print("[ReminderAlertService] 数据同步后过期事项检查完成")
     }
     
@@ -62,8 +63,10 @@ final class ReminderAlertService {
     }
     
     /// 检查到期的待办事项
-    /// - Parameter includeExpired: 是否包含已过期的事项（仅在应用启动时使用）
-    private func checkDueEvents(includeExpired: Bool = false) async {
+    /// - Parameters:
+    ///   - includeExpired: 是否包含已过期的事项（仅在应用启动时使用）
+    ///   - ignoreAlertedCache: 是否忽略已提醒缓存（启动时为 true，确保过期事项始终提示）
+    private func checkDueEvents(includeExpired: Bool = false, ignoreAlertedCache: Bool = false) async {
         // 使用 EventCacheService 的上下文，确保与待办列表显示的数据一致
         guard let context = EventCacheService.shared.context else {
             print("[ReminderAlertService] EventCacheService 未配置")
@@ -101,8 +104,8 @@ final class ReminderAlertService {
                 }
             }
             
-            // 过滤掉已经提醒过的事件
-            let newEvents = dueEvents.filter { !lastAlertedEventIDs.contains($0.eventID) }
+            // 过滤掉已经提醒过的事件（启动时忽略缓存，确保过期事项始终提示）
+            let newEvents = ignoreAlertedCache ? dueEvents : dueEvents.filter { !lastAlertedEventIDs.contains($0.eventID) }
             
             if newEvents.count > 0 {
                 // 合并显示所有到期/即将到期的事项
@@ -164,13 +167,48 @@ final class ReminderAlertService {
         alert.messageText = "\(events.count) 个待办事项\(isExpired ? "已过期" : "即将到期")"
         alert.alertStyle = isExpired ? .warning : .informational
         
-        // 构建事项列表
+        // 构建事项列表文本
         let itemsList = events.enumerated().map { index, event in
             let dateText = formatDate(event.startDate)
             return "\(index + 1). \(event.title ?? "未命名事项")\n   \(dateText)"
         }.joined(separator: "\n\n")
         
-        alert.informativeText = itemsList
+        // 使用 NSScrollView 限制内容最大高度 500px，超出显示滚动条
+        let contentWidth: CGFloat = 380
+        let font = NSFont.systemFont(ofSize: 13)
+        
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: 40))
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.textContainerInset = NSSize(width: 0, height: 4)
+        textView.defaultParagraphStyle = {
+            let ps = NSMutableParagraphStyle()
+            ps.lineBreakMode = .byWordWrapping
+            return ps
+        }()
+        textView.textColor = .textColor
+        textView.font = font
+        textView.string = itemsList
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.containerSize = NSSize(width: contentWidth - 20, height: .greatestFiniteMagnitude)
+        textView.sizeToFit()
+        
+        let textHeight = max(textView.frame.height, 40)
+        let contentHeight = min(textHeight, 350)
+        
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.documentView = textView
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+        scrollView.frame = NSRect(x: 0, y: 0, width: contentWidth, height: contentHeight)
+        
+        alert.accessoryView = scrollView
         
         alert.addButton(withTitle: "知道了")
         alert.addButton(withTitle: "全部标记完成")
