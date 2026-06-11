@@ -81,7 +81,6 @@ struct EventPanelView: View {
                     onCompleteEvent: { event in
                         calendarService.toggleEventCompleted(eventID: event.id, isCompleted: true, isReminder: event.isReminder)
                         refreshTrigger.toggle()
-                        onEventsChanged?()
                     },
                     onDeleteEvent: { event in
                         showDeleteConfirmation(event: event)
@@ -119,7 +118,6 @@ struct EventPanelView: View {
                     onUncompleteEvent: { event in
                         calendarService.toggleEventCompleted(eventID: event.id, isCompleted: false, isReminder: event.isReminder)
                         refreshTrigger.toggle()
-                        onEventsChanged?()
                     },
                     onDeleteEvent: { event in
                         showDeleteConfirmation(event: event)
