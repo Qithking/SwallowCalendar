@@ -40,9 +40,15 @@ struct NLPTaskParser {
             result.recurrence = recurrence
         }
 
-        // 对于周期任务，如果时间已经过去，推进到下一个周期
+        // 对于周期任务，如果时间已经过去，推进到下一个周期（最多推进5次，避免极端情况）
         if let recurrence = result.recurrence, recurrence != .none && result.date < Date() {
-            result.date = advanceToNextPeriod(date: result.date, recurrence: recurrence)
+            var currentDate = result.date
+            let maxAdvances = 5
+            for _ in 0..<maxAdvances {
+                if currentDate > Date() { break }
+                currentDate = advanceToNextPeriod(date: currentDate, recurrence: recurrence)
+            }
+            result.date = currentDate
         }
 
         // 标记是否为循环农历

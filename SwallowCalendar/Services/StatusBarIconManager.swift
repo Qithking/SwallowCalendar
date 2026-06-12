@@ -19,6 +19,12 @@ final class StatusBarIconManager {
     private(set) weak var statusItemButton: NSButton?
 
     private var refreshTimer: Timer?
+    
+    /// 图标缓存，避免重复创建相同样式的图标
+    private let iconCache = NSCache<NSString, NSImage>()
+    
+    /// 缓存限制：最多缓存 50 个图标
+    private let maxCacheCount = 50
 
     private var refreshInterval: TimeInterval {
         let settings = AppSettings.shared
@@ -40,9 +46,10 @@ final class StatusBarIconManager {
     }
 
     private init() {
+        iconCache.countLimit = maxCacheCount
         let settings = AppSettings.shared
         let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
-        currentIcon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor)
+        currentIcon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor, cache: iconCache)
     }
 
     /// 绑定 statusItem 按钮（由 AppDelegate 在创建 statusItem 后调用）
@@ -55,7 +62,7 @@ final class StatusBarIconManager {
     func updateIcon() {
         let settings = AppSettings.shared
         let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
-        let icon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor)
+        let icon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor, cache: iconCache)
         currentIcon = icon
     }
 
@@ -81,17 +88,48 @@ final class StatusBarIconManager {
         refreshTimer = nil
     }
 
-    private static func generateIcon(style: IconStyle, customFormat: String, customFormatStyle: AppSettings.CustomFormatStyle = .none, iconColor: NSColor = .systemBlue) -> NSImage {
+    private static func generateIcon(style: IconStyle, customFormat: String, customFormatStyle: AppSettings.CustomFormatStyle = .none, iconColor: NSColor = .systemBlue, cache: NSCache<NSString, NSImage>? = nil) -> NSImage {
+        // 生成缓存 key（日期相关的图标不缓存，因为每天都变）
+        let shouldCache: Bool
+        let cacheKey: String
+        
+        switch style {
+        case .solidDate, .strokeDate:
+            // 日期图标每天变化，不缓存
+            shouldCache = false
+            cacheKey = ""
+        case .calendarIcon:
+            shouldCache = true
+            cacheKey = "calendarIcon_\(iconColor.hexString)"
+        case .customFormat:
+            shouldCache = !customFormat.contains("d") && !customFormat.contains("dd") && !customFormat.contains("D") && !customFormat.contains("DD")
+            cacheKey = "custom_\(customFormat)_\(customFormatStyle.rawValue)_\(iconColor.hexString)"
+        }
+        
+        // 尝试从缓存获取
+        if shouldCache, let cache = cache, let cachedIcon = cache.object(forKey: cacheKey as NSString) {
+            return cachedIcon
+        }
+        
+        // 生成新图标
+        let icon: NSImage
         switch style {
         case .solidDate:
-            return renderTextIcon(text: dayString(), filled: true, iconColor: iconColor)
+            icon = renderTextIcon(text: dayString(), filled: true, iconColor: iconColor)
         case .strokeDate:
-            return renderTextIcon(text: dayString(), filled: false, iconColor: iconColor)
+            icon = renderTextIcon(text: dayString(), filled: false, iconColor: iconColor)
         case .calendarIcon:
-            return renderCalendarIcon()
+            icon = renderCalendarIcon()
         case .customFormat:
-            return renderCustomFormatIcon(format: customFormat, style: customFormatStyle, iconColor: iconColor)
+            icon = renderCustomFormatIcon(format: customFormat, style: customFormatStyle, iconColor: iconColor)
         }
+        
+        // 缓存图标
+        if shouldCache, let cache = cache {
+            cache.setObject(icon, forKey: cacheKey as NSString)
+        }
+        
+        return icon
     }
 
     private static func dayString() -> String {
@@ -257,5 +295,13 @@ extension NSColor {
         let b = CGFloat(rgbValue & 0x0000FF) / 255.0
 
         self.init(srgbRed: r, green: g, blue: b, alpha: 1.0)
+    }
+    
+    var hexString: String {
+        guard let rgbColor = usingColorSpace(.sRGB) else { return "#000000" }
+        let r = Int(round(rgbColor.redComponent * 255))
+        let g = Int(round(rgbColor.greenComponent * 255))
+        let b = Int(round(rgbColor.blueComponent * 255))
+        return String(format: "#%02X%02X%02X", r, g, b)
     }
 }

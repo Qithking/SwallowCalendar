@@ -182,6 +182,9 @@ struct ContentView: View {
         
         // 同步完成后检查过期事项，确保启动时始终提示
         await ReminderAlertService.shared.checkExpiredEvents()
+        
+        // 清理过期的 ICS 缓存文件
+        ICSService.shared.cleanupExpiredCache()
     }
 
     /// 弹窗引导用户去系统设置开启提醒权限

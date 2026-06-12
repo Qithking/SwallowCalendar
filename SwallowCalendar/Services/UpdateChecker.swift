@@ -78,7 +78,13 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         config.timeoutIntervalForResource = 300
         self.downloadSession = URLSession(configuration: config, delegate: self, delegateQueue: .main)
     }
-
+    
+    deinit {
+        checkTimer?.invalidate()
+        downloadSession?.invalidateAndCancel()
+        downloadTask?.cancel()
+    }
+    
     func checkOnStartup() {
         // 检查设置是否开启且是本次启动首次检查
         guard AppSettings.shared.checkUpdateOnFirstLaunch else { return }

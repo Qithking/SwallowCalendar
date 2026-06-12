@@ -88,6 +88,34 @@ final class ICSService {
         try? FileManager.default.removeItem(at: cacheDir)
         print("[ICSService] 订阅日历磁盘缓存已清除")
     }
+    
+    /// 清理过期的缓存文件（超过7天）
+    func cleanupExpiredCache() {
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("SwallowCalendar/ICS", isDirectory: true)
+        
+        guard let files = try? FileManager.default.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: [.contentModificationDateKey], options: []) else {
+            return
+        }
+        
+        let sevenDaysAgo = Date().addingTimeInterval(-7 * 24 * 60 * 60)
+        var cleanedCount = 0
+        
+        for fileURL in files {
+            guard let attributes = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]),
+                  let modificationDate = attributes.contentModificationDate,
+                  modificationDate < sevenDaysAgo else {
+                continue
+            }
+            
+            try? FileManager.default.removeItem(at: fileURL)
+            cleanedCount += 1
+        }
+        
+        if cleanedCount > 0 {
+            print("[ICSService] 清理了 \(cleanedCount) 个过期的 ICS 缓存文件")
+        }
+    }
 
     // MARK: - ICS Date Parsing
 

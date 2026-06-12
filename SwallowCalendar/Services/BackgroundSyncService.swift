@@ -82,7 +82,7 @@ final class BackgroundSyncService {
         syncTimer?.invalidate()
         syncTimer = nil
     }
-
+    
     private func fetchPreferences(context: ModelContext) -> [CalendarPreference] {
         let descriptor = FetchDescriptor<CalendarPreference>()
         return (try? context.fetch(descriptor)) ?? []

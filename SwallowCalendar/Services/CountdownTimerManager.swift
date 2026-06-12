@@ -32,22 +32,25 @@ final class CountdownTimerManager: ObservableObject {
     // MARK: - Public Methods
     
     /// 注册一个需要动态刷新的事件
-    /// - Parameters:
-    ///   - eventID: 事件 ID
-    ///   - deadline: 到期时间
-    func register(eventID: String, deadline: Date) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            self.minHeap.insert(eventID: eventID, deadline: deadline)
-            self.visibleEventIDs.insert(eventID)
-            
-            if self.timer == nil {
-                self.startTimer()
+        /// - Parameters:
+        ///   - eventID: 事件 ID
+        ///   - deadline: 到期时间
+        func register(eventID: String, deadline: Date) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                
+                // 如果已存在，先移除旧的（避免重复插入导致内存泄漏）
+                self.minHeap.remove(eventID: eventID)
+                
+                self.minHeap.insert(eventID: eventID, deadline: deadline)
+                self.visibleEventIDs.insert(eventID)
+                
+                if self.timer == nil {
+                    self.startTimer()
+                }
+                self.adjustRefreshInterval()
             }
-            self.adjustRefreshInterval()
         }
-    }
     
     /// 注销一个事件（当视图消失时调用）
     /// - Parameter eventID: 事件 ID
