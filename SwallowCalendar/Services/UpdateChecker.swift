@@ -679,41 +679,30 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     }
 
     /// 重启应用
+    /// - Note: 必须将重启命令放到独立的后台进程中执行，使其在当前应用退出后仍能运行。
+    ///         macOS 下通过 Process 启动的子进程不会随父进程退出而被杀死（会被 reparent 到 launchd）。
     private func restartApplication() {
         let appPath = Bundle.main.bundleURL.path
-        // 对路径中的空格进行转义，以便 shell 正确解析
-        let escapedPath = appPath.replacingOccurrences(of: " ", with: "\\ ")
-        let shellCommand = "sleep 1 && open \(escapedPath)"
 
-        // 优先尝试使用管理员权限执行（适用于 /Applications 目录下的应用）
-        let scriptWithAdmin = "do shell script \"\(shellCommand)\" with administrator privileges"
+        // 使用 Process 启动后台进程：sleep 1 秒后 open 应用
+        // 关键：不等待进程完成，立即退出当前应用，后台进程在1秒后执行 open 启动新版本
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "sleep 1 && open \"\(appPath)\""]
 
-        let appleScript = NSAppleScript(source: scriptWithAdmin)
-        var errorDict: NSDictionary?
-        appleScript?.executeAndReturnError(&errorDict)
-
-        if errorDict != nil {
-            // 管理员权限执行失败，尝试无特权方式（适用于用户目录下的应用）
-            restartWithoutPrivileges(appPath: appPath)
-            return
+        do {
+            try process.run()
+        } catch {
+            // Process 启动失败，回退到 AppleScript（后台执行）
+            // 使用 & 将命令放到后台，使 do shell script 立即返回
+            let escapedPath = appPath.replacingOccurrences(of: "\"", with: "\\\"")
+            let script = "do shell script \"(sleep 1; open \\\"\(escapedPath)\\\") > /dev/null 2>&1 &\""
+            let appleScript = NSAppleScript(source: script)
+            var errorDict: NSDictionary?
+            appleScript?.executeAndReturnError(&errorDict)
         }
 
-        // 退出当前应用
-        NSApp.terminate(nil)
-    }
-
-    /// 无需管理员权限的重启方式（适用于用户目录下的应用）
-    private func restartWithoutPrivileges(appPath: String? = nil) {
-        let path = appPath ?? Bundle.main.bundleURL.path
-        let escapedPath = path.replacingOccurrences(of: " ", with: "\\ ")
-        let shellCommand = "sleep 1 && open \(escapedPath)"
-
-        let script = "do shell script \"\(shellCommand)\""
-
-        let appleScript = NSAppleScript(source: script)
-        var errorDict: NSDictionary?
-        appleScript?.executeAndReturnError(&errorDict)
-
+        // 立即退出当前应用，后台进程将在1秒后重新启动应用
         NSApp.terminate(nil)
     }
 }
