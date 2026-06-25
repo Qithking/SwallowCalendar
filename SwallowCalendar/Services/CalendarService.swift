@@ -928,10 +928,14 @@ final class CalendarService {
         do {
             let events = try context.fetch(descriptor)
             for event in events {
-                // 如果是系统提醒，也删除系统提醒
+                // 同步删除系统中的数据（提醒或日历事件），避免下次同步又恢复
                 if event.calendarTitle == "提醒" {
                     if let reminder = eventStore.calendarItem(withIdentifier: event.eventID) as? EKReminder {
                         try? eventStore.remove(reminder, commit: true)
+                    }
+                } else {
+                    if let ekEvent = eventStore.event(withIdentifier: event.eventID) {
+                        try? eventStore.remove(ekEvent, span: .thisEvent)
                     }
                 }
                 context.delete(event)

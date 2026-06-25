@@ -37,7 +37,7 @@ final class BackgroundSyncService {
 
     func syncOnce() async {
         guard !isSyncing else { return }
-        guard let container = modelContainer else { return }
+        guard modelContainer != nil else { return }
         guard CalendarService.shared.authorizationStatus == .fullAccess else { return }
 
         isSyncing = true
@@ -64,9 +64,8 @@ final class BackgroundSyncService {
         }
 
         let enabledSources = customSources.filter { $0.isEnabled }
-        if !enabledSources.isEmpty {
-            await CalendarService.shared.cacheService.syncSubscriptionEvents(sources: enabledSources)
-        }
+        // 始终调用同步（即使没有启用的源），确保禁用所有订阅时能清理旧缓存
+        await CalendarService.shared.cacheService.syncSubscriptionEvents(sources: enabledSources)
     }
 
     private func startTimer() {

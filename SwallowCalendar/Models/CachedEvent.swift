@@ -224,18 +224,17 @@ final class EventCacheService {
         let descriptor = FetchDescriptor<CachedEvent>()
         if let existing = try? context.fetch(descriptor) {
             for event in existing {
-                // 过滤出在同步时间范围内的事件，减少内存占用
-                if let start = event.startDate, let end = event.endDate, start >= startDate && end <= endDate {
+                // 使用交叉判断（与 EventKit predicateForEvents 一致），
+                // 避免跨越同步范围边界的事件被遗漏，从而防止重复插入和遗漏删除
+                if let start = event.startDate, let end = event.endDate,
+                   start < endDate && end > startDate {
                     existingByID[event.eventID] = event
                 }
             }
         }
         
         let newIDs = Set(systemEvents.map { $0.id })
-        
-        // 获取当前启用的日历ID集合
-        let enabledCalendarIDs = Set(calendars.map { $0.calendarIdentifier })
-        
+
         // 删除已不存在的系统事件（缓存中存在但系统中已不存在）
         let deletedIDs = Set(existingByID.keys).subtracting(newIDs)
         for eventID in deletedIDs {
@@ -244,6 +243,8 @@ final class EventCacheService {
                 guard event.calendarTitle != "提醒" else { continue }
                 // 跳过用户分类事件（由用户操作管理，不在系统同步中删除）
                 guard event.category != .user else { continue }
+                // 跳过订阅分类事件（由 syncSubscriptionEvents 管理）
+                guard event.category != .subscription else { continue }
                 // 删除系统中已不存在的事件
                 context.delete(event)
             }
@@ -252,25 +253,26 @@ final class EventCacheService {
         // 更新或插入事件
         for event in systemEvents {
             if let existing = existingByID[event.id] {
-                // 更新现有事件
-                existing.title = event.title
-                existing.startDate = event.startDate ?? now
-                existing.endDate = event.endDate ?? now
-                existing.isAllDay = event.isAllDay
-                existing.calendarColorHex = event.calendarColorHex
-                existing.calendarTitle = event.calendarTitle
-                // 同步日历ID（系统日历可能被重新配置）
-                if let targetCal = calendars.first(where: { $0.title == event.calendarTitle }) {
-                    existing.calendarID = targetCal.calendarIdentifier
-                }
-                // 保留原有的分类（如果是SwallowCalendar事项，保持为用户分类）
-                existing.lastUpdated = Date()
-                
-                // 从 EKEvent 的 notes 中恢复完成状态
+                // 仅当事项内容、时间、完成情况有变化时才更新，否则跳过
+                let newTitle = event.title
+                let newStart = event.startDate ?? now
+                let newEnd = event.endDate ?? now
+                // 从 EKEvent 的 notes 中读取完成状态
+                var newIsCompleted = existing.isCompleted
                 if let ekEvent = CalendarService.shared.getEvent(withIdentifier: event.id) {
                     if let notes = ekEvent.notes, notes.contains("[SC_COMPLETED]") {
-                        existing.isCompleted = true
+                        newIsCompleted = true
+                    } else {
+                        newIsCompleted = false
                     }
+                }
+                // 有变更才更新，避免不必要的写入
+                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted {
+                    existing.title = newTitle
+                    existing.startDate = newStart
+                    existing.endDate = newEnd
+                    existing.isCompleted = newIsCompleted
+                    existing.lastUpdated = Date()
                 }
             } else {
                 // 查找对应的EKCalendar获取ID
@@ -319,6 +321,9 @@ final class EventCacheService {
         guard !isSyncing else { return }
         guard AppSettings.shared.syncSystemReminders else { return }
 
+        isSyncing = true
+        defer { isSyncing = false }
+
         // 从系统提醒获取（获取所有提醒，包括已完成的，以正确同步外部状态变化）
         let reminders = await calendarService.fetchReminders(includeCompleted: true)
 
@@ -340,20 +345,23 @@ final class EventCacheService {
                 context.delete(event)
             }
         }
-        if !deletedIDs.isEmpty {
-            try? context.save()
-        }
 
         // 更新或插入提醒
         for reminder in reminders {
             if let existing = existingByID[reminder.id] {
-                // 更新现有提醒
-                existing.title = reminder.title
-                existing.startDate = reminder.startDate
-                existing.endDate = reminder.endDate
-                existing.isAllDay = reminder.isAllDay
-                existing.isCompleted = reminder.isCompleted
-                existing.lastUpdated = Date()
+                // 仅当事项内容、时间、完成情况有变化时才更新，否则跳过
+                let newTitle = reminder.title
+                let newStart = reminder.startDate
+                let newEnd = reminder.endDate
+                let newIsCompleted = reminder.isCompleted
+                // 有变更才更新，避免不必要的写入
+                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted {
+                    existing.title = newTitle
+                    existing.startDate = newStart
+                    existing.endDate = newEnd
+                    existing.isCompleted = newIsCompleted
+                    existing.lastUpdated = Date()
+                }
             } else {
                 // 插入新提醒（支持无到期时间的提醒）
                 let cached = CachedEvent(
@@ -404,6 +412,8 @@ final class EventCacheService {
 
     /// 同步 ICS 订阅日历事件到本地缓存
     /// - Parameter sources: 启用的 ICS 订阅源列表
+    /// - Note: 采用增删改模式：已存在的更新、源中不存在的删除、应用中没有的新增
+    ///         获取失败的源保留旧数据不删除
     @MainActor
     func syncSubscriptionEvents(sources: [CustomCalendarSource]) async {
         guard let context = self.context else { return }
@@ -411,22 +421,14 @@ final class EventCacheService {
         isSubscriptionSyncing = true
         defer { isSubscriptionSyncing = false }
 
-        // 删除所有现有的订阅分类缓存
-        let subscriptionCategory = EventCategory.subscription.rawValue
-        let descriptor = FetchDescriptor<CachedEvent>(
-            predicate: #Predicate<CachedEvent> { event in
-                event.categoryRaw == subscriptionCategory
-            }
-        )
-        if let existing = try? context.fetch(descriptor) {
-            for event in existing {
-                context.delete(event)
-            }
-        }
+        let enabledSources = sources.filter { $0.isEnabled }
 
-        // 从每个启用的 ICS 源获取事件并写入缓存
+        // 1. 获取所有启用源的事件数据，记录成功获取的源 URL
         let icsService = ICSService.shared
-        for source in sources where source.isEnabled {
+        var fetchedEventsBySource: [(source: CustomCalendarSource, events: [ICSEvent])] = []
+        var fetchedSourceURLs = Set<String>()
+
+        for source in enabledSources {
             let events: [ICSEvent]
             if let cached = icsService.loadCached(url: source.icsURL) {
                 events = cached
@@ -434,10 +436,22 @@ final class EventCacheService {
                 do {
                     events = try await icsService.fetchAndParse(url: source.icsURL)
                 } catch {
+                    // 获取失败，跳过该源（保留其旧数据不被删除）
                     continue
                 }
             }
+            fetchedEventsBySource.append((source: source, events: events))
+            fetchedSourceURLs.insert(source.icsURL)
+        }
 
+        // 2. 如果有启用的源但全部获取失败，保留旧数据不删除
+        if !enabledSources.isEmpty && fetchedEventsBySource.isEmpty {
+            return
+        }
+
+        // 3. 构建新数据的 eventID → 数据 映射
+        var newEventsByID: [String: (source: CustomCalendarSource, icsEvent: ICSEvent)] = [:]
+        for (source, events) in fetchedEventsBySource {
             // 对同源事件按 uid 去重：相同 uid 只保留一条
             var eventsByUID: [String: ICSEvent] = [:]
             for icsEvent in events {
@@ -449,24 +463,71 @@ final class EventCacheService {
                 }
             }
 
-            for (uid, icsEvent) in eventsByUID {
+            for (_, icsEvent) in eventsByUID {
                 guard let startDate = icsEvent.startDate else { continue }
-                let endDate = icsEvent.endDate ?? startDate
-
-                // uid 为空时用 "summary_startTimestamp" 生成稳定 eventID
                 let stableUID = icsEvent.uid.isEmpty
                     ? "\(icsEvent.summary)_\(startDate.timeIntervalSince1970)"
                     : icsEvent.uid
                 let eventID = "ics-\(stableUID)"
+                newEventsByID[eventID] = (source: source, icsEvent: icsEvent)
+            }
+        }
 
-                // exists-before-insert 保护：并发 sync 时，检查该 eventID 是否已存在于数据库（删除已在上面完成，此处兜底）
-                let existingDescriptor = FetchDescriptor<CachedEvent>(
-                    predicate: #Predicate { $0.eventID == eventID }
-                )
-                if let existing = try? context.fetch(existingDescriptor), !existing.isEmpty {
-                    continue
+        let newIDs = Set(newEventsByID.keys)
+
+        // 4. 获取现有缓存中的所有订阅事件，构建 eventID → CachedEvent 映射
+        var existingByID: [String: CachedEvent] = [:]
+        let subscriptionCategory = EventCategory.subscription.rawValue
+        let descriptor = FetchDescriptor<CachedEvent>(
+            predicate: #Predicate<CachedEvent> { event in
+                event.categoryRaw == subscriptionCategory
+            }
+        )
+        if let existing = try? context.fetch(descriptor) {
+            for event in existing {
+                existingByID[event.eventID] = event
+            }
+        }
+
+        // 启用源的 URL 集合（用于判断缓存事件的来源是否仍启用）
+        let enabledSourceURLs = Set(enabledSources.map { $0.icsURL })
+
+        // 5. 删除：缓存中存在但新数据中不存在的订阅事件
+        //    对于获取失败的源（源启用但未在 fetchedSourceURLs 中），保留其旧数据
+        let deletedIDs = Set(existingByID.keys).subtracting(newIDs)
+        for eventID in deletedIDs {
+            if let event = existingByID[eventID] {
+                // 如果事件来源是启用的源且该源获取成功 → 删除（源中已无此事件）
+                // 如果事件来源不是任何启用的源 → 删除（源已被禁用）
+                // 如果事件来源是启用的源但获取失败 → 保留（网络问题，不丢失数据）
+                if fetchedSourceURLs.contains(event.calendarID) {
+                    context.delete(event)
+                } else if !enabledSourceURLs.contains(event.calendarID) {
+                    context.delete(event)
                 }
+                // else: 源启用但获取失败，保留旧数据
+            }
+        }
 
+        // 6. 更新或插入
+        for (eventID, newData) in newEventsByID {
+            let icsEvent = newData.icsEvent
+            let source = newData.source
+            guard let startDate = icsEvent.startDate else { continue }
+            let endDate = icsEvent.endDate ?? startDate
+
+            if let existing = existingByID[eventID] {
+                // 仅当事项内容、时间有变化时才更新，否则跳过
+                let newTitle = icsEvent.summary
+                // 有变更才更新，避免不必要的写入
+                if existing.title != newTitle || existing.startDate != startDate || existing.endDate != endDate {
+                    existing.title = newTitle
+                    existing.startDate = startDate
+                    existing.endDate = endDate
+                    existing.lastUpdated = Date()
+                }
+            } else {
+                // 插入新事件
                 let cached = CachedEvent(
                     eventID: eventID,
                     title: icsEvent.summary,
