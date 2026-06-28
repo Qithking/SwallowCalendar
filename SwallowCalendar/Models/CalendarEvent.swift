@@ -93,6 +93,8 @@ struct CalendarEvent: Identifiable {
     let groupId: String?
     /// 周期类型
     let recurrenceType: RecurrenceType
+    /// 提醒提前分钟数（0=不提醒）
+    let reminderMinutes: Int
 
     /// 是否为订阅日历（订阅日历不在用户事件列表中显示）
     var isSubscription: Bool {

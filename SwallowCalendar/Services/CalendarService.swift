@@ -223,8 +223,25 @@ final class CalendarService {
             priority: 0,
             isReminder: true,
             groupId: nil,
-            recurrenceType: .none
+            recurrenceType: .none,
+            reminderMinutes: Self.extractReminderMinutes(from: reminder.alarms)
         )
+    }
+
+    /// 从 EKAlarm 数组中提取最早的提醒提前分钟数
+    private static func extractReminderMinutes(from alarms: [EKAlarm]?) -> Int {
+        guard let alarms = alarms else { return 0 }
+        var maxMinutes = 0
+        for alarm in alarms {
+            // relativeOffset < 0 表示在事件之前提醒
+            if alarm.relativeOffset < 0 {
+                let minutes = Int(-alarm.relativeOffset / 60)
+                if minutes > maxMinutes {
+                    maxMinutes = minutes
+                }
+            }
+        }
+        return maxMinutes
     }
 
     // MARK: - CRUD
@@ -285,7 +302,8 @@ final class CalendarService {
                     dueDate: startDate,
                     isAllDay: isAllDay,
                     priority: priority,
-                    recurrence: nil
+                    recurrence: nil,
+                    reminderMinutes: reminderMinutes
                 )
             } else {
                 try createCalendarEvent(
@@ -350,7 +368,8 @@ final class CalendarService {
                     groupId: groupId,
                     groupIndex: index,
                     recurrenceType: recurrenceType,
-                    isLunar: isLunar
+                    isLunar: isLunar,
+                    reminderMinutes: reminderMinutes
                 )
             } else {
                 try createCalendarEventWithGroupInfo(
@@ -446,7 +465,8 @@ final class CalendarService {
                 calendarTitle: event.calendar.title,
                 calendarColorHex: event.calendar.cgColor?.hexString ?? "#007AFF",
                 category: category,
-                priority: priority?.rawValue ?? 0
+                priority: priority?.rawValue ?? 0,
+                reminderMinutes: reminderMinutes ?? 0
             )
             context.insert(cached)
             do {
@@ -464,7 +484,8 @@ final class CalendarService {
         dueDate: Date,
         isAllDay: Bool,
         priority: EventPriority? = nil,
-        recurrence: RecurrenceType? = nil
+        recurrence: RecurrenceType? = nil,
+        reminderMinutes: Int? = nil
     ) throws {
         guard reminderAuthorizationStatus == .fullAccess else {
             throw EventError.noReminderAccess
@@ -482,6 +503,12 @@ final class CalendarService {
         }
         reminder.dueDateComponents = components
         
+        // 设置提醒闹钟
+        if let minutes = reminderMinutes, minutes > 0 {
+            let alarm = EKAlarm(relativeOffset: TimeInterval(-minutes * 60))
+            reminder.addAlarm(alarm)
+        }
+        
         try eventStore.save(reminder, commit: true)
         
         // 保存到本地缓存
@@ -498,7 +525,8 @@ final class CalendarService {
                 category: .user,
                 isReminder: true,
                 isCompleted: false,
-                priority: priority?.rawValue ?? 0
+                priority: priority?.rawValue ?? 0,
+                reminderMinutes: reminderMinutes ?? 0
             )
             context.insert(cached)
             do {
@@ -571,7 +599,8 @@ final class CalendarService {
                 groupId: groupId,
                 groupIndex: groupIndex,
                 recurrenceType: recurrenceType,
-                isLunar: isLunar
+                isLunar: isLunar,
+                reminderMinutes: reminderMinutes ?? 0
             )
             context.insert(cached)
             do {
@@ -592,7 +621,8 @@ final class CalendarService {
         groupId: String,
         groupIndex: Int,
         recurrenceType: RecurrenceType,
-        isLunar: Bool
+        isLunar: Bool,
+        reminderMinutes: Int? = nil
     ) throws {
         guard reminderAuthorizationStatus == .fullAccess else {
             throw EventError.noReminderAccess
@@ -609,6 +639,12 @@ final class CalendarService {
             components.minute = Calendar.current.component(.minute, from: dueDate)
         }
         reminder.dueDateComponents = components
+        
+        // 设置提醒闹钟
+        if let minutes = reminderMinutes, minutes > 0 {
+            let alarm = EKAlarm(relativeOffset: TimeInterval(-minutes * 60))
+            reminder.addAlarm(alarm)
+        }
         
         try eventStore.save(reminder, commit: true)
         
@@ -630,7 +666,8 @@ final class CalendarService {
                 groupId: groupId,
                 groupIndex: groupIndex,
                 recurrenceType: recurrenceType,
-                isLunar: isLunar
+                isLunar: isLunar,
+                reminderMinutes: reminderMinutes ?? 0
             )
             context.insert(cached)
             do {
@@ -1060,7 +1097,8 @@ final class CalendarService {
             priority: 0,  // 系统日历事件没有优先级
             isReminder: false,
             groupId: nil,
-            recurrenceType: .none
+            recurrenceType: .none,
+            reminderMinutes: Self.extractReminderMinutes(from: ekEvent.alarms)
         )
     }
 
@@ -1078,7 +1116,8 @@ final class CalendarService {
             priority: cached.priority,
             isReminder: cached.isReminder,
             groupId: cached.groupId,
-            recurrenceType: cached.recurrenceType
+            recurrenceType: cached.recurrenceType,
+            reminderMinutes: cached.reminderMinutes
         )
     }
     

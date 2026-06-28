@@ -94,13 +94,26 @@ final class ReminderAlertService {
             // 在内存中过滤日期范围
             let dueEvents = allUserEvents.filter { event in
                 guard let startDate = event.startDate else { return false }
-                
+
                 if includeExpired {
-                    return startDate < now
+                    // 启动时的过期检查：
+                    // - 设置了提醒的事项：提醒时间已过（startDate - reminderMinutes <= now）
+                    // - 未设置提醒的事项：事件已过期（startDate < now）
+                    if event.reminderMinutes > 0 {
+                        let alertTime = startDate.addingTimeInterval(TimeInterval(-event.reminderMinutes * 60))
+                        return alertTime <= now
+                    } else {
+                        return startDate < now
+                    }
                 } else {
-                    let startOfWindow = calendar.date(byAdding: .minute, value: -5, to: now)!
-                    let endOfWindow = calendar.date(byAdding: .minute, value: 5, to: now)!
-                    return startDate >= startOfWindow && startDate <= endOfWindow
+                    // 常规定时检查：按照用户设置的提醒时间触发
+                    // 未设置提醒（reminderMinutes == 0）的事项不弹窗
+                    guard event.reminderMinutes > 0 else { return false }
+                    let alertTime = startDate.addingTimeInterval(TimeInterval(-event.reminderMinutes * 60))
+                    // 提醒时间已到达，且事件尚未过期（避免重复提醒已过期事项）
+                    // 窗口设为 90 秒，配合 60 秒定时器确保不遗漏
+                    let windowStart = calendar.date(byAdding: .second, value: -90, to: now)!
+                    return alertTime <= now && alertTime >= windowStart
                 }
             }
             

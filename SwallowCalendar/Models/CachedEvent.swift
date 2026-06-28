@@ -59,6 +59,9 @@ final class CachedEvent {
     /// 是否农历
     var isLunar: Bool = false
     
+    /// 提醒提前分钟数（0=不提醒）
+    var reminderMinutes: Int = 0
+    
     /// 缓存更新时间
     var lastUpdated: Date
     
@@ -98,7 +101,8 @@ final class CachedEvent {
         groupId: String? = nil,
         groupIndex: Int = -1,
         recurrenceType: RecurrenceType = .none,
-        isLunar: Bool = false
+        isLunar: Bool = false,
+        reminderMinutes: Int = 0
     ) {
         self.eventID = eventID
         self.title = title
@@ -116,6 +120,7 @@ final class CachedEvent {
         self.groupIndex = groupIndex
         self.recurrenceTypeRaw = recurrenceType.rawValue
         self.isLunar = isLunar
+        self.reminderMinutes = reminderMinutes
         self.lastUpdated = Date()
     }
 }
@@ -272,11 +277,13 @@ final class EventCacheService {
                     }
                 }
                 // 有变更才更新，避免不必要的写入
-                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted {
+                let newReminderMinutes = event.reminderMinutes
+                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes {
                     existing.title = newTitle
                     existing.startDate = newStart
                     existing.endDate = newEnd
                     existing.isCompleted = newIsCompleted
+                    existing.reminderMinutes = newReminderMinutes
                     existing.lastUpdated = Date()
                 }
             } else {
@@ -302,7 +309,8 @@ final class EventCacheService {
                     calendarID: calendarID,
                     calendarTitle: event.calendarTitle,
                     calendarColorHex: event.calendarColorHex,
-                    category: category
+                    category: category,
+                    reminderMinutes: event.reminderMinutes
                 )
                 context.insert(cached)
             }
@@ -388,17 +396,19 @@ final class EventCacheService {
         // 更新或插入提醒
         for reminder in reminders {
             if let existing = existingByID[reminder.id] {
-                // 仅当事项内容、时间、完成情况有变化时才更新，否则跳过
+                // 仅当事项内容、时间、完成情况或提醒时间有变化时才更新，否则跳过
                 let newTitle = reminder.title
                 let newStart = reminder.startDate
                 let newEnd = reminder.endDate
                 let newIsCompleted = reminder.isCompleted
+                let newReminderMinutes = reminder.reminderMinutes
                 // 有变更才更新，避免不必要的写入
-                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted {
+                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes {
                     existing.title = newTitle
                     existing.startDate = newStart
                     existing.endDate = newEnd
                     existing.isCompleted = newIsCompleted
+                    existing.reminderMinutes = newReminderMinutes
                     existing.lastUpdated = Date()
                 }
             } else {
@@ -415,7 +425,8 @@ final class EventCacheService {
                     category: .user,
                     isReminder: true,
                     isCompleted: reminder.isCompleted,
-                    priority: 0
+                    priority: 0,
+                    reminderMinutes: reminder.reminderMinutes
                 )
                 context.insert(cached)
             }
