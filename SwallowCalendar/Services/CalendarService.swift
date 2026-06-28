@@ -707,9 +707,12 @@ final class CalendarService {
     @MainActor
     func toggleEventCompleted(eventID: String, isCompleted: Bool, isReminder: Bool = false) {
         if isReminder {
-            guard let reminder = eventStore.calendarItem(withIdentifier: eventID) as? EKReminder else { return }
-            reminder.isCompleted = isCompleted
-            try? eventStore.save(reminder, commit: true)
+            // 使用 if let 而非 guard，确保即使 EventKit 中找不到该提醒，
+            // 本地缓存仍能正常更新（已完成提醒可能无法通过 calendarItem 获取）
+            if let reminder = eventStore.calendarItem(withIdentifier: eventID) as? EKReminder {
+                reminder.isCompleted = isCompleted
+                try? eventStore.save(reminder, commit: true)
+            }
         } else {
             // 日历事件：在 EKEvent 的 notes 中追加完成标记，确保同步后能恢复完成状态
             if let event = eventStore.event(withIdentifier: eventID) {

@@ -232,7 +232,7 @@ final class ReminderAlertService {
         alert.addButton(withTitle: "知道了")
         alert.addButton(withTitle: "全部标记完成")
         
-        // 将对话框定位到活动屏幕的右上角
+        // 确定目标屏幕
         var targetScreen: NSScreen?
         
         if let activeWindow = NSApp.keyWindow {
@@ -242,27 +242,31 @@ final class ReminderAlertService {
             targetScreen = NSScreen.main ?? NSScreen.screens.first
         }
         
+        // NSAlert.runModal() 内部会强制将窗口居中显示，
+        // 在 runModal() 之前设置位置都会被覆盖。
+        // 因此先隐藏窗口(alpha=0)，等 runModal() 居中并完成布局后，
+        // didBecomeKeyNotification 触发时窗口尺寸已准确，
+        // 此时移动到右上角再显示(alpha=1)，用户不会看到居中闪现。
         if let screen = targetScreen {
             let screenFrame = screen.visibleFrame
-            // 获取 alert 窗口的大小
-            alert.window.layoutIfNeeded()
-            let alertSize = alert.window.frame.size
-            
-            // 计算右上角位置
-            let x = screenFrame.maxX - alertSize.width - 20
-            let y = screenFrame.maxY - alertSize.height - 20
-            
-            // 创建新的 frame（使用 setFrame 而不是 setFrameOrigin）
-            let newFrame = NSRect(
-                x: x,
-                y: y,
-                width: alertSize.width,
-                height: alertSize.height
-            )
-            
-            // 设置窗口位置并立即显示
-            alert.window.setFrame(newFrame, display: true)
-            alert.window.makeKeyAndOrderFront(nil)
+            let window = alert.window
+            window.alphaValue = 0
+            var observer: NSObjectProtocol?
+            observer = NotificationCenter.default.addObserver(
+                forName: NSWindow.didBecomeKeyNotification,
+                object: window,
+                queue: .main
+            ) { _ in
+                let size = window.frame.size
+                window.setFrameTopLeftPoint(NSPoint(
+                    x: screenFrame.maxX - size.width - 20,
+                    y: screenFrame.maxY - 20
+                ))
+                window.alphaValue = 1
+                if let observer = observer {
+                    NotificationCenter.default.removeObserver(observer)
+                }
+            }
         }
         
         let response = alert.runModal()
