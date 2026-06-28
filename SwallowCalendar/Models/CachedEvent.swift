@@ -38,6 +38,9 @@ final class CachedEvent {
     /// 事件分类
     var categoryRaw: String = EventCategory.system.rawValue
     
+    /// 是否为系统提醒来源（区分系统提醒与系统日历事件）
+    var isReminder: Bool = false
+    
     /// 是否已完成（仅对用户事件有效）
     var isCompleted: Bool = false
     
@@ -89,6 +92,7 @@ final class CachedEvent {
         calendarTitle: String,
         calendarColorHex: String,
         category: EventCategory = .system,
+        isReminder: Bool = false,
         isCompleted: Bool = false,
         priority: Int = 0,
         groupId: String? = nil,
@@ -105,6 +109,7 @@ final class CachedEvent {
         self.calendarTitle = calendarTitle
         self.calendarColorHex = calendarColorHex
         self.categoryRaw = category.rawValue
+        self.isReminder = isReminder
         self.isCompleted = isCompleted
         self.priority = priority
         self.groupId = groupId
@@ -240,7 +245,7 @@ final class EventCacheService {
         for eventID in deletedIDs {
             if let event = existingByID[eventID] {
                 // 跳过提醒事件（由 syncReminders 管理）
-                guard event.calendarTitle != "提醒" else { continue }
+                guard !event.isReminder else { continue }
                 // 跳过用户分类事件（由用户操作管理，不在系统同步中删除）
                 guard event.category != .user else { continue }
                 // 跳过订阅分类事件（由 syncSubscriptionEvents 管理）
@@ -313,6 +318,37 @@ final class EventCacheService {
         }
     }
 
+    /// 一次性迁移：将旧版本中通过 calendarTitle == "提醒" 标识的记录补设 isReminder 标记
+    /// 迁移完成后通过 UserDefaults 标记，后续不再执行
+    @MainActor
+    private func migrateReminderFlag(context: ModelContext) {
+        let migrationKey = "EventCacheService.isReminderMigrationDone"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+
+        let descriptor = FetchDescriptor<CachedEvent>()
+        guard let existing = try? context.fetch(descriptor) else { return }
+
+        var migratedCount = 0
+        for event in existing where !event.isReminder && event.calendarTitle == "提醒" {
+            event.isReminder = true
+            migratedCount += 1
+        }
+
+        if migratedCount > 0 {
+            do {
+                try context.save()
+                print("[EventCacheService] 迁移了 \(migratedCount) 条提醒记录的 isReminder 标记")
+                UserDefaults.standard.set(true, forKey: migrationKey)
+            } catch {
+                // 保存失败，不标记迁移完成，下次重试
+                print("[EventCacheService] 迁移保存失败，将在下次同步时重试: \(error)")
+            }
+        } else {
+            // 无数据需要迁移，直接标记完成
+            UserDefaults.standard.set(true, forKey: migrationKey)
+        }
+    }
+
     /// 同步系统提醒到本地缓存
     /// - Note: 无到期时间的提醒也会同步，但不受日期范围限制
     @MainActor
@@ -324,6 +360,9 @@ final class EventCacheService {
         isSyncing = true
         defer { isSyncing = false }
 
+        // 一次性迁移：将旧版本中通过 calendarTitle == "提醒" 标识的记录补设 isReminder 标记
+        migrateReminderFlag(context: context)
+
         // 从系统提醒获取（获取所有提醒，包括已完成的，以正确同步外部状态变化）
         let reminders = await calendarService.fetchReminders(includeCompleted: true)
 
@@ -331,7 +370,7 @@ final class EventCacheService {
         var existingByID: [String: CachedEvent] = [:]
         let descriptor = FetchDescriptor<CachedEvent>()
         if let existing = try? context.fetch(descriptor) {
-            for event in existing where event.category == .user && event.calendarTitle == "提醒" {
+            for event in existing where event.isReminder {
                 existingByID[event.eventID] = event
             }
         }
@@ -374,6 +413,7 @@ final class EventCacheService {
                     calendarTitle: "提醒",
                     calendarColorHex: reminder.calendarColorHex,
                     category: .user,
+                    isReminder: true,
                     isCompleted: reminder.isCompleted,
                     priority: 0
                 )
@@ -389,21 +429,19 @@ final class EventCacheService {
         }
     }
 
-    /// 清除所有提醒缓存（category为user且calendarTitle为"提醒"的）
+    /// 清除所有提醒缓存（isReminder 为 true 的记录）
     @MainActor
     func clearRemindersCache() {
         guard let context = self.context else { return }
         
-        let userCategory = EventCategory.user.rawValue
         let descriptor = FetchDescriptor<CachedEvent>(
             predicate: #Predicate<CachedEvent> { event in
-                event.categoryRaw == userCategory
+                event.isReminder == true
             }
         )
         
         if let events = try? context.fetch(descriptor) {
-            let remindersToDelete = events.filter { $0.calendarTitle == "提醒" }
-            for event in remindersToDelete {
+            for event in events {
                 context.delete(event)
             }
             try? context.save()
@@ -589,7 +627,7 @@ final class EventCacheService {
         var deletedCount = 0
         for event in events {
             // 跳过用户分类、订阅分类和提醒事件
-            if event.category == .user || event.category == .subscription || event.calendarTitle == "提醒" {
+            if event.category == .user || event.category == .subscription || event.isReminder {
                 continue
             }
             // 删除早于保留期限且已过期的事件

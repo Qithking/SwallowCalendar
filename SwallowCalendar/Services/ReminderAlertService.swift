@@ -275,7 +275,7 @@ final class ReminderAlertService {
                 CalendarService.shared.toggleEventCompleted(
                     eventID: eventID,
                     isCompleted: true,
-                    isReminder: event.calendarTitle == "提醒"
+                    isReminder: event.isReminder
                 )
                 print("[ReminderAlertService] 已标记事件完成: \(eventID)")
             }

@@ -496,6 +496,7 @@ final class CalendarService {
                 calendarTitle: "提醒",
                 calendarColorHex: reminder.calendar?.cgColor?.hexString ?? "#FF9500",
                 category: .user,
+                isReminder: true,
                 isCompleted: false,
                 priority: priority?.rawValue ?? 0
             )
@@ -623,6 +624,7 @@ final class CalendarService {
                 calendarTitle: "提醒",
                 calendarColorHex: reminder.calendar?.cgColor?.hexString ?? "#FF9500",
                 category: .user,
+                isReminder: true,
                 isCompleted: false,
                 priority: priority?.rawValue ?? 0,
                 groupId: groupId,
@@ -929,7 +931,7 @@ final class CalendarService {
             let events = try context.fetch(descriptor)
             for event in events {
                 // 同步删除系统中的数据（提醒或日历事件），避免下次同步又恢复
-                if event.calendarTitle == "提醒" {
+                if event.isReminder {
                     if let reminder = eventStore.calendarItem(withIdentifier: event.eventID) as? EKReminder {
                         try? eventStore.remove(reminder, commit: true)
                     }
@@ -998,7 +1000,7 @@ final class CalendarService {
                     && Calendar.current.component(.minute, from: lastDate) == 0
                 
                 // 同步到系统日历/提醒（create 方法会同时插入缓存，避免重复插入）
-                if completedEvent.calendarTitle == "提醒" {
+                if completedEvent.isReminder {
                     // 创建系统提醒（带组信息）
                     try createReminderWithGroupInfo(
                         title: completedEvent.title,
@@ -1074,7 +1076,7 @@ final class CalendarService {
             category: cached.category,
             isCompleted: cached.isCompleted,
             priority: cached.priority,
-            isReminder: cached.calendarTitle == "提醒",
+            isReminder: cached.isReminder,
             groupId: cached.groupId,
             recurrenceType: cached.recurrenceType
         )
