@@ -376,7 +376,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         Task { @MainActor in
             do {
                 // 获取下载目录
-                guard let downloadsFolder = fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
+                guard let downloadsFolder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
                     self.downloadError = "无法访问下载文件夹"
                     self.isDownloading = false
                     return
@@ -393,12 +393,12 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
                 let destinationUrl = downloadsFolder.appendingPathComponent(fileName)
 
                 // 如果目标文件已存在，先删除
-                if fileManager.fileExists(atPath: destinationUrl.path) {
-                    try fileManager.removeItem(at: destinationUrl)
+                if FileManager.default.fileExists(atPath: destinationUrl.path) {
+                    try FileManager.default.removeItem(at: destinationUrl)
                 }
 
                 // 移动文件到下载文件夹
-                try fileManager.moveItem(at: tempDestURL, to: destinationUrl)
+                try FileManager.default.moveItem(at: tempDestURL, to: destinationUrl)
 
                 self.downloadProgress = 1.0
                 self.isDownloading = false

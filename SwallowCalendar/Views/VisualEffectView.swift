@@ -23,8 +23,8 @@ struct VisualEffectView: NSViewRepresentable {
     }
     
     func updateNSView(_ view: NSView, context: Context) {
-        if #available(macOS 26.0, *), let glassView = view as? NSGlassEffectView {
-            // macOS 26+ : 更新 Glass Effect View
+        if #available(macOS 26.0, *), view is NSGlassEffectView {
+            // macOS 26+ : Glass Effect View 无需更新
         } else if let visualView = view as? NSVisualEffectView {
             // macOS 14 及以下: 更新 Visual Effect View
             visualView.material = material

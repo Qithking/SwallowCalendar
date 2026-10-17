@@ -7,6 +7,24 @@ import Foundation
 
 /// 自然语言任务解析器
 struct NLPTaskParser {
+
+    // MARK: - 预编译正则表达式
+    /// 匹配带时间段的时间格式，如"下午3点"、"晚上8点15分"
+    private static let timeRegex: NSRegularExpression = {
+        do { return try NSRegularExpression(pattern: "(上午|下午|晚上|凌晨)?(\\d{1,2})点(\\d{1,2})?分?") }
+        catch { fatalError("Invalid timeRegex pattern: \(error)") }
+    }()
+    /// 匹配 X月X日 格式
+    private static let dateRegex: NSRegularExpression = {
+        do { return try NSRegularExpression(pattern: "(\\d+)月(\\d+)[日号]") }
+        catch { fatalError("Invalid dateRegex pattern: \(error)") }
+    }()
+    /// 匹配农历日期格式
+    private static let lunarRegex: NSRegularExpression = {
+        do { return try NSRegularExpression(pattern: "(?:农历|阴历)\\s*(\\d+)\\s*月\\s*(\\d+)\\s*[日号]?") }
+        catch { fatalError("Invalid lunarRegex pattern: \(error)") }
+    }()
+
     /// 解析自然语言输入，返回任务详情
     static func parse(_ input: String) -> ParsedTask {
         let trimmed = input.trimmingCharacters(in: .whitespaces)
@@ -133,41 +151,46 @@ struct NLPTaskParser {
                 }
             }
         }
-        // 匹配带时间段的时间格式，如"下午3点"、"上午9点"、"晚上8点"
+        // 匹配带时间段的时间格式，如"下午3点"、"上午9点"、"晚上8点15分"
         else if let timeMatch = input.range(of: "(上午|下午|晚上|凌晨)?(\\d{1,2})点(\\d{1,2}分)?", options: .regularExpression) {
             let timeStr = String(input[timeMatch])
             
-            // 提取小时和分钟
-            let timePattern = "(\\d{1,2})点(\\d{1,2}分)?"
-            if let timeRange = timeStr.range(of: timePattern, options: .regularExpression) {
-                let extractedTime = String(timeStr[timeRange])
-                let numbers = extractedTime.filter { $0.isNumber }
-                let parts = numbers.split(separator: " ")
+            // 使用 NSRegularExpression 捕获组提取小时和分钟（避免 filter 合并数字的问题）
+            let timeRegex = Self.timeRegex
+            if let match = timeRegex.firstMatch(in: timeStr, range: NSRange(timeStr.startIndex..., in: timeStr)),
+               match.numberOfRanges >= 3,
+               let hourRange = Range(match.range(at: 2), in: timeStr),
+               let hour = Int(timeStr[hourRange]) {
                 
-                if let hour = Int(parts[0]) {
-                    var finalHour = hour
-                    let isAfternoon = timeStr.contains("下午") || timeStr.contains("晚上")
-                    
-                    if hour >= 12 {
-                        // 如果小时 >= 12，说明已经是24小时制，直接使用
-                        finalHour = hour
-                    } else if isAfternoon {
-                        // 小时 < 12 且有下午/晚上标识，加12小时
-                        finalHour = hour + 12
-                    }
-                    // 其他情况（上午/凌晨或无标识）直接使用原始小时数
-                    
-                    let minute = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
-                    
-                    var components = calendar.dateComponents([.year, .month, .day], from: baseDate)
-                    components.hour = finalHour
-                    components.minute = minute
-                    components.second = 0
-                    
-                    if let date = calendar.date(from: components) {
-                        baseDate = date
-                        matchedText = timeStr
-                    }
+                var finalHour = hour
+                let isAfternoon = timeStr.contains("下午") || timeStr.contains("晚上")
+                
+                if hour >= 12 {
+                    // 如果小时 >= 12，说明已经是24小时制，直接使用
+                    finalHour = hour
+                } else if isAfternoon {
+                    // 小时 < 12 且有下午/晚上标识，加12小时
+                    finalHour = hour + 12
+                }
+                // 其他情况（上午/凌晨或无标识）直接使用原始小时数
+                
+                // 提取分钟（第3个捕获组，可选）
+                var minute = 0
+                if match.numberOfRanges >= 4,
+                   let minuteRange = Range(match.range(at: 3), in: timeStr),
+                   !minuteRange.isEmpty,
+                   let min = Int(timeStr[minuteRange]) {
+                    minute = min
+                }
+                
+                var components = calendar.dateComponents([.year, .month, .day], from: baseDate)
+                components.hour = finalHour
+                components.minute = minute
+                components.second = 0
+                
+                if let date = calendar.date(from: components) {
+                    baseDate = date
+                    matchedText = timeStr
                 }
             }
         }
@@ -258,10 +281,14 @@ struct NLPTaskParser {
         // 匹配 X月X日 格式
         if let match = input.range(of: "(\\d+)月(\\d+)[日号]", options: .regularExpression) {
             let matched = String(input[match])
-            let numbers = matched.filter { $0.isNumber }
-            let parts = numbers.split(separator: " ")
-            if parts.count >= 2,
-               let month = Int(parts[0]), let day = Int(parts[1]),
+            // 使用 NSRegularExpression 捕获组分别提取月和日
+            let dateRegex = Self.dateRegex
+            if let dateMatch = dateRegex.firstMatch(in: matched, range: NSRange(matched.startIndex..., in: matched)),
+               dateMatch.numberOfRanges >= 3,
+               let monthRange = Range(dateMatch.range(at: 1), in: matched),
+               let dayRange = Range(dateMatch.range(at: 2), in: matched),
+               let month = Int(matched[monthRange]),
+               let day = Int(matched[dayRange]),
                month >= 1, month <= 12, day >= 1, day <= 31 {
                 var components = calendar.dateComponents([.year], from: now)
                 components.month = month
@@ -365,7 +392,7 @@ struct NLPTaskParser {
         
         let matched = String(input[match])
         // 提取月份和日期数字
-        let lunarRegex = try! NSRegularExpression(pattern: "(?:农历|阴历)\\s*(\\d+)\\s*月\\s*(\\d+)\\s*[日号]?")
+        let lunarRegex = Self.lunarRegex
         guard let fullMatch = lunarRegex.firstMatch(in: input, range: NSRange(match, in: input)),
               fullMatch.numberOfRanges >= 3,
               let monthRange = Range(fullMatch.range(at: 1), in: input),

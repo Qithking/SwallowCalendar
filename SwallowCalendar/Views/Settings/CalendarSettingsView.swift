@@ -6,6 +6,7 @@
 import SwiftUI
 import EventKit
 import SwiftData
+import os
 
 struct CalendarSettingsView: View {
     @Environment(\.modelContext) private var modelContext
@@ -413,7 +414,7 @@ struct CalendarSettingsView: View {
             saveStatus = "已保存 \(Date().formatted(date: .omitted, time: .shortened))"
         } catch {
             saveStatus = "保存失败"
-            print("[CalendarSettings] 保存失败: \(error)")
+            AppLogger.settings.error("日历设置保存失败: \(String(describing: error), privacy: .public)")
         }
     }
 

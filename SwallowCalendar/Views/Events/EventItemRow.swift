@@ -57,9 +57,9 @@ struct EventItemRow: View {
                 .help("标记完成")
             }
 
-            // 日历颜色标识
+            // 日历颜色标识（优先使用用户选择的颜色）
             RoundedRectangle(cornerRadius: 2)
-                .fill(Color(hex: event.calendarColorHex))
+                .fill(Color(hex: event.eventColorHex ?? event.calendarColorHex))
                 .frame(width: 3, height: 28)
 
             VStack(alignment: .leading, spacing: 2) {

@@ -7,6 +7,7 @@
 import SwiftUI
 import AppKit
 import SwiftData
+import os
 
 @MainActor
 final class SettingsWindowManager {
@@ -56,7 +57,7 @@ final class SettingsWindowManager {
         
         // 使用全局共享的 ModelContainer，确保数据一致性（不创建独立实例）
         guard let container = AppDelegate.sharedModelContainer else {
-            print("[SettingsWindowManager] sharedModelContainer 未初始化，无法打开设置")
+            AppLogger.settings.error("sharedModelContainer 未初始化，无法打开设置")
             return
         }
         

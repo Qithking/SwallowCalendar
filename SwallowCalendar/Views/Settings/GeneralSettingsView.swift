@@ -123,17 +123,6 @@ struct GeneralSettingsView: View {
         return formatter.string(from: Date())
     }
 
-    private let iconColors = [
-        "#FF3B30", // 红色
-        "#FF9500", // 橙色
-        "#FFCC00", // 黄色
-        "#34C759", // 绿色
-        "#007AFF", // 蓝色
-        "#AF52DE", // 紫色
-        "#FF2D55", // 粉色
-        "#8E8E93"  // 灰色
-    ]
-
     private let accentColors = [
         "#FF3B30", // 红色
         "#FF9500", // 橙色

@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import os
 
 struct TaskInputView: View {
     @Environment(AppSettings.self) private var appSettings
@@ -257,13 +258,14 @@ struct TaskInputView: View {
                     reminderMinutes: taskReminderMinutes > 0 ? taskReminderMinutes : nil,
                     category: .user,
                     asReminder: createAsReminder,
-                    isLunar: taskIsLunar
+                    isLunar: taskIsLunar,
+                    color: taskColor
                 )
                 inputText = ""
                 resetTaskAttributes()
                 onTaskAdded?()
             } catch {
-                // 任务添加失败，记录到日志系统（待实现）
+                AppLogger.ui.error("任务添加失败: \(String(describing: error), privacy: .public)")
             }
             isProcessing = false
         }

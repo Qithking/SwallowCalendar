@@ -6,6 +6,7 @@
 import EventKit
 import SwiftUI
 import SwiftData
+import os
 
 @Observable
 final class CalendarService {
@@ -113,6 +114,7 @@ final class CalendarService {
     
     /// 从缓存获取指定日期范围的事件（优先使用缓存，加快启动速度）
     /// - Note: 默认不包含无到期时间的系统提醒（用于日历视图）
+    @MainActor
     func fetchCachedEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CalendarEvent] {
         let cached = cacheService.getEvents(from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
         return cached.map { cachedToCalendarEvent($0) }
@@ -126,6 +128,7 @@ final class CalendarService {
     
     /// 从缓存获取某天的事件（优先使用缓存）
     /// - Note: 默认不包含无到期时间的系统提醒（用于日历视图）
+    @MainActor
     func fetchCachedEvents(for date: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CalendarEvent] {
         let cached = cacheService.getEvents(for: date, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
         return cached.map { cachedToCalendarEvent($0) }
@@ -151,6 +154,7 @@ final class CalendarService {
     
     /// 从缓存获取全天事件
     /// - Note: 包含无到期时间的系统提醒（用于待办列表）
+    @MainActor
     func fetchCachedAllDayEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil) -> [CalendarEvent] {
         var events = fetchCachedEvents(from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: true)
         events = events.filter(\.isAllDay)
@@ -224,7 +228,8 @@ final class CalendarService {
             isReminder: true,
             groupId: nil,
             recurrenceType: .none,
-            reminderMinutes: Self.extractReminderMinutes(from: reminder.alarms)
+            reminderMinutes: Self.extractReminderMinutes(from: reminder.alarms),
+            eventColorHex: nil
         )
     }
 
@@ -261,7 +266,8 @@ final class CalendarService {
         reminderMinutes: Int? = nil,
         category: EventCategory = .system,
         asReminder: Bool = false,
-        isLunar: Bool = false
+        isLunar: Bool = false,
+        color: EventColor? = nil
     ) throws {
         let recurrenceType = recurrence ?? .none
         
@@ -292,7 +298,8 @@ final class CalendarService {
                 reminderMinutes: reminderMinutes,
                 category: category,
                 asReminder: asReminder,
-                isLunar: isLunar
+                isLunar: isLunar,
+                color: color
             )
         } else {
             // 非周期任务，创建一个（允许过去时间）
@@ -303,7 +310,8 @@ final class CalendarService {
                     isAllDay: isAllDay,
                     priority: priority,
                     recurrence: nil,
-                    reminderMinutes: reminderMinutes
+                    reminderMinutes: reminderMinutes,
+                    color: color
                 )
             } else {
                 try createCalendarEvent(
@@ -315,7 +323,8 @@ final class CalendarService {
                     priority: priority,
                     recurrence: nil,
                     reminderMinutes: reminderMinutes,
-                    category: category
+                    category: category,
+                    color: color
                 )
             }
         }
@@ -334,7 +343,8 @@ final class CalendarService {
         reminderMinutes: Int? = nil,
         category: EventCategory,
         asReminder: Bool,
-        isLunar: Bool
+        isLunar: Bool,
+        color: EventColor? = nil
     ) throws {
         // 生成5个日期
         let dates = generateRecurringDates(
@@ -369,7 +379,8 @@ final class CalendarService {
                     groupIndex: index,
                     recurrenceType: recurrenceType,
                     isLunar: isLunar,
-                    reminderMinutes: reminderMinutes
+                    reminderMinutes: reminderMinutes,
+                    color: color
                 )
             } else {
                 try createCalendarEventWithGroupInfo(
@@ -384,7 +395,8 @@ final class CalendarService {
                     groupId: groupId,
                     groupIndex: index,
                     recurrenceType: recurrenceType,
-                    isLunar: isLunar
+                    isLunar: isLunar,
+                    color: color
                 )
             }
         }
@@ -401,7 +413,8 @@ final class CalendarService {
         priority: EventPriority? = nil,
         recurrence: RecurrenceType? = nil,
         reminderMinutes: Int? = nil,
-        category: EventCategory = .system
+        category: EventCategory = .system,
+        color: EventColor? = nil
     ) throws {
         let event = EKEvent(eventStore: eventStore)
         event.title = title
@@ -466,13 +479,14 @@ final class CalendarService {
                 calendarColorHex: event.calendar.cgColor?.hexString ?? "#007AFF",
                 category: category,
                 priority: priority?.rawValue ?? 0,
-                reminderMinutes: reminderMinutes ?? 0
+                reminderMinutes: reminderMinutes ?? 0,
+                eventColorHex: color?.rawValue
             )
             context.insert(cached)
             do {
                 try context.save()
             } catch {
-                // 缓存同步失败，记录到日志系统（待实现）
+                AppLogger.sync.error("缓存同步失败: \(String(describing: error), privacy: .public)")
             }
         }
     }
@@ -485,7 +499,8 @@ final class CalendarService {
         isAllDay: Bool,
         priority: EventPriority? = nil,
         recurrence: RecurrenceType? = nil,
-        reminderMinutes: Int? = nil
+        reminderMinutes: Int? = nil,
+        color: EventColor? = nil
     ) throws {
         guard reminderAuthorizationStatus == .fullAccess else {
             throw EventError.noReminderAccess
@@ -494,6 +509,9 @@ final class CalendarService {
         let reminder = EKReminder(eventStore: eventStore)
         reminder.title = title
         reminder.calendar = eventStore.defaultCalendarForNewReminders() ?? eventStore.calendars(for: .reminder).first
+        guard reminder.calendar != nil else {
+            throw EventError.noReminderCalendarAvailable
+        }
         
         // 设置到期时间
         var components = Calendar.current.dateComponents([.year, .month, .day], from: dueDate)
@@ -526,13 +544,14 @@ final class CalendarService {
                 isReminder: true,
                 isCompleted: false,
                 priority: priority?.rawValue ?? 0,
-                reminderMinutes: reminderMinutes ?? 0
+                reminderMinutes: reminderMinutes ?? 0,
+                eventColorHex: color?.rawValue
             )
             context.insert(cached)
             do {
                 try context.save()
             } catch {
-                // 缓存同步失败，记录到日志系统（待实现）
+                AppLogger.sync.error("缓存同步失败: \(String(describing: error), privacy: .public)")
             }
         }
     }
@@ -551,7 +570,8 @@ final class CalendarService {
         groupId: String,
         groupIndex: Int,
         recurrenceType: RecurrenceType,
-        isLunar: Bool
+        isLunar: Bool,
+        color: EventColor? = nil
     ) throws {
         let event = EKEvent(eventStore: eventStore)
         event.title = title
@@ -600,13 +620,14 @@ final class CalendarService {
                 groupIndex: groupIndex,
                 recurrenceType: recurrenceType,
                 isLunar: isLunar,
-                reminderMinutes: reminderMinutes ?? 0
+                reminderMinutes: reminderMinutes ?? 0,
+                eventColorHex: color?.rawValue
             )
             context.insert(cached)
             do {
                 try context.save()
             } catch {
-                // 缓存同步失败，记录到日志系统（待实现）
+                AppLogger.sync.error("缓存同步失败: \(String(describing: error), privacy: .public)")
             }
         }
     }
@@ -622,7 +643,8 @@ final class CalendarService {
         groupIndex: Int,
         recurrenceType: RecurrenceType,
         isLunar: Bool,
-        reminderMinutes: Int? = nil
+        reminderMinutes: Int? = nil,
+        color: EventColor? = nil
     ) throws {
         guard reminderAuthorizationStatus == .fullAccess else {
             throw EventError.noReminderAccess
@@ -631,6 +653,9 @@ final class CalendarService {
         let reminder = EKReminder(eventStore: eventStore)
         reminder.title = title
         reminder.calendar = eventStore.defaultCalendarForNewReminders() ?? eventStore.calendars(for: .reminder).first
+        guard reminder.calendar != nil else {
+            throw EventError.noReminderCalendarAvailable
+        }
         
         // 设置到期时间
         var components = Calendar.current.dateComponents([.year, .month, .day], from: dueDate)
@@ -667,13 +692,14 @@ final class CalendarService {
                 groupIndex: groupIndex,
                 recurrenceType: recurrenceType,
                 isLunar: isLunar,
-                reminderMinutes: reminderMinutes ?? 0
+                reminderMinutes: reminderMinutes ?? 0,
+                eventColorHex: color?.rawValue
             )
             context.insert(cached)
             do {
                 try context.save()
             } catch {
-                // 缓存同步失败，记录到日志系统（待实现）
+                AppLogger.sync.error("缓存同步失败: \(String(describing: error), privacy: .public)")
             }
         }
     }
@@ -711,7 +737,14 @@ final class CalendarService {
             // 本地缓存仍能正常更新（已完成提醒可能无法通过 calendarItem 获取）
             if let reminder = eventStore.calendarItem(withIdentifier: eventID) as? EKReminder {
                 reminder.isCompleted = isCompleted
-                try? eventStore.save(reminder, commit: true)
+                do {
+                    try eventStore.save(reminder, commit: true)
+                    AppLogger.sync.debug("[DEBUG-r1] EKReminder save ok id=\(eventID, privacy: .public) completed=\(isCompleted)")
+                } catch {
+                    AppLogger.sync.error("[DEBUG-r1] EKReminder save FAILED id=\(eventID, privacy: .public) completed=\(isCompleted) err=\(String(describing: error), privacy: .public)")
+                }
+            } else {
+                AppLogger.sync.warning("[DEBUG-r1] EKReminder calendarItem NOT-FOUND EventKit未收到完成状态 id=\(eventID, privacy: .public) completed=\(isCompleted)")
             }
         } else {
             // 日历事件：在 EKEvent 的 notes 中追加完成标记，确保同步后能恢复完成状态
@@ -731,7 +764,14 @@ final class CalendarService {
                             .replacingOccurrences(of: completedMarker, with: "")
                     }
                 }
-                try? eventStore.save(event, span: .thisEvent)
+                do {
+                    try eventStore.save(event, span: .thisEvent)
+                    AppLogger.sync.debug("[DEBUG-r1] EKEvent save ok id=\(eventID, privacy: .public) completed=\(isCompleted)")
+                } catch {
+                    AppLogger.sync.error("[DEBUG-r1] EKEvent save FAILED id=\(eventID, privacy: .public) completed=\(isCompleted) err=\(String(describing: error), privacy: .public)")
+                }
+            } else {
+                AppLogger.sync.warning("[DEBUG-r1] EKEvent NOT-FOUND EventKit未收到完成状态 id=\(eventID, privacy: .public) completed=\(isCompleted)")
             }
         }
         
@@ -741,7 +781,7 @@ final class CalendarService {
             do {
                 try cacheService.context?.save()
             } catch {
-                // 更新缓存失败，记录到日志系统（待实现）
+                AppLogger.sync.error("更新缓存失败: \(String(describing: error), privacy: .public)")
             }
             
             // 如果是完成操作且是周期任务，追加新实例
@@ -753,7 +793,7 @@ final class CalendarService {
 
     /// 更新事件（日历事件或提醒）
     @MainActor
-    func updateEvent(eventID: String, title: String?, startDate: Date?, endDate: Date?, isReminder: Bool = false) throws {
+    func updateEvent(eventID: String, title: String?, startDate: Date?, endDate: Date?, isReminder: Bool = false, priority: EventPriority? = nil, reminderMinutes: Int? = nil, color: EventColor? = nil) throws {
         if isReminder {
             guard let reminder = eventStore.calendarItem(withIdentifier: eventID) as? EKReminder else { return }
             if let title { reminder.title = title }
@@ -769,12 +809,20 @@ final class CalendarService {
                 }
                 reminder.dueDateComponents = components
             }
+            // 更新提醒闹钟
+            if let reminderMinutes {
+                reminder.alarms = reminderMinutes > 0 ? [EKAlarm(relativeOffset: TimeInterval(-reminderMinutes * 60))] : []
+            }
             try eventStore.save(reminder, commit: true)
         } else {
             guard let event = eventStore.event(withIdentifier: eventID) else { return }
             if let title { event.title = title }
             if let startDate { event.startDate = startDate }
             if let endDate { event.endDate = endDate }
+            // 更新日历事件闹钟
+            if let reminderMinutes {
+                event.alarms = reminderMinutes > 0 ? [EKAlarm(relativeOffset: TimeInterval(-reminderMinutes * 60))] : []
+            }
             try eventStore.save(event, span: .thisEvent)
         }
         
@@ -783,6 +831,9 @@ final class CalendarService {
             if let title { cached.title = title }
             if let startDate { cached.startDate = startDate }
             if let endDate { cached.endDate = endDate }
+            if let priority { cached.priority = priority.rawValue }
+            if let reminderMinutes { cached.reminderMinutes = reminderMinutes }
+            if let color { cached.eventColorHex = color.rawValue }
             cached.lastUpdated = Date()
             try? cacheService.context?.save()
         }
@@ -822,6 +873,7 @@ final class CalendarService {
     // MARK: - Sync
 
     /// 根据 eventID 查找缓存事件
+    @MainActor
     private func findCachedEvent(eventID: String) -> CachedEvent? {
         guard let context = cacheService.context else { return nil }
         var descriptor = FetchDescriptor<CachedEvent>(predicate: #Predicate { $0.eventID == eventID })
@@ -943,6 +995,7 @@ final class CalendarService {
     }
     
     /// 查找周期任务组中未完成的实例数量
+    @MainActor
     func countUncompletedInGroup(groupId: String) -> Int {
         guard let context = cacheService.context else { return 0 }
         
@@ -954,12 +1007,13 @@ final class CalendarService {
             let events = try context.fetch(descriptor)
             return events.count
         } catch {
-            // 查询周期任务组失败，记录到日志系统（待实现）
+            AppLogger.sync.error("查询周期任务组失败: \(String(describing: error), privacy: .public)")
             return 0
         }
     }
     
     /// 删除周期任务组中所有未完成的事件
+    @MainActor
     func deleteUncompletedInGroup(groupId: String) {
         guard let context = cacheService.context else { return }
         
@@ -984,7 +1038,7 @@ final class CalendarService {
             }
             try context.save()
         } catch {
-            // 删除周期任务组失败，记录到日志系统（待实现）
+            AppLogger.sync.error("删除周期任务组失败: \(String(describing: error), privacy: .public)")
         }
     }
     
@@ -1050,7 +1104,8 @@ final class CalendarService {
                         groupId: groupId,
                         groupIndex: nextIndex,
                         recurrenceType: completedEvent.recurrenceType,
-                        isLunar: completedEvent.isLunar
+                        isLunar: completedEvent.isLunar,
+                        color: completedEvent.eventColorHex.flatMap { EventColor(rawValue: $0) }
                     )
                 } else {
                     // 全天事件的结束日期是第二天
@@ -1075,11 +1130,12 @@ final class CalendarService {
                         groupId: groupId,
                         groupIndex: nextIndex,
                         recurrenceType: completedEvent.recurrenceType,
-                        isLunar: completedEvent.isLunar
+                        isLunar: completedEvent.isLunar,
+                        color: completedEvent.eventColorHex.flatMap { EventColor(rawValue: $0) }
                     )
                 }
             } catch {
-                // 追加周期任务失败，记录到日志系统（待实现）
+                AppLogger.sync.error("追加周期任务失败: \(String(describing: error), privacy: .public)")
             }
         }
     }
@@ -1101,7 +1157,8 @@ final class CalendarService {
             isReminder: false,
             groupId: nil,
             recurrenceType: .none,
-            reminderMinutes: Self.extractReminderMinutes(from: ekEvent.alarms)
+            reminderMinutes: Self.extractReminderMinutes(from: ekEvent.alarms),
+            eventColorHex: nil
         )
     }
 
@@ -1120,7 +1177,8 @@ final class CalendarService {
             isReminder: cached.isReminder,
             groupId: cached.groupId,
             recurrenceType: cached.recurrenceType,
-            reminderMinutes: cached.reminderMinutes
+            reminderMinutes: cached.reminderMinutes,
+            eventColorHex: cached.eventColorHex
         )
     }
     

@@ -25,11 +25,6 @@ final class BackgroundSyncService {
         self.modelContainer = container
     }
 
-    /// 设置主上下文（由 ContentView 注入，确保与 @Query 共享同一上下文）
-    func setMainContext(_ context: ModelContext) {
-        EventCacheService.shared.setMainContext(context)
-    }
-
     func start() async {
         await syncOnce()
         startTimer()
@@ -54,12 +49,14 @@ final class BackgroundSyncService {
         if !enabledCals.isEmpty {
             await CalendarService.shared.cacheService.syncEvents(from: CalendarService.shared, calendars: enabledCals)
         } else {
+            // clearSystemCalendarCache 为 @MainActor 方法，非隔离上下文调用需 await
             await CalendarService.shared.cacheService.clearSystemCalendarCache()
         }
 
         if AppSettings.shared.syncSystemReminders && CalendarService.shared.reminderAuthorizationStatus == .fullAccess {
             await CalendarService.shared.cacheService.syncReminders(from: CalendarService.shared)
         } else {
+            // clearRemindersCache 为 @MainActor 方法，非隔离上下文调用需 await
             await CalendarService.shared.cacheService.clearRemindersCache()
         }
 

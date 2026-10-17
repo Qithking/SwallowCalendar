@@ -12,9 +12,7 @@ let package = Package(
             targets: ["SwallowCalendar"]
         )
     ],
-    dependencies: [
-        .package(url: "https://github.com/apple/swift-collections", from: "1.1.0")
-    ],
+    dependencies: [],
     targets: [
         .executableTarget(
             name: "SwallowCalendar",

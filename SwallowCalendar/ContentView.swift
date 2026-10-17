@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import os
 import EventKit
 import AppKit
 
@@ -147,7 +148,6 @@ struct ContentView: View {
     private func initializeServices() async {
         // 将环境 ModelContext 注入服务层，确保服务写入与 @Query 读取使用同一上下文
         EventCacheService.shared.setMainContext(modelContext)
-        BackgroundSyncService.shared.setMainContext(modelContext)
 
         // 请求日历和提醒权限（同时请求，只弹一次授权框）
         var reminderGranted = calendarService.reminderAuthorizationStatus == .fullAccess
@@ -178,7 +178,9 @@ struct ContentView: View {
         }
 
         // 在 mainContext 注入后启动后台同步，确保使用同一 ModelContext
+        AppLogger.sync.info("[DEBUG-r1] startup-sync-BEGIN at=\(Date().timeIntervalSince1970)")
         await BackgroundSyncService.shared.start()
+        AppLogger.sync.info("[DEBUG-r1] startup-sync-END at=\(Date().timeIntervalSince1970)")
         
         // 同步完成后检查过期事项，确保启动时始终提示
         await ReminderAlertService.shared.checkExpiredEvents()
@@ -200,15 +202,5 @@ struct ContentView: View {
         if response == .alertFirstButtonReturn {
             calendarService.openReminderSettings()
         }
-    }
-
-    private func showAlert(title: String, message: String, style: NSAlert.Style) {
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.alertStyle = style
-        alert.addButton(withTitle: "确定")
-        alert.runModal()
     }
 }

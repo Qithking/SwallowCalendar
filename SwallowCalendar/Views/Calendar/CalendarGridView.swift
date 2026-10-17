@@ -142,7 +142,7 @@ struct CalendarGridView: View {
                     isCurrentMonth: calendar.isDate(date, equalTo: currentMonth, toGranularity: .month),
                     lunarText: LunarCalendarHelper.lunarString(for: date),
                     isHovered: isHovering,
-                    eventItems: dayEvents.map { CalendarEventItem(title: $0.title, colorHex: $0.calendarColorHex, category: $0.category.rawValue) },
+                    eventItems: dayEvents.map { CalendarEventItem(title: $0.title, colorHex: $0.eventColorHex ?? $0.calendarColorHex, category: $0.category.rawValue) },
                     systemCalendarColor: systemCalendarColor(),
                     subscriptionCalendarColor: subscriptionCalendarColor(),
                     isImportant: isImportant
@@ -152,7 +152,7 @@ struct CalendarGridView: View {
                         CellPopoverPresenter(
                             isPresented: isHovering && !dayEvents.isEmpty,
                             positioningRect: CGRect(origin: .zero, size: geo.size),
-                            content: popoverContent(for: date, items: dayEvents.map { CalendarEventItem(title: $0.title, colorHex: $0.calendarColorHex, category: $0.category.rawValue) })
+                            content: popoverContent(for: date, items: dayEvents.map { CalendarEventItem(title: $0.title, colorHex: $0.eventColorHex ?? $0.calendarColorHex, category: $0.category.rawValue) })
                         )
                     }
                 )

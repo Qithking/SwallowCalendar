@@ -6,6 +6,7 @@
 import Foundation
 import ServiceManagement
 import SwiftUI
+import os
 
 @Observable
 final class AppSettings {
@@ -94,9 +95,11 @@ final class AppSettings {
     var syncSystemReminders: Bool {
         didSet {
             UserDefaults.standard.set(syncSystemReminders, forKey: "syncSystemReminders")
-            // 关闭时清除提醒缓存
+            // 关闭时清除提醒缓存（clearRemindersCache 为 @MainActor 方法，需切换到主线程执行）
             if !syncSystemReminders {
-                EventCacheService.shared.clearRemindersCache()
+                Task { @MainActor in
+                    EventCacheService.shared.clearRemindersCache()
+                }
             }
         }
     }
@@ -239,7 +242,7 @@ final class AppSettings {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            print("Failed to update login item: \(error)")
+            AppLogger.settings.error("更新登录项失败: \(String(describing: error), privacy: .public)")
         }
     }
 }

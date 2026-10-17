@@ -5,6 +5,7 @@
 
 import SwiftUI
 import AppKit
+import os
 
 struct EventPanelView: View {
     @Environment(AppSettings.self) private var appSettings
@@ -204,7 +205,7 @@ struct EventPanelView: View {
             refreshTrigger.toggle()
             onEventsChanged?()
         } catch {
-            print("Failed to delete event: \(error)")
+            AppLogger.ui.error("删除事件失败: \(String(describing: error), privacy: .public)")
         }
     }
 }

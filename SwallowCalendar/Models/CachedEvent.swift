@@ -8,6 +8,7 @@
 import Foundation
 import SwiftData
 import EventKit
+import os
 
 @Model
 final class CachedEvent {
@@ -62,6 +63,9 @@ final class CachedEvent {
     /// 提醒提前分钟数（0=不提醒）
     var reminderMinutes: Int = 0
     
+    /// 用户选择的事件颜色（十六进制，nil 时使用日历颜色）
+    var eventColorHex: String?
+    
     /// 缓存更新时间
     var lastUpdated: Date
     
@@ -102,7 +106,8 @@ final class CachedEvent {
         groupIndex: Int = -1,
         recurrenceType: RecurrenceType = .none,
         isLunar: Bool = false,
-        reminderMinutes: Int = 0
+        reminderMinutes: Int = 0,
+        eventColorHex: String? = nil
     ) {
         self.eventID = eventID
         self.title = title
@@ -121,6 +126,7 @@ final class CachedEvent {
         self.recurrenceTypeRaw = recurrenceType.rawValue
         self.isLunar = isLunar
         self.reminderMinutes = reminderMinutes
+        self.eventColorHex = eventColorHex
         self.lastUpdated = Date()
     }
 }
@@ -228,6 +234,10 @@ final class EventCacheService {
         
         // 从系统日历获取事件
         let systemEvents = calendarService.fetchEvents(from: startDate, to: endDate, calendars: calendars)
+        do {
+            let uniqIDs = Set(systemEvents.map(\.id)).count
+            AppLogger.cache.info("[DEBUG-r1] syncEvents fetched=\(systemEvents.count) uniqueIDs=\(uniqIDs) range=\(startDate.timeIntervalSince1970)→\(endDate.timeIntervalSince1970)")
+        }
         
         // 获取现有的缓存事件，构建字典以优化查询
         var existingByID: [String: CachedEvent] = [:]
@@ -279,6 +289,9 @@ final class EventCacheService {
                 // 有变更才更新，避免不必要的写入
                 let newReminderMinutes = event.reminderMinutes
                 if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes {
+                    if existing.isCompleted != newIsCompleted {
+                        AppLogger.cache.warning("[DEBUG-r1] syncEvents isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID, privacy: .public) title=\(existing.title, privacy: .public)")
+                    }
                     existing.title = newTitle
                     existing.startDate = newStart
                     existing.endDate = newEnd
@@ -322,7 +335,7 @@ final class EventCacheService {
             // 清理超过保留期限的旧事件
             cleanupOldEvents(context: context, before: startDate)
         } catch {
-            // 保存失败，记录到日志系统（待实现）
+            AppLogger.cache.error("同步保存失败: \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -345,11 +358,11 @@ final class EventCacheService {
         if migratedCount > 0 {
             do {
                 try context.save()
-                print("[EventCacheService] 迁移了 \(migratedCount) 条提醒记录的 isReminder 标记")
+                AppLogger.cache.info("迁移了 \(migratedCount) 条提醒记录的 isReminder 标记")
                 UserDefaults.standard.set(true, forKey: migrationKey)
             } catch {
                 // 保存失败，不标记迁移完成，下次重试
-                print("[EventCacheService] 迁移保存失败，将在下次同步时重试: \(error)")
+                AppLogger.cache.error("迁移保存失败: \(String(describing: error), privacy: .public)")
             }
         } else {
             // 无数据需要迁移，直接标记完成
@@ -373,6 +386,7 @@ final class EventCacheService {
 
         // 从系统提醒获取（获取所有提醒，包括已完成的，以正确同步外部状态变化）
         let reminders = await calendarService.fetchReminders(includeCompleted: true)
+        AppLogger.cache.info("[DEBUG-r1] syncReminders fetched=\(reminders.count) at=\(Date().timeIntervalSince1970)")
 
         // 获取现有的提醒，构建字典以优化查询
         var existingByID: [String: CachedEvent] = [:]
@@ -404,6 +418,9 @@ final class EventCacheService {
                 let newReminderMinutes = reminder.reminderMinutes
                 // 有变更才更新，避免不必要的写入
                 if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes {
+                    if existing.isCompleted != newIsCompleted {
+                        AppLogger.cache.warning("[DEBUG-r1] syncReminders isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID, privacy: .public) title=\(existing.title, privacy: .public)")
+                    }
                     existing.title = newTitle
                     existing.startDate = newStart
                     existing.endDate = newEnd
@@ -436,7 +453,7 @@ final class EventCacheService {
             try context.save()
             lastSyncTime = Date()
         } catch {
-            // 提醒保存失败，记录到日志系统（待实现）
+            AppLogger.cache.error("提醒保存失败: \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -650,7 +667,7 @@ final class EventCacheService {
         
         if deletedCount > 0 {
             try? context.save()
-            print("[EventCacheService] 清理了 \(deletedCount) 个过期系统日历事件")
+            AppLogger.cache.info("清理了 \(deletedCount) 个过期系统日历事件")
         }
     }
 }

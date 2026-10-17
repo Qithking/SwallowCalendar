@@ -95,6 +95,8 @@ struct CalendarEvent: Identifiable {
     let recurrenceType: RecurrenceType
     /// 提醒提前分钟数（0=不提醒）
     let reminderMinutes: Int
+    /// 用户选择的事件颜色（nil 时使用 calendarColorHex）
+    let eventColorHex: String?
 
     /// 是否为订阅日历（订阅日历不在用户事件列表中显示）
     var isSubscription: Bool {
@@ -111,34 +113,5 @@ struct CalendarEvent: Identifiable {
         guard let start = startDate else { return false }
         let remainingTime = start.timeIntervalSinceNow
         return remainingTime > 0 && remainingTime < 86400 // 大于 0 且小于 1 天
-    }
-
-    /// 倒计时文本
-    var countdownText: String {
-        guard let start = startDate else { return "" }
-        let now = Date()
-        guard start > now else { return "已过期" }
-        let interval = start.timeIntervalSince(now)
-        let days = Int(interval) / 86400
-        let hours = (Int(interval) % 86400) / 3600
-        let minutes = (Int(interval) % 3600) / 60
-        let seconds = Int(interval) % 60
-
-        if days >= 365 {
-            let years = days / 365
-            let remainDays = days % 365
-            return remainDays > 0 ? "\(years)年\(remainDays)天" : "\(years)年"
-        } else if days >= 1 {
-            return "\(days)天"
-        } else if hours >= 1 {
-            return "\(hours)小时"
-        } else {
-            // 小于1小时：显示"X分Y秒"或"X秒"
-            if minutes > 0 {
-                return "\(minutes)分\(seconds)秒"
-            } else {
-                return "\(seconds)秒"
-            }
-        }
     }
 }

@@ -6,8 +6,9 @@
 //
 
 import Foundation
-import AppKit
+@preconcurrency import AppKit
 import SwiftData
+import os
 import SwiftUI  // 为了导入 CalendarEvent
 
 @MainActor
@@ -52,8 +53,9 @@ final class ReminderAlertService {
     /// 检查过期事项（供数据同步完成后调用）
     /// 启动时的检查会忽略 lastAlertedEventIDs 过滤，确保过期事项始终被提示
     func checkExpiredEvents() async {
+        AppLogger.reminder.info("[DEBUG-r1] STARTUP-CHECK-BEGIN at=\(Date().timeIntervalSince1970)")
         await checkDueEvents(includeExpired: true, ignoreAlertedCache: true)
-        print("[ReminderAlertService] 数据同步后过期事项检查完成")
+        AppLogger.reminder.info("数据同步后过期事项检查完成")
     }
     
     /// 停止提醒检查
@@ -69,7 +71,7 @@ final class ReminderAlertService {
     private func checkDueEvents(includeExpired: Bool = false, ignoreAlertedCache: Bool = false) async {
         // 使用 EventCacheService 的上下文，确保与待办列表显示的数据一致
         guard let context = EventCacheService.shared.context else {
-            print("[ReminderAlertService] EventCacheService 未配置")
+            AppLogger.reminder.warning("EventCacheService 未配置")
             return
         }
         let now = Date()
@@ -121,6 +123,9 @@ final class ReminderAlertService {
             let newEvents = ignoreAlertedCache ? dueEvents : dueEvents.filter { !lastAlertedEventIDs.contains($0.eventID) }
             
             if newEvents.count > 0 {
+                for event in newEvents {
+                    AppLogger.reminder.info("[DEBUG-r1] STARTUP-POP id=\(event.eventID, privacy: .public) title=\(event.title, privacy: .public) cacheCompleted=false start=\(event.startDate.map { String($0.timeIntervalSince1970) } ?? "nil", privacy: .public) reminderMinutes=\(event.reminderMinutes) isReminder=\(event.isReminder)")
+                }
                 // 合并显示所有到期/即将到期的事项
                 let isExpired = includeExpired || newEvents.allSatisfy { ($0.startDate ?? now) < now }
                 showCombinedAlert(for: newEvents, isExpired: isExpired)
@@ -142,38 +147,7 @@ final class ReminderAlertService {
                 }
             }
         } catch {
-            print("[ReminderAlertService] 检查到期事件失败: \(error)")
-        }
-    }
-    
-    /// 显示到期提醒弹窗
-    /// - Parameter isExpired: 是否为已过期事项
-    private func showAlert(for event: CachedEvent, isExpired: Bool) {
-        // 激活应用
-        NSApp.activate(ignoringOtherApps: true)
-        
-        let alert = NSAlert()
-        
-        if isExpired {
-            alert.messageText = "待办事项已过期"
-            alert.alertStyle = .warning
-        } else {
-            alert.messageText = "待办事项即将到期"
-            alert.alertStyle = .informational
-        }
-        
-        let dateText = formatDate(event.startDate)
-        let expiredText = isExpired ? "（已过期）" : ""
-        alert.informativeText = "\(event.title ?? "未命名事项")\n\n\(dateText)\(expiredText)"
-        
-        alert.addButton(withTitle: "知道了")
-        alert.addButton(withTitle: "标记完成")
-        
-        let response = alert.runModal()
-        
-        if response == .alertSecondButtonReturn {
-            // 用户点击"标记完成"
-            markAsCompleted(eventID: event.eventID)
+            AppLogger.reminder.error("检查到期事件失败: \(String(describing: error), privacy: .public)")
         }
     }
     
@@ -189,7 +163,7 @@ final class ReminderAlertService {
         // 构建事项列表文本
         let itemsList = events.enumerated().map { index, event in
             let dateText = formatDate(event.startDate)
-            return "\(index + 1). \(event.title ?? "未命名事项")\n   \(dateText)"
+            return "\(index + 1). \(event.title)\n   \(dateText)"
         }.joined(separator: "\n\n")
         
         // 使用 NSScrollView 限制内容最大高度 500px，超出显示滚动条
@@ -251,21 +225,23 @@ final class ReminderAlertService {
             let screenFrame = screen.visibleFrame
             let window = alert.window
             window.alphaValue = 0
-            var observer: NSObjectProtocol?
-            observer = NotificationCenter.default.addObserver(
+            // 使用 using: 参数避免在 @Sendable 闭包中捕获可变变量
+            let observer = NotificationCenter.default.addObserver(
                 forName: NSWindow.didBecomeKeyNotification,
                 object: window,
                 queue: .main
-            ) { _ in
+            ) { [weak window] _ in
+                guard let window = window else { return }
                 let size = window.frame.size
                 window.setFrameTopLeftPoint(NSPoint(
                     x: screenFrame.maxX - size.width - 20,
                     y: screenFrame.maxY - 20
                 ))
                 window.alphaValue = 1
-                if let observer = observer {
-                    NotificationCenter.default.removeObserver(observer)
-                }
+            }
+            // runModal 返回后移除 observer
+            DispatchQueue.main.async {
+                NotificationCenter.default.removeObserver(observer)
             }
         }
         
@@ -294,10 +270,10 @@ final class ReminderAlertService {
                     isCompleted: true,
                     isReminder: event.isReminder
                 )
-                print("[ReminderAlertService] 已标记事件完成: \(eventID)")
+                AppLogger.reminder.info("已标记事件完成: \(eventID)")
             }
         } catch {
-            print("[ReminderAlertService] 标记完成失败: \(error)")
+            AppLogger.reminder.error("标记完成失败: \(String(describing: error), privacy: .public)")
         }
     }
     
@@ -325,7 +301,7 @@ final class ReminderAlertService {
         if lastAlertedEventIDs.count > maxAlertedEventIDs {
             let overflow = lastAlertedEventIDs.count - maxAlertedEventIDs
             lastAlertedEventIDs.removeFirst(overflow)
-            print("[ReminderAlertService] 清理了 \(overflow) 个过期提醒记录")
+            AppLogger.reminder.info("清理了 \(overflow) 个过期提醒记录")
         }
         persistAlertedEventIDs()
     }

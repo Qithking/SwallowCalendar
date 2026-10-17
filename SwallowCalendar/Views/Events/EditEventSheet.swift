@@ -5,6 +5,7 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 struct EditEventSheet: View {
     let event: CalendarEvent
@@ -45,6 +46,11 @@ struct EditEventSheet: View {
             if let cached = try? context.fetch(descriptor).first {
                 originalRec = cached.recurrenceType
                 _taskRecurrence = State(initialValue: cached.recurrenceType)
+                _taskPriority = State(initialValue: EventPriority(rawValue: cached.priority) ?? .none)
+                _taskReminderMinutes = State(initialValue: cached.reminderMinutes)
+                if let hex = cached.eventColorHex {
+                    _taskColor = State(initialValue: EventColor(rawValue: hex))
+                }
             }
         }
         self.originalRecurrence = originalRec
@@ -172,7 +178,11 @@ struct EditEventSheet: View {
                     title: title,
                     startDate: startDate,
                     endDate: isAllDay ? nil : startDate.addingTimeInterval(3600),
-                    isReminder: event.isReminder
+                    isReminder: event.isReminder,
+                    // .none 的 rawValue 为 0，直接传入可正确清除已有优先级
+                    priority: taskPriority,
+                    reminderMinutes: taskReminderMinutes,
+                    color: taskColor
                 )
                 
                 // 如果周期类型发生变化，处理周期任务逻辑
@@ -188,7 +198,7 @@ struct EditEventSheet: View {
                 
                 onDismiss?()
             } catch {
-                // 更新事件失败，记录到日志系统（待实现）
+                AppLogger.ui.error("更新事件失败: \(String(describing: error), privacy: .public)")
             }
             isProcessing = false
         }

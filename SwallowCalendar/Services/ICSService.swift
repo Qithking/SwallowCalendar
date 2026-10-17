@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import os
 
 final class ICSService {
     static let shared = ICSService()
@@ -86,7 +87,7 @@ final class ICSService {
         let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("SwallowCalendar/ICS", isDirectory: true)
         try? FileManager.default.removeItem(at: cacheDir)
-        print("[ICSService] 订阅日历磁盘缓存已清除")
+        AppLogger.ics.info("订阅日历磁盘缓存已清除")
     }
     
     /// 清理过期的缓存文件（超过7天）
@@ -113,7 +114,7 @@ final class ICSService {
         }
         
         if cleanedCount > 0 {
-            print("[ICSService] 清理了 \(cleanedCount) 个过期的 ICS 缓存文件")
+            AppLogger.ics.info("清理了 \(cleanedCount) 个过期的 ICS 缓存文件")
         }
     }
 
@@ -147,12 +148,6 @@ final class ICSService {
         }
 
         return formatter.date(from: dateStr)
-    }
-
-    private func formatDateKey(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
     }
 
     // MARK: - File Cache
