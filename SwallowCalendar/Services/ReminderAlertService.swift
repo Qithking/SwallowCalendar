@@ -151,117 +151,12 @@ final class ReminderAlertService {
         }
     }
     
-    /// 显示合并的过期事项提醒弹窗
+    /// 显示合并的过期事项提醒弹窗（自定义 SwiftUI 窗口，替代系统 NSAlert）
     private func showCombinedAlert(for events: [CachedEvent], isExpired: Bool) {
-        // 激活应用
-        NSApp.activate(ignoringOtherApps: true)
-        
-        let alert = NSAlert()
-        alert.messageText = "\(events.count) 个待办事项\(isExpired ? "已过期" : "即将到期")"
-        alert.alertStyle = isExpired ? .warning : .informational
-        
-        // 构建事项列表文本
-        let itemsList = events.enumerated().map { index, event in
-            let dateText = formatDate(event.startDate)
-            return "\(index + 1). \(event.title)\n   \(dateText)"
-        }.joined(separator: "\n\n")
-        
-        // 使用 NSScrollView 限制内容最大高度 500px，超出显示滚动条
-        let contentWidth: CGFloat = 380
-        let font = NSFont.systemFont(ofSize: 13)
-
-        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: 40))
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 0, height: 4)
-        textView.defaultParagraphStyle = {
-            let ps = NSMutableParagraphStyle()
-            ps.lineBreakMode = .byWordWrapping
-            return ps
-        }()
-        textView.textColor = .textColor
-        textView.font = font
-        textView.string = itemsList
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.widthTracksTextView = false
-        textView.textContainer?.containerSize = NSSize(width: contentWidth - 20, height: .greatestFiniteMagnitude)
-        textView.sizeToFit()
-
-        let textHeight = max(textView.frame.height, 40)
-        let contentHeight = min(textHeight, 350)
-
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.documentView = textView
-        scrollView.borderType = .noBorder
-        scrollView.drawsBackground = false
-
-        // 用 Auto Layout 约束固定 accessoryView 尺寸。
-        // NSAlert 布局时可能按 documentView 的完整内容高度扩展窗口，
-        // 导致窗口超出屏幕、底部内容被隐藏；约束可保证弹窗高度恒定可控。
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            scrollView.widthAnchor.constraint(equalToConstant: contentWidth),
-            scrollView.heightAnchor.constraint(equalToConstant: contentHeight)
-        ])
-        scrollView.frame = NSRect(x: 0, y: 0, width: contentWidth, height: contentHeight)
-
-        alert.accessoryView = scrollView
-        
-        alert.addButton(withTitle: "知道了")
-        alert.addButton(withTitle: "全部标记完成")
-        
-        // 确定目标屏幕
-        var targetScreen: NSScreen?
-        
-        if let activeWindow = NSApp.keyWindow {
-            targetScreen = activeWindow.screen
-        }
-        if targetScreen == nil {
-            targetScreen = NSScreen.main ?? NSScreen.screens.first
-        }
-        
-        // NSAlert.runModal() 内部会强制将窗口居中显示，
-        // 在 runModal() 之前设置位置都会被覆盖。
-        // 因此先隐藏窗口(alpha=0)，等 runModal() 居中并完成布局后，
-        // didBecomeKeyNotification 触发时窗口尺寸已准确，
-        // 此时移动到右上角再显示(alpha=1)，用户不会看到居中闪现。
-        if let screen = targetScreen {
-            let screenFrame = screen.visibleFrame
-            let window = alert.window
-            window.alphaValue = 0
-            // 使用 using: 参数避免在 @Sendable 闭包中捕获可变变量
-            let observer = NotificationCenter.default.addObserver(
-                forName: NSWindow.didBecomeKeyNotification,
-                object: window,
-                queue: .main
-            ) { [weak window] _ in
-                guard let window = window else { return }
-                let size = window.frame.size
-                window.setFrameTopLeftPoint(NSPoint(
-                    x: screenFrame.maxX - size.width - 20,
-                    y: screenFrame.maxY - 20
-                ))
-                window.alphaValue = 1
-            }
-            // runModal 返回后移除 observer
-            DispatchQueue.main.async {
-                NotificationCenter.default.removeObserver(observer)
-            }
-        }
-        
-        let response = alert.runModal()
-        
-        if response == .alertSecondButtonReturn {
-            // 用户点击"全部标记完成"
+        ReminderAlertWindowController.shared.show(events: events, isExpired: isExpired) {
             Task { @MainActor in
                 for event in events {
-                    await markAsCompleted(eventID: event.eventID)
+                    await self.markAsCompleted(eventID: event.eventID)
                 }
             }
         }
@@ -289,19 +184,6 @@ final class ReminderAlertService {
         } catch {
             AppLogger.reminder.error("标记完成失败: \(String(describing: error), privacy: .public)")
         }
-    }
-    
-    /// 格式化日期显示（统一格式：yyyy/MM/dd HH:mm）
-    private static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy/MM/dd HH:mm"
-        formatter.locale = Locale(identifier: "zh_CN")
-        return formatter
-    }()
-    
-    private func formatDate(_ date: Date?) -> String {
-        guard let date = date else { return "" }
-        return Self.dateFormatter.string(from: date)
     }
     
     /// 将已提醒事件ID持久化到 UserDefaults
