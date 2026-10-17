@@ -28,12 +28,10 @@ final class ReminderAlertWindowController {
     func show(events: [CachedEvent], isExpired: Bool, onCompleteAll: @escaping () -> Void) {
         window?.close()
 
-        // 尺寸：宽 340 与主面板一致；列表按条数估算高度，上限 380 由 ScrollView 承接
+        // 宽 340 与主面板一致；高度由 SwiftUI 内容自适应（fittingSize），
+        // 避免手工估算行高不准导致内容微溢出而出现多余滚动条。
+        // 列表内部 maxHeight 封顶 5 项，超出由 ScrollView 滚动承接。
         let width: CGFloat = 340
-        let headerHeight: CGFloat = 58
-        let footerHeight: CGFloat = 62
-        let listHeight = min(CGFloat(events.count) * 50 + 14, 380)
-        let height = headerHeight + listHeight + footerHeight
 
         let rootView = ReminderAlertView(
             events: events,
@@ -45,8 +43,11 @@ final class ReminderAlertWindowController {
             }
         )
 
+        let hostingView = NSHostingView(rootView: rootView.frame(width: width))
+        let contentSize = hostingView.fittingSize
+
         let window = ReminderAlertWindow(
-            contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+            contentRect: NSRect(origin: .zero, size: contentSize),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -57,14 +58,14 @@ final class ReminderAlertWindowController {
         window.level = .floating
         window.isReleasedWhenClosed = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        window.contentView = NSHostingView(rootView: rootView.frame(width: width, height: height))
+        window.contentView = hostingView
 
         // 定位到屏幕右上角（与原 NSAlert 逻辑一致：上边距 20、右边距 20）
         let screen = NSApp.keyWindow?.screen ?? NSScreen.main ?? NSScreen.screens.first
         if let visibleFrame = screen?.visibleFrame {
             window.setFrameOrigin(NSPoint(
                 x: visibleFrame.maxX - width - 20,
-                y: visibleFrame.maxY - 20 - height
+                y: visibleFrame.maxY - 20 - contentSize.height
             ))
         }
         window.makeKeyAndOrderFront(nil)
@@ -132,9 +133,11 @@ struct ReminderAlertView: View {
         .padding(.vertical, 14)
     }
 
-    /// 事项列表：逐项卡片渲染，超出高度时滚动
+    /// 事项列表：≤5 项用纯 VStack（高度精确、绝不出现滚动条）；
+    /// >5 项用固定高度的 ScrollView 滚动查看
+    @ViewBuilder
     private var eventList: some View {
-        ScrollView {
+        if events.count <= 5 {
             VStack(spacing: 6) {
                 ForEach(events, id: \.eventID) { event in
                     eventRow(event)
@@ -142,6 +145,18 @@ struct ReminderAlertView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
+        } else {
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(events, id: \.eventID) { event in
+                        eventRow(event)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+            }
+            // 高度约 5 行卡片
+            .frame(height: 290)
         }
     }
 
