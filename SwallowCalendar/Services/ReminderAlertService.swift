@@ -169,7 +169,7 @@ final class ReminderAlertService {
         // 使用 NSScrollView 限制内容最大高度 500px，超出显示滚动条
         let contentWidth: CGFloat = 380
         let font = NSFont.systemFont(ofSize: 13)
-        
+
         let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: 40))
         textView.isEditable = false
         textView.isSelectable = true
@@ -185,13 +185,14 @@ final class ReminderAlertService {
         textView.string = itemsList
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = false
         textView.textContainer?.containerSize = NSSize(width: contentWidth - 20, height: .greatestFiniteMagnitude)
         textView.sizeToFit()
-        
+
         let textHeight = max(textView.frame.height, 40)
         let contentHeight = min(textHeight, 350)
-        
+
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
@@ -199,8 +200,17 @@ final class ReminderAlertService {
         scrollView.documentView = textView
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
+
+        // 用 Auto Layout 约束固定 accessoryView 尺寸。
+        // NSAlert 布局时可能按 documentView 的完整内容高度扩展窗口，
+        // 导致窗口超出屏幕、底部内容被隐藏；约束可保证弹窗高度恒定可控。
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            scrollView.widthAnchor.constraint(equalToConstant: contentWidth),
+            scrollView.heightAnchor.constraint(equalToConstant: contentHeight)
+        ])
         scrollView.frame = NSRect(x: 0, y: 0, width: contentWidth, height: contentHeight)
-        
+
         alert.accessoryView = scrollView
         
         alert.addButton(withTitle: "知道了")
@@ -249,12 +259,16 @@ final class ReminderAlertService {
         
         if response == .alertSecondButtonReturn {
             // 用户点击"全部标记完成"
-            events.forEach { markAsCompleted(eventID: $0.eventID) }
+            Task { @MainActor in
+                for event in events {
+                    await markAsCompleted(eventID: event.eventID)
+                }
+            }
         }
     }
-    
+
     /// 标记事件为完成
-    private func markAsCompleted(eventID: String) {
+    private func markAsCompleted(eventID: String) async {
         // 使用 EventCacheService 的统一上下文，确保与 @Query 同步
         guard let context = EventCacheService.shared.context else { return }
 
@@ -265,7 +279,7 @@ final class ReminderAlertService {
         do {
             if let event = try context.fetch(descriptor).first {
                 // 使用 CalendarService 的双向同步方法（同时更新 EventKit 和 SwiftData）
-                CalendarService.shared.toggleEventCompleted(
+                await CalendarService.shared.toggleEventCompleted(
                     eventID: eventID,
                     isCompleted: true,
                     isReminder: event.isReminder

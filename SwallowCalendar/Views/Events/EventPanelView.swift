@@ -80,7 +80,7 @@ struct EventPanelView: View {
                         )
                     },
                     onCompleteEvent: { event in
-                        calendarService.toggleEventCompleted(eventID: event.id, isCompleted: true, isReminder: event.isReminder)
+                        Task { await calendarService.toggleEventCompleted(eventID: event.id, isCompleted: true, isReminder: event.isReminder) }
                         refreshTrigger.toggle()
                     },
                     onDeleteEvent: { event in
@@ -117,7 +117,7 @@ struct EventPanelView: View {
                         )
                     },
                     onUncompleteEvent: { event in
-                        calendarService.toggleEventCompleted(eventID: event.id, isCompleted: false, isReminder: event.isReminder)
+                        Task { await calendarService.toggleEventCompleted(eventID: event.id, isCompleted: false, isReminder: event.isReminder) }
                         refreshTrigger.toggle()
                     },
                     onDeleteEvent: { event in

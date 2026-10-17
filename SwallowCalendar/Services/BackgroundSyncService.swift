@@ -49,15 +49,15 @@ final class BackgroundSyncService {
         if !enabledCals.isEmpty {
             await CalendarService.shared.cacheService.syncEvents(from: CalendarService.shared, calendars: enabledCals)
         } else {
-            // clearSystemCalendarCache 为 @MainActor 方法，非隔离上下文调用需 await
-            await CalendarService.shared.cacheService.clearSystemCalendarCache()
+            // clearSystemCalendarCache 为 @MainActor 同步方法，同类 @MainActor 上下文可直接调用
+            CalendarService.shared.cacheService.clearSystemCalendarCache()
         }
 
         if AppSettings.shared.syncSystemReminders && CalendarService.shared.reminderAuthorizationStatus == .fullAccess {
             await CalendarService.shared.cacheService.syncReminders(from: CalendarService.shared)
         } else {
-            // clearRemindersCache 为 @MainActor 方法，非隔离上下文调用需 await
-            await CalendarService.shared.cacheService.clearRemindersCache()
+            // clearRemindersCache 为 @MainActor 同步方法，同类 @MainActor 上下文可直接调用
+            CalendarService.shared.cacheService.clearRemindersCache()
         }
 
         let enabledSources = customSources.filter { $0.isEnabled }

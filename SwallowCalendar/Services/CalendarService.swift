@@ -206,6 +206,17 @@ final class CalendarService {
         }
     }
 
+    /// 通过 eventID 全量查找 EKReminder 对象
+    /// 用于 calendarItem(withIdentifier:) 查不到已完成 iCloud 提醒时的兜底
+    private func fetchReminderObject(byID id: String) async -> EKReminder? {
+        let predicate = eventStore.predicateForReminders(in: nil)
+        return await withCheckedContinuation { continuation in
+            eventStore.fetchReminders(matching: predicate) { reminders in
+                continuation.resume(returning: reminders?.first { $0.calendarItemIdentifier == id })
+            }
+        }
+    }
+
     /// 将 EKReminder 转换为 CalendarEvent
     private func mapReminderToCalendarEvent(_ reminder: EKReminder, dueDate: Date?) -> CalendarEvent {
         let isAllDay: Bool
@@ -731,7 +742,7 @@ final class CalendarService {
     ///         同步时会恢复 notes 中标记为已完成的事件状态
     /// - Note: 如果是周期任务，完成时会自动追加新的实例
     @MainActor
-    func toggleEventCompleted(eventID: String, isCompleted: Bool, isReminder: Bool = false) {
+    func toggleEventCompleted(eventID: String, isCompleted: Bool, isReminder: Bool = false) async {
         if isReminder {
             // 使用 if let 而非 guard，确保即使 EventKit 中找不到该提醒，
             // 本地缓存仍能正常更新（已完成提醒可能无法通过 calendarItem 获取）
@@ -744,7 +755,22 @@ final class CalendarService {
                     AppLogger.sync.error("[DEBUG-r1] EKReminder save FAILED id=\(eventID, privacy: .public) completed=\(isCompleted) err=\(String(describing: error), privacy: .public)")
                 }
             } else {
-                AppLogger.sync.warning("[DEBUG-r1] EKReminder calendarItem NOT-FOUND EventKit未收到完成状态 id=\(eventID, privacy: .public) completed=\(isCompleted)")
+                AppLogger.sync.warning("[DEBUG-r1] EKReminder calendarItem NOT-FOUND 尝试兜底查询 id=\(eventID, privacy: .public) completed=\(isCompleted)")
+                // 兜底：calendarItem 对已完成的 iCloud 提醒可能返回 nil，
+                // 此时若只更新缓存，重启后 syncReminders 会从 EK 拉到旧的未完成状态，
+                // 导致已完成事项再次弹窗。改用全量查询找到后补写 EK，保证两端一致。
+                if let reminder = await fetchReminderObject(byID: eventID) {
+                    reminder.isCompleted = isCompleted
+                    do {
+                        try eventStore.save(reminder, commit: true)
+                        AppLogger.sync.info("[DEBUG-r1] EKReminder save ok(fallback) id=\(eventID, privacy: .public) completed=\(isCompleted)")
+                    } catch {
+                        AppLogger.sync.error("[DEBUG-r1] EKReminder save FAILED(fallback) id=\(eventID, privacy: .public) err=\(String(describing: error), privacy: .public)")
+                    }
+                } else {
+                    // 兜底仍未找到：事项多半已从 EventKit 删除，syncReminders 会同步删除缓存记录
+                    AppLogger.sync.warning("[DEBUG-r1] EKReminder fallback NOT-FOUND 事项可能已删除 id=\(eventID, privacy: .public)")
+                }
             }
         } else {
             // 日历事件：在 EKEvent 的 notes 中追加完成标记，确保同步后能恢复完成状态
