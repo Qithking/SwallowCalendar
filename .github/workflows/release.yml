@@ -1,4 +1,4 @@
-name: Release
+name: release
 
 on:
   push:
@@ -13,7 +13,8 @@ env:
   MACOSX_DEPLOYMENT_TARGET: "14.0"
 
 jobs:
-  build:
+  release:
+    name: release
     runs-on: macos-15
     steps:
       - name: Checkout

@@ -422,6 +422,56 @@ rerun_latest_action() {
     echo_info "查看构建进度: https://github.com/Qithking/SwallowCalendar/actions"
 }
 
+# 推送 Beta 分支到远程 main
+push_beta_to_main() {
+    echo ""
+    echo "=== 推送 Beta 到远程 main 分支 ==="
+    echo ""
+
+    # 检查本地 Beta 分支
+    if ! git show-ref --verify --quiet refs/heads/Beta; then
+        echo_error "本地不存在 Beta 分支"
+        exit 1
+    fi
+
+    # 获取远程仓库
+    remote_name=$(git remote 2>/dev/null | head -1)
+    if [ -z "$remote_name" ]; then
+        echo_error "未找到远程仓库"
+        exit 1
+    fi
+    echo_info "检测到远程仓库: $remote_name"
+
+    # 显示将推送的提交（远程 main 不存在时提示将新建）
+    echo ""
+    if git rev-parse --verify --quiet "$remote_name/main" > /dev/null; then
+        commits=$(git log --oneline "$remote_name/main..Beta" 2>/dev/null | head -10)
+        if [ -z "$commits" ]; then
+            echo_warning "Beta 与远程 main 无差异提交"
+        else
+            echo_info "将推送到 $remote_name/main 的提交:"
+            echo "$commits"
+        fi
+    else
+        echo_info "远程 main 不存在，将创建该分支"
+    fi
+
+    # 确认（覆盖 main 分支属敏感操作，必须显式确认）
+    echo ""
+    read -p "确认推送 Beta → $remote_name/main? (y/n): " confirm
+    if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+        echo_info "已取消"
+        return
+    fi
+
+    echo ""
+    echo_info "推送 Beta → $remote_name/main..."
+    git push "$remote_name" Beta:main
+
+    echo_success "Beta 已推送到远程 main!"
+    echo_info "查看构建进度: https://github.com/Qithking/SwallowCalendar/actions"
+}
+
 # 主菜单
 show_menu() {
     echo ""
@@ -434,6 +484,7 @@ show_menu() {
     echo "║  4. 清除失败的 GitHub Actions                    ║"
     echo "║  5. 删除指定 Tag                                 ║"
     echo "║  6. 重新触发最新版本 GitHub Actions             ║"
+    echo "║  7. 推送 Beta 到远程 main 分支                   ║"
     echo "║  0. 退出                                          ║"
     echo "╚══════════════════════════════════════════════════╝"
     echo ""
@@ -445,8 +496,8 @@ main() {
     
     while true; do
         show_menu
-        read -p "请选择操作 (0-6): " choice
-        
+        read -p "请选择操作 (0-7): " choice
+
         case $choice in
             1)
                 push_to_github
@@ -466,12 +517,15 @@ main() {
             6)
                 rerun_latest_action
                 ;;
+            7)
+                push_beta_to_main
+                ;;
             0)
                 echo_info "再见!"
                 exit 0
                 ;;
             *)
-                echo_error "无效选择，请输入 0-6"
+                echo_error "无效选择，请输入 0-7"
                 ;;
         esac
         
