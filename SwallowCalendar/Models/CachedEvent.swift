@@ -234,11 +234,6 @@ final class EventCacheService {
         
         // 从系统日历获取事件
         let systemEvents = calendarService.fetchEvents(from: startDate, to: endDate, calendars: calendars)
-        do {
-            let uniqIDs = Set(systemEvents.map(\.id)).count
-            AppLogger.cache.info("[DEBUG-r1] syncEvents fetched=\(systemEvents.count) uniqueIDs=\(uniqIDs) range=\(startDate.timeIntervalSince1970)→\(endDate.timeIntervalSince1970)")
-        }
-        
         // 获取现有的缓存事件，构建字典以优化查询
         var existingByID: [String: CachedEvent] = [:]
         let descriptor = FetchDescriptor<CachedEvent>()
@@ -290,7 +285,7 @@ final class EventCacheService {
                 let newReminderMinutes = event.reminderMinutes
                 if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes {
                     if existing.isCompleted != newIsCompleted {
-                        AppLogger.cache.warning("[DEBUG-r1] syncEvents isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID, privacy: .public) title=\(existing.title, privacy: .public)")
+                        AppLogger.cache.warning("syncEvents isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID, privacy: .public)")
                     }
                     existing.title = newTitle
                     existing.startDate = newStart
@@ -386,7 +381,6 @@ final class EventCacheService {
 
         // 从系统提醒获取（获取所有提醒，包括已完成的，以正确同步外部状态变化）
         let reminders = await calendarService.fetchReminders(includeCompleted: true)
-        AppLogger.cache.info("[DEBUG-r1] syncReminders fetched=\(reminders.count) at=\(Date().timeIntervalSince1970)")
 
         // 获取现有的提醒，构建字典以优化查询
         var existingByID: [String: CachedEvent] = [:]
@@ -419,7 +413,7 @@ final class EventCacheService {
                 // 有变更才更新，避免不必要的写入
                 if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes {
                     if existing.isCompleted != newIsCompleted {
-                        AppLogger.cache.warning("[DEBUG-r1] syncReminders isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID, privacy: .public) title=\(existing.title, privacy: .public)")
+                        AppLogger.cache.warning("syncReminders isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID, privacy: .public)")
                     }
                     existing.title = newTitle
                     existing.startDate = newStart

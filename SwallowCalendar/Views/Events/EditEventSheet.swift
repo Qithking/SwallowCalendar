@@ -237,11 +237,21 @@ struct EditEventSheet: View {
         isProcessing = true
         Task { @MainActor in
             do {
+                // 非全天保存时保留原截止时间：原带时间事项按开始时间平移量平移原 endDate（时长不变，
+                // 未改开始时间时截止时间保持原值）；全天转带时间无原始时长可保，才兜底开始时间 + 1 小时
+                let newEndDate: Date?
+                if isAllDay {
+                    newEndDate = nil
+                } else if !event.isAllDay, let originalStart = event.startDate, let originalEnd = event.endDate {
+                    newEndDate = originalEnd.addingTimeInterval(startDate.timeIntervalSince(originalStart))
+                } else {
+                    newEndDate = startDate.addingTimeInterval(3600)
+                }
                 try calendarService.updateEvent(
                     eventID: event.id,
                     title: title,
                     startDate: startDate,
-                    endDate: isAllDay ? nil : startDate.addingTimeInterval(3600),
+                    endDate: newEndDate,
                     isAllDay: isAllDay,
                     isReminder: event.isReminder,
                     // .none 的 rawValue 为 0，直接传入可正确清除已有优先级

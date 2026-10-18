@@ -178,9 +178,7 @@ struct ContentView: View {
         }
 
         // 在 mainContext 注入后启动后台同步，确保使用同一 ModelContext
-        AppLogger.sync.info("[DEBUG-r1] startup-sync-BEGIN at=\(Date().timeIntervalSince1970)")
         await BackgroundSyncService.shared.start()
-        AppLogger.sync.info("[DEBUG-r1] startup-sync-END at=\(Date().timeIntervalSince1970)")
         
         // 同步完成后检查过期事项，确保启动时始终提示
         await ReminderAlertService.shared.checkExpiredEvents()

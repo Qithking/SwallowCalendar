@@ -750,12 +750,12 @@ final class CalendarService {
                 reminder.isCompleted = isCompleted
                 do {
                     try eventStore.save(reminder, commit: true)
-                    AppLogger.sync.debug("[DEBUG-r1] EKReminder save ok id=\(eventID, privacy: .public) completed=\(isCompleted)")
+                    AppLogger.sync.debug("EKReminder save ok id=\(eventID, privacy: .public) completed=\(isCompleted)")
                 } catch {
-                    AppLogger.sync.error("[DEBUG-r1] EKReminder save FAILED id=\(eventID, privacy: .public) completed=\(isCompleted) err=\(String(describing: error), privacy: .public)")
+                    AppLogger.sync.error("EKReminder save FAILED id=\(eventID, privacy: .public) completed=\(isCompleted) err=\(String(describing: error), privacy: .public)")
                 }
             } else {
-                AppLogger.sync.warning("[DEBUG-r1] EKReminder calendarItem NOT-FOUND 尝试兜底查询 id=\(eventID, privacy: .public) completed=\(isCompleted)")
+                AppLogger.sync.warning("EKReminder calendarItem NOT-FOUND 尝试兜底查询 id=\(eventID, privacy: .public) completed=\(isCompleted)")
                 // 兜底：calendarItem 对已完成的 iCloud 提醒可能返回 nil，
                 // 此时若只更新缓存，重启后 syncReminders 会从 EK 拉到旧的未完成状态，
                 // 导致已完成事项再次弹窗。改用全量查询找到后补写 EK，保证两端一致。
@@ -763,13 +763,13 @@ final class CalendarService {
                     reminder.isCompleted = isCompleted
                     do {
                         try eventStore.save(reminder, commit: true)
-                        AppLogger.sync.info("[DEBUG-r1] EKReminder save ok(fallback) id=\(eventID, privacy: .public) completed=\(isCompleted)")
+                        AppLogger.sync.info("EKReminder save ok(fallback) id=\(eventID, privacy: .public) completed=\(isCompleted)")
                     } catch {
-                        AppLogger.sync.error("[DEBUG-r1] EKReminder save FAILED(fallback) id=\(eventID, privacy: .public) err=\(String(describing: error), privacy: .public)")
+                        AppLogger.sync.error("EKReminder save FAILED(fallback) id=\(eventID, privacy: .public) err=\(String(describing: error), privacy: .public)")
                     }
                 } else {
                     // 兜底仍未找到：事项多半已从 EventKit 删除，syncReminders 会同步删除缓存记录
-                    AppLogger.sync.warning("[DEBUG-r1] EKReminder fallback NOT-FOUND 事项可能已删除 id=\(eventID, privacy: .public)")
+                    AppLogger.sync.warning("EKReminder fallback NOT-FOUND 事项可能已删除 id=\(eventID, privacy: .public)")
                 }
             }
         } else {
@@ -792,12 +792,12 @@ final class CalendarService {
                 }
                 do {
                     try eventStore.save(event, span: .thisEvent)
-                    AppLogger.sync.debug("[DEBUG-r1] EKEvent save ok id=\(eventID, privacy: .public) completed=\(isCompleted)")
+                    AppLogger.sync.debug("EKEvent save ok id=\(eventID, privacy: .public) completed=\(isCompleted)")
                 } catch {
-                    AppLogger.sync.error("[DEBUG-r1] EKEvent save FAILED id=\(eventID, privacy: .public) completed=\(isCompleted) err=\(String(describing: error), privacy: .public)")
+                    AppLogger.sync.error("EKEvent save FAILED id=\(eventID, privacy: .public) completed=\(isCompleted) err=\(String(describing: error), privacy: .public)")
                 }
             } else {
-                AppLogger.sync.warning("[DEBUG-r1] EKEvent NOT-FOUND EventKit未收到完成状态 id=\(eventID, privacy: .public) completed=\(isCompleted)")
+                AppLogger.sync.warning("EKEvent NOT-FOUND EventKit未收到完成状态 id=\(eventID, privacy: .public) completed=\(isCompleted)")
             }
         }
         

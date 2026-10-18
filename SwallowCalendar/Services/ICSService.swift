@@ -40,6 +40,11 @@ final class ICSService {
         var events: [ICSEvent] = []
         let lines = content.components(separatedBy: .newlines)
 
+        // DateFormatter 创建成本高（约为 string(from:) 的 50 倍），同一次解析内复用；
+        // DateFormatter 非线程安全，仅在本次调用线程内顺序使用
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+
         var currentEvent: ICSEvent?
         var isReadingEvent = false
 
@@ -66,9 +71,9 @@ final class ICSService {
             if trimmed.hasPrefix("SUMMARY:") {
                 event.summary = String(trimmed.dropFirst(8))
             } else if trimmed.hasPrefix("DTSTART") {
-                event.startDate = parseICSDate(trimmed)
+                event.startDate = parseICSDate(trimmed, formatter: formatter)
             } else if trimmed.hasPrefix("DTEND") {
-                event.endDate = parseICSDate(trimmed)
+                event.endDate = parseICSDate(trimmed, formatter: formatter)
             } else if trimmed.hasPrefix("UID:") {
                 event.uid = String(trimmed.dropFirst(4))
             }
@@ -120,27 +125,24 @@ final class ICSService {
 
     // MARK: - ICS Date Parsing
 
-    private func parseICSDate(_ line: String) -> Date? {
+    /// - Parameter formatter: 由调用方创建并复用的格式化器（避免每行新建）
+    private func parseICSDate(_ line: String, formatter: DateFormatter) -> Date? {
         // 格式: DTSTART;VALUE=DATE:20260101 或 DTSTART:20260101T080000Z
         let parts = line.components(separatedBy: ":")
         guard parts.count >= 2 else { return nil }
-        var dateStr = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
+        let dateStr = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
 
         // 判断是全天事件还是有时间的事件
         if dateStr.contains("T") {
             // 有时间的事件
             if dateStr.hasSuffix("Z") {
-                dateStr = String(dateStr.dropLast())
                 formatter.timeZone = TimeZone(identifier: "UTC")
                 formatter.dateFormat = "yyyyMMdd'T'HHmmss"
-            } else {
-                // 非 UTC 时间，使用本地时区
-                formatter.timeZone = TimeZone.current
-                formatter.dateFormat = "yyyyMMdd'T'HHmmss"
+                return formatter.date(from: String(dateStr.dropLast()))
             }
+            // 非 UTC 时间，使用本地时区
+            formatter.timeZone = TimeZone.current
+            formatter.dateFormat = "yyyyMMdd'T'HHmmss"
         } else {
             // 全天事件 - 使用本地时区
             formatter.timeZone = TimeZone.current

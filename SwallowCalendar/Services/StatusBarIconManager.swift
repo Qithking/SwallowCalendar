@@ -132,10 +132,15 @@ final class StatusBarIconManager {
         return icon
     }
 
-    private static func dayString() -> String {
+    // 日期数字格式化器（固定格式，复用避免重复创建；仅主线程图标渲染时使用）
+    private static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "d"
-        return formatter.string(from: Date())
+        return formatter
+    }()
+
+    private static func dayString() -> String {
+        dayFormatter.string(from: Date())
     }
 
     private static func renderTextIcon(text: String, filled: Bool, iconColor: NSColor = .systemBlue) -> NSImage {
@@ -211,10 +216,21 @@ final class StatusBarIconManager {
         return renderTextIcon(text: dayString(), filled: true)
     }
 
-    private static func renderCustomFormatIcon(format: String, style: AppSettings.CustomFormatStyle, iconColor: NSColor) -> NSImage {
+    // 自定义格式格式化器缓存：格式字符串未变化时复用（仅主线程使用）
+    private static var customFormatCache: (format: String, formatter: DateFormatter)?
+
+    private static func customFormatter(for format: String) -> DateFormatter {
+        if let cache = customFormatCache, cache.format == format {
+            return cache.formatter
+        }
         let formatter = DateFormatter()
         formatter.dateFormat = format
-        let text = formatter.string(from: Date())
+        customFormatCache = (format, formatter)
+        return formatter
+    }
+
+    private static func renderCustomFormatIcon(format: String, style: AppSettings.CustomFormatStyle, iconColor: NSColor) -> NSImage {
+        let text = customFormatter(for: format).string(from: Date())
         
         // 使用系统菜单栏标准字体（13pt, regular）
         let fontSize: CGFloat = 13

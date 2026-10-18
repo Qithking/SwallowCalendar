@@ -18,7 +18,8 @@ let package = Package(
             name: "SwallowCalendar",
             dependencies: [],
             path: "SwallowCalendar",
-            exclude: ["Assets.xcassets"],
+            // entitlements 仅 Xcode 打包时使用，SPM 构建不消费，显式排除消除构建警告
+            exclude: ["Assets.xcassets", "SwallowCalendar.entitlements"],
             resources: [
                 .process("Assets.xcassets")
             ]

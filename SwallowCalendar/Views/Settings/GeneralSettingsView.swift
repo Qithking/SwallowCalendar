@@ -116,9 +116,19 @@ struct GeneralSettingsView: View {
         .padding()
     }
 
+    // 预览格式化器缓存：格式未变化时复用（body 每次求值都会调用本计算属性）
+    private static var previewFormatCache: (format: String, formatter: DateFormatter)?
+
     private var customFormatPreview: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = appSettings.customIconFormat
+        let format = appSettings.customIconFormat
+        let formatter: DateFormatter
+        if let cache = Self.previewFormatCache, cache.format == format {
+            formatter = cache.formatter
+        } else {
+            formatter = DateFormatter()
+            formatter.dateFormat = format
+            Self.previewFormatCache = (format, formatter)
+        }
         return formatter.string(from: Date())
     }
 

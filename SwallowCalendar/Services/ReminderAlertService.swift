@@ -53,7 +53,6 @@ final class ReminderAlertService {
     /// 检查过期事项（供数据同步完成后调用）
     /// 启动时的检查会忽略 lastAlertedEventIDs 过滤，确保过期事项始终被提示
     func checkExpiredEvents() async {
-        AppLogger.reminder.info("[DEBUG-r1] STARTUP-CHECK-BEGIN at=\(Date().timeIntervalSince1970)")
         await checkDueEvents(includeExpired: true, ignoreAlertedCache: true)
         AppLogger.reminder.info("数据同步后过期事项检查完成")
     }
@@ -124,7 +123,7 @@ final class ReminderAlertService {
             
             if newEvents.count > 0 {
                 for event in newEvents {
-                    AppLogger.reminder.info("[DEBUG-r1] STARTUP-POP id=\(event.eventID, privacy: .public) title=\(event.title, privacy: .public) cacheCompleted=false start=\(event.startDate.map { String($0.timeIntervalSince1970) } ?? "nil", privacy: .public) reminderMinutes=\(event.reminderMinutes) isReminder=\(event.isReminder)")
+                    AppLogger.reminder.info("到期提醒弹出 id=\(event.eventID, privacy: .public) start=\(event.startDate.map { String($0.timeIntervalSince1970) } ?? "nil", privacy: .public) reminderMinutes=\(event.reminderMinutes) isReminder=\(event.isReminder)")
                 }
                 // 合并显示所有到期/即将到期的事项
                 let isExpired = includeExpired || newEvents.allSatisfy { ($0.startDate ?? now) < now }
