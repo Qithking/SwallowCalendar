@@ -819,19 +819,24 @@ final class CalendarService {
 
     /// 更新事件（日历事件或提醒）
     @MainActor
-    func updateEvent(eventID: String, title: String?, startDate: Date?, endDate: Date?, isReminder: Bool = false, priority: EventPriority? = nil, reminderMinutes: Int? = nil, color: EventColor? = nil) throws {
+    func updateEvent(eventID: String, title: String?, startDate: Date?, endDate: Date?, isAllDay: Bool? = nil, isReminder: Bool = false, priority: EventPriority? = nil, reminderMinutes: Int? = nil, color: EventColor? = nil) throws {
         if isReminder {
             guard let reminder = eventStore.calendarItem(withIdentifier: eventID) as? EKReminder else { return }
             if let title { reminder.title = title }
             if let startDate {
                 var components = Calendar.current.dateComponents([.year, .month, .day], from: startDate)
-                // 如果不是全天事件，添加时间
-                if let end = endDate {
-                    let interval = end.timeIntervalSince(startDate)
-                    if interval < 86400 { // 小于一天，说明有具体时间
-                        components.hour = Calendar.current.component(.hour, from: startDate)
-                        components.minute = Calendar.current.component(.minute, from: startDate)
-                    }
+                // 全天事件只写日期；非全天写入具体时间（isAllDay 未传时按旧逻辑用 endDate 推断）
+                let isTimed: Bool
+                if let isAllDay {
+                    isTimed = !isAllDay
+                } else if let end = endDate {
+                    isTimed = end.timeIntervalSince(startDate) < 86400
+                } else {
+                    isTimed = false
+                }
+                if isTimed {
+                    components.hour = Calendar.current.component(.hour, from: startDate)
+                    components.minute = Calendar.current.component(.minute, from: startDate)
                 }
                 reminder.dueDateComponents = components
             }
@@ -845,18 +850,21 @@ final class CalendarService {
             if let title { event.title = title }
             if let startDate { event.startDate = startDate }
             if let endDate { event.endDate = endDate }
+            if let isAllDay { event.isAllDay = isAllDay }
             // 更新日历事件闹钟
             if let reminderMinutes {
                 event.alarms = reminderMinutes > 0 ? [EKAlarm(relativeOffset: TimeInterval(-reminderMinutes * 60))] : []
             }
             try eventStore.save(event, span: .thisEvent)
         }
-        
+
         // 更新本地缓存
         if let cached = findCachedEvent(eventID: eventID) {
             if let title { cached.title = title }
             if let startDate { cached.startDate = startDate }
             if let endDate { cached.endDate = endDate }
+            // isAllDay 必须同步，否则"全天 ↔ 带时间"切换后缓存与 EK 不一致，UI 显示错误
+            if let isAllDay { cached.isAllDay = isAllDay }
             if let priority { cached.priority = priority.rawValue }
             if let reminderMinutes { cached.reminderMinutes = reminderMinutes }
             if let color { cached.eventColorHex = color.rawValue }

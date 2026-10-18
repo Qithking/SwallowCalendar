@@ -30,6 +30,8 @@ struct SettingsView: View {
                     Label("关于", systemImage: "info.circle")
                 }
         }
+        // tab 栏上方预留空白，避免标签贴住窗口顶缘
+        .padding(.top, 10)
         .frame(minWidth: 450, minHeight: 400)
         .tint(Color(hex: appSettings.accentColorHex))
     }

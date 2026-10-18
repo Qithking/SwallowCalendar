@@ -36,10 +36,12 @@ final class EditEventWindowManager {
             }
         )
 
-        let hostingView = NSHostingView(rootView: editView.frame(width: 350, height: 450))
+        // 固定宽度由视图内部提供（.frame(width: 340)），高度按内容 fittingSize 自适应，避免大片空白
+        let hostingView = NSHostingView(rootView: editView)
+        let contentSize = hostingView.fittingSize
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 350, height: 450),
+            contentRect: NSRect(origin: .zero, size: contentSize),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false

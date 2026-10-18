@@ -36,7 +36,7 @@ struct CalendarSettingsView: View {
                         .toggleStyle(.switch)
                     
                     Text("将系统提醒应用中的待办事项同步到待办列表中")
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     
                     // 提醒权限状态提示
@@ -45,25 +45,25 @@ struct CalendarSettingsView: View {
                             switch reminderAuthStatus {
                             case .notDetermined:
                                 Text("需要授权访问提醒")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11))
                                     .foregroundColor(.orange)
                             case .restricted, .denied:
                                 Text("权限被拒绝，点击前往设置开启")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11))
                                     .foregroundColor(.red)
                                 Button("前往设置") {
                                     openReminderSettings()
                                 }
-                                .font(.system(size: 10))
+                                .font(.system(size: 11))
                                 .buttonStyle(.plain)
                                 .foregroundColor(.blue)
                             case .fullAccess:
                                 Text("已授权")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11))
                                     .foregroundColor(.green)
                             case .writeOnly:
                                 Text("仅写入权限")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11))
                                     .foregroundColor(.orange)
                             @unknown default:
                                 EmptyView()
@@ -78,7 +78,7 @@ struct CalendarSettingsView: View {
                         .toggleStyle(.switch)
                     
                     Text("开启后，事项的增删改都与系统日历和提醒同步；关闭后，仅当前应用内的数据增删改")
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     
                     if settings.syncEventsToSystem {
@@ -86,25 +86,25 @@ struct CalendarSettingsView: View {
                             switch calendarAuthStatus {
                             case .notDetermined:
                                 Text("需要授权访问日历")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11))
                                     .foregroundColor(.orange)
                             case .restricted, .denied:
                                 Text("权限被拒绝，点击前往设置开启")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11))
                                     .foregroundColor(.red)
                                 Button("前往设置") {
                                     openCalendarSettings()
                                 }
-                                .font(.system(size: 10))
+                                .font(.system(size: 11))
                                 .buttonStyle(.plain)
                                 .foregroundColor(.blue)
                             case .fullAccess:
                                 Text("已授权")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11))
                                     .foregroundColor(.green)
                             case .writeOnly:
                                 Text("仅写入权限")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11))
                                     .foregroundColor(.orange)
                             @unknown default:
                                 EmptyView()
@@ -181,23 +181,23 @@ struct CalendarSettingsView: View {
                     }
                 }
 
-                // 添加新源
-                HStack(spacing: 6) {
-                    Text("名称")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                    TextField("", text: $newSourceName)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 70)
-                    Text("ICS URL")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                    TextField("", text: $newSourceURL)
-                        .textFieldStyle(.roundedBorder)
-                    Button("添加") {
-                        addCustomSource()
+                // 添加新源（两行布局：名称+URL 输入行 / 添加按钮右对齐）
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        TextField("名称", text: $newSourceName)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 110)
+                        TextField("ICS URL", text: $newSourceURL)
+                            .textFieldStyle(.roundedBorder)
                     }
-                    .disabled(newSourceName.isEmpty || newSourceURL.isEmpty)
+                    HStack {
+                        Spacer()
+                        Button("添加") {
+                            addCustomSource()
+                        }
+                        .controlSize(.small)
+                        .disabled(newSourceName.isEmpty || newSourceURL.isEmpty)
+                    }
                 }
             }
         }
@@ -233,8 +233,8 @@ struct CalendarSettingsView: View {
         let calID = cal.calendarIdentifier
         let pref = calendarPreferences.first { $0.calendarID == calID }
 
-        HStack(spacing: 6) {
-            // 启用开关
+        HStack(spacing: 8) {
+            // 启用开关（原生小尺寸，不用缩放假象）
             Toggle("", isOn: Binding(
                 get: { pref?.isEnabled ?? false },
                 set: { newValue in
@@ -243,12 +243,12 @@ struct CalendarSettingsView: View {
             ))
             .labelsHidden()
             .toggleStyle(.switch)
-            .scaleEffect(0.7)
+            .controlSize(.small)
 
             // 日历颜色指示
             Circle()
                 .fill(Color(cgColor: cal.cgColor))
-                .frame(width: 8, height: 8)
+                .frame(width: 10, height: 10)
 
             // 日历名称
             Text(cal.title)
@@ -273,8 +273,8 @@ struct CalendarSettingsView: View {
     private func subscriptionSourceRow(for source: CustomCalendarSource) -> some View {
         let sourceID = source.id
 
-        HStack(spacing: 6) {
-            // 启用开关
+        HStack(spacing: 8) {
+            // 启用开关（原生小尺寸）
             Toggle("", isOn: Binding(
                 get: { source.isEnabled },
                 set: { newValue in
@@ -283,7 +283,7 @@ struct CalendarSettingsView: View {
             ))
             .labelsHidden()
             .toggleStyle(.switch)
-            .scaleEffect(0.7)
+            .controlSize(.small)
 
             // 名称
             Text(source.name)
@@ -293,7 +293,7 @@ struct CalendarSettingsView: View {
 
             // URL
             Text(source.icsURL)
-                .font(.system(size: 10))
+                .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -313,7 +313,7 @@ struct CalendarSettingsView: View {
                 deleteCustomSource(id: sourceID)
             } label: {
                 Image(systemName: "trash")
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                     .foregroundColor(.red)
             }
             .buttonStyle(.plain)

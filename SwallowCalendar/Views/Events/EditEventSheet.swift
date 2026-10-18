@@ -57,116 +57,180 @@ struct EditEventSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            // 标题栏
-            HStack {
+        VStack(spacing: 12) {
+            // 顶部标题栏：事件日历色点 + 标题 + 取消（Esc）
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color(hex: event.eventColorHex ?? event.calendarColorHex))
+                    .frame(width: 4, height: 16)
                 Text("修改事件")
-                    .font(.headline)
+                    .font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Button("取消") {
                     onDismiss?()
                 }
                 .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+                .keyboardShortcut(.cancelAction)
             }
 
-            Divider()
+            // 分组卡片：基本信息
+            FormCard(title: "基本信息") {
+                // 标题输入（多行 textarea 风格）：TextEditor 无原生 placeholder，空内容时叠加提示文字
+                ZStack(alignment: .topLeading) {
+                    if title.isEmpty {
+                        Text("事件标题")
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary.opacity(0.5))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 8)
+                            .allowsHitTesting(false)
+                    }
+                    TextEditor(text: $title)
+                        .font(.system(size: 13))
+                        .frame(height: 64)
+                        .padding(2)
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
+                )
 
-            // 标题输入
-            TextField("事件标题", text: $title)
-                .textFieldStyle(.roundedBorder)
+                FormRow(label: "全天") {
+                    Toggle("", isOn: $isAllDay)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
 
-            // 日期时间选择
-            Toggle("全天事件", isOn: $isAllDay)
-                .toggleStyle(.switch)
-
-            if !isAllDay {
-                DatePicker("开始时间", selection: $startDate, displayedComponents: [.date, .hourAndMinute])
-            } else {
-                DatePicker("日期", selection: $startDate, displayedComponents: .date)
-            }
-
-            Divider()
-
-            // 颜色选择
-            HStack {
-                Text("颜色:")
-                Spacer()
-                ForEach(EventColor.allCases, id: \.self) { color in
-                    Circle()
-                        .fill(Color(hex: color.rawValue))
-                        .frame(width: 20, height: 20)
-                        .overlay(
-                            Circle().stroke(taskColor == color ? Color.primary : Color.clear, lineWidth: 1)
-                        )
-                        .onTapGesture {
-                            taskColor = taskColor == color ? nil : color
-                        }
+                FormRow(label: "日期") {
+                    DatePicker("", selection: $startDate, displayedComponents: isAllDay ? [.date] : [.date, .hourAndMinute])
+                        .labelsHidden()
                 }
             }
 
-            // 优先级
-            HStack {
-                Text("优先级:")
-                Spacer()
-                Picker("", selection: $taskPriority) {
-                    ForEach(EventPriority.allCases, id: \.self) { p in
-                        Text(p.displayName).tag(p)
+            // 分组卡片：属性
+            FormCard(title: "属性") {
+                FormRow(label: "颜色") {
+                    HStack(spacing: 8) {
+                        ForEach(EventColor.allCases, id: \.self) { color in
+                            Button {
+                                taskColor = taskColor == color ? nil : color
+                            } label: {
+                                Circle()
+                                    .fill(Color(hex: color.rawValue))
+                                    .frame(width: 18, height: 18)
+                                    .overlay(
+                                        // 选中态：外圈描边环；未选中无描边
+                                        Circle()
+                                            .strokeBorder(Color.primary.opacity(0.85), lineWidth: 1.5)
+                                            .frame(width: 24, height: 24)
+                                            .opacity(taskColor == color ? 1 : 0)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
-                .labelsHidden()
-                .frame(width: 100)
-            }
 
-            // 周期
-            HStack {
-                Text("周期:")
-                Spacer()
-                Picker("", selection: $taskRecurrence) {
-                    Text("1次").tag(RecurrenceType.none)
-                    Text("每天").tag(RecurrenceType.daily)
-                    Text("每周").tag(RecurrenceType.weekly)
-                    Text("每月").tag(RecurrenceType.monthly)
-                    Text("每年").tag(RecurrenceType.yearly)
+                FormRow(label: "优先级") {
+                    Picker("", selection: $taskPriority) {
+                        ForEach(EventPriority.allCases, id: \.self) { p in
+                            Text(p.displayName).tag(p)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 110)
                 }
-                .labelsHidden()
-                .frame(width: 100)
-            }
 
-            // 提醒时间
-            HStack {
-                Text("提醒:")
-                Spacer()
-                Picker("", selection: $taskReminderMinutes) {
-                    Text("不提醒").tag(0)
-                    Text("5分钟前").tag(5)
-                    Text("10分钟前").tag(10)
-                    Text("30分钟前").tag(30)
-                    Text("1小时前").tag(60)
-                    Text("1天前").tag(1440)
+                FormRow(label: "周期") {
+                    Picker("", selection: $taskRecurrence) {
+                        Text("1次").tag(RecurrenceType.none)
+                        Text("每天").tag(RecurrenceType.daily)
+                        Text("每周").tag(RecurrenceType.weekly)
+                        Text("每月").tag(RecurrenceType.monthly)
+                        Text("每年").tag(RecurrenceType.yearly)
+                    }
+                    .labelsHidden()
+                    .frame(width: 110)
                 }
-                .labelsHidden()
-                .frame(width: 120)
+
+                FormRow(label: "提醒") {
+                    Picker("", selection: $taskReminderMinutes) {
+                        Text("不提醒").tag(0)
+                        Text("5分钟前").tag(5)
+                        Text("10分钟前").tag(10)
+                        Text("30分钟前").tag(30)
+                        Text("1小时前").tag(60)
+                        Text("1天前").tag(1440)
+                    }
+                    .labelsHidden()
+                    .frame(width: 110)
+                }
             }
 
-            Spacer()
-
-            // 保存按钮
+            // 保存（Cmd+Return）
             Button {
                 saveEvent()
             } label: {
                 if isProcessing {
                     ProgressView()
                         .scaleEffect(0.8)
+                        .frame(maxWidth: .infinity)
                 } else {
                     Text("保存")
                         .frame(maxWidth: .infinity)
                 }
             }
             .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
             .disabled(title.isEmpty || isProcessing)
         }
-        .padding()
-        .frame(width: 350, height: 450)
+        .padding(14)
+        .frame(width: 340)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    // MARK: - 分组卡片组件（仅本视图使用）
+
+    /// 分组卡片：小节标题 + 圆角容器（系统语义色，随深浅色模式）
+    private struct FormCard<Content: View>: View {
+        let title: String
+        @ViewBuilder let content: Content
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+                content
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+            )
+        }
+    }
+
+    /// 表单行：左标签右控件
+    private struct FormRow<Content: View>: View {
+        let label: String
+        @ViewBuilder let content: Content
+
+        var body: some View {
+            HStack {
+                Text(label)
+                    .font(.system(size: 12))
+                    .foregroundColor(.primary)
+                Spacer()
+                content
+            }
+            .padding(.vertical, 3)
+        }
     }
 
     private func saveEvent() {
@@ -178,6 +242,7 @@ struct EditEventSheet: View {
                     title: title,
                     startDate: startDate,
                     endDate: isAllDay ? nil : startDate.addingTimeInterval(3600),
+                    isAllDay: isAllDay,
                     isReminder: event.isReminder,
                     // .none 的 rawValue 为 0，直接传入可正确清除已有优先级
                     priority: taskPriority,

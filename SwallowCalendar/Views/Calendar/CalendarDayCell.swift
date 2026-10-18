@@ -12,6 +12,7 @@ struct CalendarEventItem: Identifiable {
     let title: String
     let colorHex: String
     let category: String  // "系统" | "订阅" | "用户"
+    let timeText: String? // 弹窗时间列："全天" / "HH:mm" / nil（无时间信息）
 }
 
 struct CalendarDayCell: View {
@@ -21,12 +22,17 @@ struct CalendarDayCell: View {
     let isToday: Bool
     let isCurrentMonth: Bool
     let lunarText: String
-    let isHovered: Bool
     var eventItems: [CalendarEventItem] = []  // 事件条目数组，标题/颜色/分类一一对应
     var systemCalendarColor: Color = Color(hex: "#007AFF")
     var subscriptionCalendarColor: Color = Color(hex: "#FF9500")
     var isImportant: Bool = false
-    
+
+    /// hover 状态下沉到单元格本地：
+    /// 进出格子只重渲染该格自身，不再触发父视图 42 格全网格重算（性能修复）
+    @State private var isHovered = false
+
+    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
+
     /// 计算属性：判断是否有系统日历事件（非订阅、非用户）
     private var hasSystemEvents: Bool {
         eventItems.contains { $0.category == "系统" }
@@ -53,8 +59,6 @@ struct CalendarDayCell: View {
     private var showWorkMark: Bool {
         eventItems.contains { $0.title.contains("补班") || $0.title.contains("（班）") }
     }
-
-    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -121,6 +125,64 @@ struct CalendarDayCell: View {
                 .padding(.top, 1)
                 .padding(.trailing, 2)
             }
+        }
+        // hover 弹出事件预览：内聚在单元格内（仅有事件时弹出）
+        .background(
+            GeometryReader { geo in
+                CellPopoverPresenter(
+                    isPresented: isHovered && !eventItems.isEmpty,
+                    positioningRect: CGRect(origin: .zero, size: geo.size),
+                    content: popoverContent
+                )
+            }
+        )
+        .onHover { hovered in
+            isHovered = hovered
+        }
+    }
+
+    // MARK: - Hover Popover
+
+    private static let popoverDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日"
+        return formatter
+    }()
+
+    /// 事件预览弹出层内容（对齐系统日历排版：日期标题 + 色点 + 时间 + 标题；
+    /// 内边距由 presenter 的 chrome 统一提供，此处不再加 padding）
+    private var popoverContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(Self.popoverDateFormatter.string(from: date))
+                .font(.system(size: 13, weight: .semibold))
+            ForEach(eventItems) { item in
+                HStack(alignment: .top, spacing: 6) {
+                    Circle()
+                        .fill(popoverItemColor(for: item))
+                        .frame(width: 7, height: 7)
+                        .padding(.top, 3.5)
+                    if let time = item.timeText {
+                        Text(time)
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundColor(.secondary)
+                            .frame(minWidth: 40, alignment: .leading)
+                    }
+                    Text(item.title)
+                        .font(.system(size: 11))
+                        .lineLimit(2)
+                }
+            }
+        }
+        .frame(minWidth: 140, alignment: .leading)
+    }
+
+    private func popoverItemColor(for item: CalendarEventItem) -> Color {
+        switch item.category {
+        case "用户": return accentColor
+        case "系统": return systemCalendarColor
+        case "订阅": return subscriptionCalendarColor
+        default: return systemCalendarColor
         }
     }
 

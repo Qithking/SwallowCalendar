@@ -124,6 +124,9 @@ struct EventItemRow: View {
                 HStack(spacing: 4) {
                     if onEdit != nil {
                         Button {
+                            // 打开编辑窗口前先收起 hover 弹窗：
+                            // 鼠标仍悬停在行内不会触发 onHover(false)，必须显式置 false，否则弹窗悬浮在编辑窗口之上
+                            isHovered = false
                             onEdit?(event)
                         } label: {
                             Image(systemName: "pencil")
@@ -154,6 +157,26 @@ struct EventItemRow: View {
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        )
+        // hover 详情弹窗：锚点为整行 bounds，复用日历格子弹窗的窗口/气泡/三角指向；
+        // 列表滚动或窗口移动导致行位移时关闭（避免锚点陈旧），重新 hover 才会再弹出
+        .background(
+            GeometryReader { geo in
+                let globalFrame = geo.frame(in: .global)
+                CellPopoverPresenter(
+                    isPresented: isHovered,
+                    positioningRect: CGRect(origin: .zero, size: geo.size),
+                    maxWidth: 260,
+                    content: EventRowPopoverContent(event: event)
+                )
+                .onChange(of: globalFrame) { _, _ in
+                    if isHovered {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            isHovered = false
+                        }
+                    }
+                }
+            }
         )
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
@@ -202,7 +225,123 @@ struct EventItemRow: View {
     }()
 }
 
-/// 倒计时文本视图，使用 CountdownTimerManager 统一管理刷新
+/// 列表条目详情弹窗内容：完整标题 + 时间/优先级/重复/日历来源/提醒标签/完成状态
+/// （内边距由 CellPopoverPresenter 的 chrome 统一提供，此处不加 padding）
+private struct EventRowPopoverContent: View {
+    let event: CalendarEvent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // 完整标题（不截断，全部显示）
+            Text(event.title)
+                .font(.system(size: 13, weight: .semibold))
+                .strikethrough(event.isCompleted, color: .secondary)
+
+            if event.isCompleted {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.green)
+                    Text("已完成")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            timeRows
+
+            // 优先级（0=无，不显示）
+            if let priority = EventPriority(rawValue: event.priority), priority != .none {
+                infoRow(label: "优先级", value: priority.displayName)
+            }
+
+            // 周期类型（不重复不显示）
+            if event.recurrenceType != .none {
+                infoRow(label: "重复", value: event.recurrenceType.rawValue)
+            }
+
+            // 日历来源：色点 + 日历名（与行内色条同色）
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(Color(hex: event.eventColorHex ?? event.calendarColorHex))
+                    .frame(width: 7, height: 7)
+                Text(event.calendarTitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+
+            // 系统提醒标签（与行内同款样式）
+            if event.isReminder {
+                Text("系统提醒")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.orange)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color.orange.opacity(0.15))
+                    )
+            }
+        }
+        .frame(minWidth: 160, alignment: .leading)
+    }
+
+    /// 时间信息：待办/提醒语义下 startDate 即到期时间
+    @ViewBuilder
+    private var timeRows: some View {
+        if let start = event.startDate {
+            if event.hasTime {
+                infoRow(label: "到期", value: Self.timeText(for: start))
+                if let end = event.endDate, end > start {
+                    infoRow(label: "截止", value: Self.timeText(for: end))
+                }
+            } else {
+                infoRow(label: "日期", value: Self.timeText(for: start) + " 全天")
+            }
+        } else {
+            infoRow(label: "时间", value: "无到期时间")
+        }
+    }
+
+    /// label 左对齐固定宽 + value 的信息行
+    private func infoRow(label: String, value: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .frame(width: 36, alignment: .leading)
+            Text(value)
+                .font(.system(size: 11))
+                .foregroundColor(.primary)
+        }
+    }
+
+    /// 今年内省略年份，跨年显示完整日期
+    private static func timeText(for date: Date) -> String {
+        let year = Calendar.current.component(.year, from: date)
+        let currentYear = Calendar.current.component(.year, from: Date())
+        if year == currentYear {
+            return dateTimeFormatter.string(from: date)
+        }
+        return dateTimeWithYearFormatter.string(from: date)
+    }
+
+    private static let dateTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "M月d日 HH:mm"
+        return f
+    }()
+
+    private static let dateTimeWithYearFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy年M月d日 HH:mm"
+        return f
+    }()
+}
+
+/// 倒计时文本视图，使用 CountdownTimerManager 统一刷新
 private struct CountdownTextView: View {
     let startDate: Date?
     let accentColorHex: String

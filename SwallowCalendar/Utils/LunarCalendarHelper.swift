@@ -10,6 +10,32 @@ struct LunarCalendarHelper {
     private static let chineseCalendar = Calendar(identifier: .chinese)
     private static let gregorian = Calendar(identifier: .gregorian)
 
+    // 静态缓存 formatter：DateFormatter 创建成本约为 string(from:) 的 50 倍，
+    // 日历网格每次重算会调用 40+ 次，必须复用（仅主线程 UI 调用，无线程安全问题）
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = chineseCalendar
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "d"
+        return formatter
+    }()
+
+    private static let monthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = chineseCalendar
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月"
+        return formatter
+    }()
+
+    private static let stemBranchFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = chineseCalendar
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "UU年"
+        return formatter
+    }()
+
     /// 获取指定日期的农历显示文本
     static func lunarString(for date: Date) -> String {
         // 初一显示月份，其他显示日期
@@ -22,12 +48,7 @@ struct LunarCalendarHelper {
 
     /// 获取农历月份文本（如"正月"、"二月"）
     static func lunarMonth(for date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = chineseCalendar
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月"
-
-        let monthStr = formatter.string(from: date)
+        let monthStr = monthFormatter.string(from: date)
         // 转换为传统叫法
         let monthMap: [String: String] = [
             "1月": "正月", "2月": "二月", "3月": "三月", "4月": "四月",
@@ -43,12 +64,7 @@ struct LunarCalendarHelper {
 
     /// 获取农历日期文本（如"初一"、"十五"）
     static func lunarDay(for date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = chineseCalendar
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "d"
-
-        let dayStr = formatter.string(from: date)
+        let dayStr = dayFormatter.string(from: date)
         guard let day = Int(dayStr) else {
             return ""
         }
@@ -80,10 +96,6 @@ struct LunarCalendarHelper {
 
     /// 获取天干地支年
     static func heavenlyStemAndEarthlyBranch(for date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = chineseCalendar
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "UU年"
-        return formatter.string(from: date)
+        return stemBranchFormatter.string(from: date)
     }
 }

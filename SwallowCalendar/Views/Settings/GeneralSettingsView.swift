@@ -36,7 +36,7 @@ struct GeneralSettingsView: View {
                         .textFieldStyle(.roundedBorder)
                         .help("支持 Unicode TR35 日期格式，如: d (日), M/d (月/日), MM-dd 等")
                     Text("预览: \(customFormatPreview)")
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     
                     // 自定义格式样式选项
@@ -56,7 +56,7 @@ struct GeneralSettingsView: View {
                 }
 
                 // 主题色
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 8) {
                         Text("主题色")
                             .font(.system(size: 12))
@@ -64,18 +64,17 @@ struct GeneralSettingsView: View {
                         ForEach(accentColors, id: \.self) { colorHex in
                             Circle()
                                 .fill(Color(hex: colorHex))
-                                .frame(width: 22, height: 22)
+                                .frame(width: 20, height: 20)
                                 .overlay(
+                                    // 选中态：外圈描边环（与编辑面板颜色选中质感一致）
                                     Circle()
-                                        .strokeBorder(appSettings.accentColorHex == colorHex ? Color.primary : Color.clear, lineWidth: 2)
+                                        .strokeBorder(Color.primary.opacity(0.85), lineWidth: 1.5)
+                                        .frame(width: 26, height: 26)
+                                        .opacity(appSettings.accentColorHex == colorHex ? 1 : 0)
                                 )
                                 .onTapGesture {
                                     settings.accentColorHex = colorHex
                                 }
-                                .overlay(
-                                    Circle()
-                                        .strokeBorder(Color.primary.opacity(0.2), lineWidth: 0.5)
-                                )
                         }
                     }
 
