@@ -13,7 +13,7 @@ env:
   MACOSX_DEPLOYMENT_TARGET: "14.0"
 
 jobs:
-  release:
+  build:
     name: release
     runs-on: macos-15
     steps:
