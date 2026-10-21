@@ -14,16 +14,16 @@ import AppKit
 struct ContentView: View {
     @Environment(AppSettings.self) private var appSettings
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.scenePhase) private var scenePhase
     @Query private var customSources: [CustomCalendarSource]
     @Query private var calendarPreferences: [CalendarPreference]
 
     @State private var selectedDate = Date()
-    @State private var calendarService = CalendarService.shared
-    @State private var isSyncing = false  // 同步状态
+    // V-32：CalendarService.shared 是单例引用，语义为常量依赖，用 let 而非 @State（@State 用于值语义状态）
+    private let calendarService = CalendarService.shared
+    @State private var eventsChangedSyncTask: Task<Void, Never>?  // V-1：事件变更防抖同步任务
     
-    // 用于强制视图响应主题色变化
-    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
+    // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
+    private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
 
     var body: some View {
         ZStack {
@@ -49,7 +49,12 @@ struct ContentView: View {
                     calendarService: calendarService,
                     calendarPreferences: calendarPreferences,
                     onEventsChanged: {
-                        Task {
+                        // V-1：连续增删改（批量完成/删除等）会触发多次全量同步，
+                        // 先取消上一个防抖任务，静默 2 秒无新变更后只执行一次同步，避免同步风暴
+                        eventsChangedSyncTask?.cancel()
+                        eventsChangedSyncTask = Task {
+                            try? await Task.sleep(nanoseconds: 2_000_000_000)
+                            guard !Task.isCancelled else { return }
                             await BackgroundSyncService.shared.syncOnce()
                         }
                     }
@@ -68,9 +73,6 @@ struct ContentView: View {
         .task {
             await initializeServices()
         }
-        .onChange(of: appSettings.accentColorHex) { _, newColor in
-            accentColor = Color(hex: newColor)
-        }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SystemCalendarPreferencesChanged"))) { _ in
             // 系统日历偏好变化时，触发系统日历同步
             Task {
@@ -78,6 +80,12 @@ struct ContentView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SubscriptionSourcesChanged"))) { _ in
+            Task {
+                await BackgroundSyncService.shared.syncOnce()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("CalendarCacheCleared"))) { _ in
+            // V-6：缓存被清空后重新全量同步，恢复本地数据
             Task {
                 await BackgroundSyncService.shared.syncOnce()
             }
@@ -149,10 +157,12 @@ struct ContentView: View {
         // 将环境 ModelContext 注入服务层，确保服务写入与 @Query 读取使用同一上下文
         EventCacheService.shared.setMainContext(modelContext)
 
-        // 请求日历和提醒权限（同时请求，只弹一次授权框）
+        // 请求日历权限（S-7：按需拆分——提醒同步默认关闭，关闭时仅请求日历权限，
+        // 不无条件索要提醒 fullAccess）
+        let syncReminders = appSettings.syncSystemReminders
         var reminderGranted = calendarService.reminderAuthorizationStatus == .fullAccess
         if calendarService.authorizationStatus == .notDetermined {
-            let result = await calendarService.requestAccess()
+            let result = await calendarService.requestAccess(requestReminders: syncReminders)
             reminderGranted = result.reminder
         }
 
@@ -166,7 +176,10 @@ struct ContentView: View {
         calendarService.loadCalendars()
 
         // 初始化默认自定义日历
-        if customSources.isEmpty {
+        // N-5：默认订阅源仅首次启动插入一次（UserDefaults 标记）——原 isEmpty 判断会在
+        // 用户删光全部订阅源后重启时复活默认源，导致删除无法持久生效
+        let seedKey = "hasSeededDefaultCalendarSource"
+        if !UserDefaults.standard.bool(forKey: seedKey) {
             let defaultSource = CustomCalendarSource(
                 name: "重要日历",
                 icsURL: "https://yangh9.github.io/ChinaCalendar/cal_holiday.ics",
@@ -174,7 +187,13 @@ struct ContentView: View {
                 isImportant: false
             )
             modelContext.insert(defaultSource)
-            try? modelContext.save()
+            do {
+                // 落库成功才写 seed 标记：save 失败时标记仍写入会导致默认源永久不再插入
+                try modelContext.save()
+                UserDefaults.standard.set(true, forKey: seedKey)
+            } catch {
+                AppLogger.settings.error("默认订阅源首次插入失败（下次启动重试）: \(error.localizedDescription)")
+            }
         }
 
         // 在 mainContext 注入后启动后台同步，确保使用同一 ModelContext

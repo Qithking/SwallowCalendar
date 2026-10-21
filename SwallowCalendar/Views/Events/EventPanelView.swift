@@ -17,23 +17,13 @@ struct EventPanelView: View {
 
     @State private var filterMode: EventFilterMode = .thisMonth
     @State private var refreshTrigger = false
-    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
+    // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
+    private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
     @State private var todoExpanded = true
     @State private var completedExpanded = false
 
     var body: some View {
         VStack(spacing: 0) {
-            // 监听日历偏好变化和订阅源变化，刷新事件列表
-            EmptyView()
-                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SystemCalendarPreferencesChanged"))) { _ in
-                    refreshTrigger.toggle()
-                }
-                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SubscriptionSourcesChanged"))) { _ in
-                    refreshTrigger.toggle()
-                }
-                .onChange(of: appSettings.syncSystemReminders) { _, _ in
-                    refreshTrigger.toggle()
-                }
             // 添加待办输入框（固定顶部）
             TaskInputView(
                 calendarService: calendarService,
@@ -80,8 +70,11 @@ struct EventPanelView: View {
                         )
                     },
                     onCompleteEvent: { event in
-                        Task { await calendarService.toggleEventCompleted(eventID: event.id, isCompleted: true, isReminder: event.isReminder) }
-                        refreshTrigger.toggle()
+                        Task {
+                            // V-2：先 await 数据变更完成，再触发刷新，避免列表回显旧状态
+                            await calendarService.toggleEventCompleted(eventID: event.id, isCompleted: true, isReminder: event.isReminder)
+                            refreshTrigger.toggle()
+                        }
                     },
                     onDeleteEvent: { event in
                         showDeleteConfirmation(event: event)
@@ -117,8 +110,11 @@ struct EventPanelView: View {
                         )
                     },
                     onUncompleteEvent: { event in
-                        Task { await calendarService.toggleEventCompleted(eventID: event.id, isCompleted: false, isReminder: event.isReminder) }
-                        refreshTrigger.toggle()
+                        Task {
+                            // V-2：先 await 数据变更完成，再触发刷新，避免列表回显旧状态
+                            await calendarService.toggleEventCompleted(eventID: event.id, isCompleted: false, isReminder: event.isReminder)
+                            refreshTrigger.toggle()
+                        }
                     },
                     onDeleteEvent: { event in
                         showDeleteConfirmation(event: event)
@@ -131,6 +127,20 @@ struct EventPanelView: View {
             .padding(.bottom, 4)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
+        // V-36：通知/设置监听从 EmptyView hacky 写法迁移到根视图修饰符（语义等价、写法正规）
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SystemCalendarPreferencesChanged"))) { _ in
+            refreshTrigger.toggle()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SubscriptionSourcesChanged"))) { _ in
+            refreshTrigger.toggle()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("CalendarCacheCleared"))) { _ in
+            // V-6：缓存被清空后立即刷新列表，避免展示已删除的旧数据
+            refreshTrigger.toggle()
+        }
+        .onChange(of: appSettings.syncSystemReminders) { _, _ in
+            refreshTrigger.toggle()
+        }
         .onAppear {
             filterMode = appSettings.defaultFilterModeEnum
         }
@@ -138,9 +148,6 @@ struct EventPanelView: View {
             filterMode = newMode
         }
         .tint(accentColor)
-        .onChange(of: appSettings.accentColorHex) { _, newColor in
-            accentColor = Color(hex: newColor)
-        }
     }
 
     // MARK: - Delete Confirmation with NSAlert
@@ -205,7 +212,7 @@ struct EventPanelView: View {
             refreshTrigger.toggle()
             onEventsChanged?()
         } catch {
-            AppLogger.ui.error("删除事件失败: \(String(describing: error), privacy: .public)")
+            AppLogger.ui.error("删除事件失败: \(String(describing: error))")
         }
     }
 }
@@ -246,9 +253,9 @@ enum EventFilterMode: String, CaseIterable, Codable {
             let end = cal.date(byAdding: .year, value: 1, to: start)!
             return (start, end)
         case .all:
-            let past = cal.date(byAdding: .year, value: -5, to: base)!
-            let future = cal.date(byAdding: .year, value: 5, to: base)!
-            return (past, future)
+            // V-22："全部"语义修正为真全部（与 ICS 导出语义一致），
+            // 不再隐含 ±5 年窗口，避免用户 5 年前/后的历史事项在"全部"视图不可见
+            return (.distantPast, .distantFuture)
         }
     }
 }

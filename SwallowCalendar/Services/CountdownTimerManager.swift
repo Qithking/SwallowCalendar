@@ -9,6 +9,9 @@ import Foundation
 import Combine
 
 /// 倒计时管理器：使用单一 GCD Timer + 最小堆实现高性能动态倒计时
+/// E-12：显式 MainActor 隔离——register/unregister/shouldRefresh 调用方均为
+/// 主线程视图，timer 回调已派回主线程；把"约定收敛在主线程"固化为类型系统保证
+@MainActor
 final class CountdownTimerManager: ObservableObject {
     static let shared = CountdownTimerManager()
     
@@ -36,57 +39,44 @@ final class CountdownTimerManager: ObservableObject {
         ///   - eventID: 事件 ID
         ///   - deadline: 到期时间
         func register(eventID: String, deadline: Date) {
+            // 保持 GCD 主队列 FIFO 派发：Task{@MainActor} 无执行顺序保证，快速
+            // register→unregister 交替时可能乱序（unregister 先执行会把事件残留
+            // 在堆中）；主队列闭包内用 assumeIsolated 满足 MainActor 隔离检查
             DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                
-                // 如果已存在，先移除旧的（避免重复插入导致内存泄漏）
-                self.minHeap.remove(eventID: eventID)
-                
-                self.minHeap.insert(eventID: eventID, deadline: deadline)
-                self.visibleEventIDs.insert(eventID)
-                
-                if self.timer == nil {
-                    self.startTimer()
+                guard let self else { return }
+                MainActor.assumeIsolated {
+                    // 如果已存在，先移除旧的（避免重复插入导致内存泄漏）
+                    self.minHeap.remove(eventID: eventID)
+
+                    self.minHeap.insert(eventID: eventID, deadline: deadline)
+                    self.visibleEventIDs.insert(eventID)
+
+                    if self.timer == nil {
+                        self.startTimer()
+                    }
+                    self.adjustRefreshInterval()
                 }
-                self.adjustRefreshInterval()
             }
         }
     
     /// 注销一个事件（当视图消失时调用）
     /// - Parameter eventID: 事件 ID
     func unregister(eventID: String) {
+        // 与 register 相同：主队列 FIFO 保证先 register 后 unregister 的顺序
         DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            // 从可见集合中移除
-            self.visibleEventIDs.remove(eventID)
-            
-            // 从最小堆中移除
-            self.minHeap.remove(eventID: eventID)
-            
-            // 如果堆为空，停止 Timer
-            if self.minHeap.isEmpty {
-                self.stopTimer()
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                // 从可见集合中移除
+                self.visibleEventIDs.remove(eventID)
+
+                // 从最小堆中移除
+                self.minHeap.remove(eventID: eventID)
+
+                // 如果堆为空，停止 Timer
+                if self.minHeap.isEmpty {
+                    self.stopTimer()
+                }
             }
-        }
-    }
-    
-    /// 标记事件为可见（当视图出现时调用）
-    /// - Parameter eventID: 事件 ID
-    func markVisible(eventID: String) {
-        visibleEventIDs.insert(eventID)
-    }
-    
-    /// 标记事件为不可见（当视图消失时调用）
-    /// - Parameter eventID: 事件 ID
-    func markInvisible(eventID: String) {
-        visibleEventIDs.remove(eventID)
-        // 从堆中移除，避免内存泄漏
-        minHeap.remove(eventID: eventID)
-        
-        // 如果堆为空，停止 Timer
-        if minHeap.isEmpty {
-            stopTimer()
         }
     }
     
@@ -95,27 +85,6 @@ final class CountdownTimerManager: ObservableObject {
     /// - Returns: 是否需要刷新
     func shouldRefresh(eventID: String) -> Bool {
         return visibleEventIDs.contains(eventID)
-    }
-    
-    /// 批量更新最小堆（用于列表刷新时同步）
-    /// - Parameter events: 需要动态刷新的事件列表 [(eventID, deadline)]
-    func updateHeap(with events: [(eventID: String, deadline: Date)]) {
-        // 同步执行，避免时序竞争问题
-        // 清空旧堆
-        minHeap.removeAll()
-        
-        // 插入新事件
-        for event in events {
-            minHeap.insert(eventID: event.eventID, deadline: event.deadline)
-        }
-        
-        // 如果堆不为空且 Timer 未启动，启动 Timer
-        if !minHeap.isEmpty && timer == nil {
-            startTimer()
-        } else if minHeap.isEmpty {
-            // 如果堆为空，停止 Timer
-            stopTimer()
-        }
     }
     
     // MARK: - Private Methods
@@ -127,7 +96,8 @@ final class CountdownTimerManager: ObservableObject {
         let newTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .background))
         newTimer.schedule(deadline: .now(), repeating: .seconds(1), leeway: .milliseconds(100))
         newTimer.setEventHandler { [weak self] in
-            DispatchQueue.main.async {
+            // 后台 timer 触发后跳回主线程处理（Task 继承 MainActor 隔离）
+            Task { @MainActor [weak self] in
                 self?.onTimerFired()
             }
         }
@@ -242,6 +212,10 @@ extension CountdownTimerManager {
                     elements.removeLast()
                 } else {
                     elements[index] = elements.removeLast()
+                    // B-4：标准删除算法——替换元素可能需要上浮（比新 parent 小）
+                    // 或下沉（比子节点大），各调一次，元素只朝一个方向移动，
+                    // 多余方向的调用为空操作。原实现仅 siftDown 导致堆序破坏
+                    siftUp(from: index)
                     siftDown(from: index)
                 }
             }
@@ -251,12 +225,7 @@ extension CountdownTimerManager {
         func peek() -> HeapElement? {
             return elements.first
         }
-        
-        /// 检查是否包含指定 eventID
-        func contains(eventID: String) -> Bool {
-            return elements.contains { $0.eventID == eventID }
-        }
-        
+
         // MARK: - Heap Operations
         
         private func siftUp(from index: Int) {

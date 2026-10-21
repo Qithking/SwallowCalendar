@@ -17,7 +17,8 @@ struct CalendarSettingsView: View {
 
     @State private var newSourceName = ""
     @State private var newSourceURL = ""
-    @State private var saveStatus: String = "就绪"
+    // V-14：saveStatus 已有 UI 展示落点（订阅日历 Section 底部），空串时不显示
+    @State private var saveStatus: String = ""
     @State private var showingSaveConfirmation = false
     @State private var isRefreshing = false
     @State private var refreshSuccess = false
@@ -198,6 +199,14 @@ struct CalendarSettingsView: View {
                         .controlSize(.small)
                         .disabled(newSourceName.isEmpty || newSourceURL.isEmpty)
                     }
+
+                    // V-14：saveStatus 原有 6 处赋值但无展示位置（死状态），
+                    // 添加校验失败/保存结果对用户不可见，现补展示行
+                    if !saveStatus.isEmpty {
+                        Text(saveStatus)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
         }
@@ -215,14 +224,16 @@ struct CalendarSettingsView: View {
         }
         .onDisappear {
             // 窗口关闭时确保保存所有更改
+            // V-13：不再重置 hasLoadedCalendars——重置会抵消 .task 的"仅空时
+            // 加载"意图，导致每次切回设置页都重新 loadCalendars
             saveAllChanges()
-            // 重置加载状态，下次进入时重新加载日历
-            hasLoadedCalendars = false
         }
         .alert("刷新失败", isPresented: $showingSaveConfirmation) {
             Button("确定", role: .cancel) {}
         } message: {
-            Text("刷新失败请重启应用后再试")
+            // V-14：展示同步回传的具体原因（B-28 后 manualSync 回传真实失败信息），
+            // 替代原固定文案"刷新失败请重启应用后再试"
+            Text(saveStatus)
         }
     }
 
@@ -354,8 +365,20 @@ struct CalendarSettingsView: View {
     private func updateSubscriptionEnabled(id: PersistentIdentifier, isEnabled: Bool) {
         if let source = customSources.first(where: { $0.id == id }) {
             source.isEnabled = isEnabled
+            // V-38：开关切换即时处理本地数据——禁用立即清除该源缓存事件，
+            // 启用立即清磁盘缓存强制重拉并触发订阅同步（原实现仅发通知依赖
+            // 后台同步兜底，禁用源事件残留一个同步周期、启用源回旧缓存）
+            if !isEnabled {
+                CalendarService.shared.cacheService.deleteSubscriptionEvents(sourceURL: source.icsURL)
+            } else {
+                ICSService.shared.removeCachedFile(for: source.icsURL)
+                let sources = customSources
+                Task {
+                    await CalendarService.shared.cacheService.syncSubscriptionEvents(sources: sources)
+                }
+            }
         }
-        
+
         saveWithStatus()
         NotificationCenter.default.post(name: NSNotification.Name("SubscriptionSourcesChanged"), object: nil)
     }
@@ -384,9 +407,28 @@ struct CalendarSettingsView: View {
     }
 
     private func addCustomSource() {
+        // S-4：添加侧同步校验 https，让用户添加时立即得到反馈（fetch 侧另有白名单兜底）
+        let trimmedURL = newSourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard URL(string: trimmedURL)?.scheme?.lowercased() == "https" else {
+            saveStatus = "仅支持 https 订阅地址"
+            return
+        }
+
+        // N-13：插入前按 URL 对库做 fetch 判重（不依赖内存 @Query），
+        // 多窗口并发写入时内存列表可能滞后，库级判重防重复行
+        var descriptor = FetchDescriptor<CustomCalendarSource>(
+            predicate: #Predicate { $0.icsURL == trimmedURL }
+        )
+        descriptor.fetchLimit = 1
+        if (try? modelContext.fetch(descriptor))?.isEmpty == false {
+            saveStatus = "该订阅地址已存在"
+            return
+        }
+
+        let trimmedName = newSourceName.trimmingCharacters(in: .whitespacesAndNewlines)
         let source = CustomCalendarSource(
-            name: newSourceName,
-            icsURL: newSourceURL,
+            name: trimmedName,
+            icsURL: trimmedURL,
             isEnabled: false,
             isImportant: false
         )
@@ -414,7 +456,7 @@ struct CalendarSettingsView: View {
             saveStatus = "已保存 \(Date().formatted(date: .omitted, time: .shortened))"
         } catch {
             saveStatus = "保存失败"
-            AppLogger.settings.error("日历设置保存失败: \(String(describing: error), privacy: .public)")
+            AppLogger.settings.error("日历设置保存失败: \(String(describing: error))")
         }
     }
 

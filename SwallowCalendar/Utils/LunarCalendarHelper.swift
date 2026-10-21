@@ -28,14 +28,6 @@ struct LunarCalendarHelper {
         return formatter
     }()
 
-    private static let stemBranchFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.calendar = chineseCalendar
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "UU年"
-        return formatter
-    }()
-
     /// 获取指定日期的农历显示文本
     static func lunarString(for date: Date) -> String {
         // 初一显示月份，其他显示日期
@@ -85,17 +77,5 @@ struct LunarCalendarHelper {
     static func isLeapMonth(for date: Date) -> Bool {
         let components = chineseCalendar.dateComponents([.isLeapMonth], from: date)
         return components.isLeapMonth ?? false
-    }
-
-    /// 获取完整的农历日期描述
-    static func fullLunarString(for date: Date) -> String {
-        let month = lunarMonth(for: date)
-        let day = lunarDay(for: date)
-        return "\(month)\(day)"
-    }
-
-    /// 获取天干地支年
-    static func heavenlyStemAndEarthlyBranch(for date: Date) -> String {
-        return stemBranchFormatter.string(from: date)
     }
 }

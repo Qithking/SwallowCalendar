@@ -33,7 +33,6 @@ final class BackgroundSyncService {
     func syncOnce() async {
         guard !isSyncing else { return }
         guard modelContainer != nil else { return }
-        guard CalendarService.shared.authorizationStatus == .fullAccess else { return }
 
         isSyncing = true
         defer { isSyncing = false }
@@ -44,13 +43,18 @@ final class BackgroundSyncService {
         let preferences = fetchPreferences(context: context)
         let customSources = fetchCustomSources(context: context)
 
-        let enabledCals = CalendarService.shared.enabledCalendars(preferences: preferences)
+        // E-5：日历授权门槛只包住系统日历/提醒同步——ICS 订阅源同步不依赖 EventKit 授权，
+        // 原顶部 guard 会使用户拒绝日历授权时订阅功能静默失效
+        let hasCalendarAccess = CalendarService.shared.authorizationStatus == .fullAccess
+        if hasCalendarAccess {
+            let enabledCals = CalendarService.shared.enabledCalendars(preferences: preferences)
 
-        if !enabledCals.isEmpty {
-            await CalendarService.shared.cacheService.syncEvents(from: CalendarService.shared, calendars: enabledCals)
-        } else {
-            // clearSystemCalendarCache 为 @MainActor 同步方法，同类 @MainActor 上下文可直接调用
-            CalendarService.shared.cacheService.clearSystemCalendarCache()
+            if !enabledCals.isEmpty {
+                await CalendarService.shared.cacheService.syncEvents(from: CalendarService.shared, calendars: enabledCals)
+            } else {
+                // clearSystemCalendarCache 为 @MainActor 同步方法，同类 @MainActor 上下文可直接调用
+                CalendarService.shared.cacheService.clearSystemCalendarCache()
+            }
         }
 
         if AppSettings.shared.syncSystemReminders && CalendarService.shared.reminderAuthorizationStatus == .fullAccess {

@@ -63,9 +63,15 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     // S-1 完整性校验：本次下载的比对结果（true=一致 / nil=参照值不可得降级 / false=不一致已拦截）
     @Published var digestVerified: Bool?
 
-    private var downloadSession: URLSession?
+    // E-11：直连/代理各一个 session 复用，不再每次下载重建
+    // （URLSession 创建开销大；旧 session 未 invalidate 就被覆盖会延迟释放。
+    //   直连短超时快速失败，代理正常超时。session 强持 self 至 invalidate，
+    //   由 deinit 双 invalidate 打断。）
+    // 可选 var + 使用点懒创建：lazy 属性的首次访问属可变操作，deinit（非隔离
+    // 上下文）中禁止访问；Optional 与 checkTimer/downloadTask 同模式，deinit 安全
+    private var directSession: URLSession?
+    private var proxySession: URLSession?
     private var downloadTask: URLSessionDownloadTask?
-    private var pendingDownloadUrl: URL?
     private var downloadWindow: NSWindow?
     private var hasTriedProxy = false  // 是否已尝试代理
 
@@ -79,12 +85,6 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     private override init() {
         self.currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
         super.init()
-
-        // 使用临时目录配置 session，避免沙盒限制
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 60
-        config.timeoutIntervalForResource = 300
-        self.downloadSession = URLSession(configuration: config, delegate: self, delegateQueue: .main)
 
         // S-14：启动时后台清理上次更新遗留的 ".old-" 备份包
         // （新版本已成功启动，说明替换完成，备份可安全删除）
@@ -105,9 +105,19 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         }
     }
     
+    /// E-11：按超时配置创建下载 session（delegate 为 self，回调队列主线程）
+    private func makeDownloadSession(requestTimeout: TimeInterval, resourceTimeout: TimeInterval) -> URLSession {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = requestTimeout
+        config.timeoutIntervalForResource = resourceTimeout
+        return URLSession(configuration: config, delegate: self, delegateQueue: .main)
+    }
+
     deinit {
         checkTimer?.invalidate()
-        downloadSession?.invalidateAndCancel()
+        // E-11：双 session 失效，打断 URLSession 对 delegate(self) 的强持有
+        directSession?.invalidateAndCancel()
+        proxySession?.invalidateAndCancel()
         downloadTask?.cancel()
     }
     
@@ -290,21 +300,19 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         }
         
         guard let url = URL(string: urlString) else { return }
-        pendingDownloadUrl = url
         downloadTask?.cancel()
-        
-        // 直连使用较短的超时时间，代理使用正常超时
-        let config = URLSessionConfiguration.default
+
+        // E-11：session 懒创建复用——首次使用时初始化（直连短超时，代理正常超时）
         if usingProxy {
-            config.timeoutIntervalForRequest = 60
-            config.timeoutIntervalForResource = 300
-        } else {
-            config.timeoutIntervalForRequest = 15
-            config.timeoutIntervalForResource = 60
+            if proxySession == nil {
+                proxySession = makeDownloadSession(requestTimeout: 60, resourceTimeout: 300)
+            }
+        } else if directSession == nil {
+            directSession = makeDownloadSession(requestTimeout: 15, resourceTimeout: 60)
         }
-        downloadSession = URLSession(configuration: config, delegate: self, delegateQueue: .main)
-        
-        downloadTask = downloadSession?.downloadTask(with: url)
+        guard let session = usingProxy ? proxySession : directSession else { return }
+
+        downloadTask = session.downloadTask(with: url)
         downloadTask?.resume()
     }
 
@@ -395,6 +403,8 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         
         do {
             try fileManager.moveItem(at: location, to: tempDestURL)
+            // S-12：共享临时目录下的下载文件收紧为仅当前用户可读写
+            try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tempDestURL.path)
         } catch {
             Task { @MainActor in
                 self.downloadError = "保存失败: \(error.localizedDescription)"
@@ -414,12 +424,17 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
                 }
                 
                 // 确定文件名
+                // S-9：latestVersion 来自远端 tag，仅保留安全字符（字母数字.-_），
+                // 防止畸形 tag 生成怪异文件名
+                let safeVersion = self.latestVersion.filter {
+                    $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" || $0 == "_"
+                }
                 let urlString = self.releaseUrl.lowercased()
                 let fileName: String
                 if urlString.contains(".dmg") {
-                    fileName = "SwallowCalendar-\(self.latestVersion).dmg"
+                    fileName = "SwallowCalendar-\(safeVersion).dmg"
                 } else {
-                    fileName = "SwallowCalendar-\(self.latestVersion).zip"
+                    fileName = "SwallowCalendar-\(safeVersion).zip"
                 }
                 let destinationUrl = downloadsFolder.appendingPathComponent(fileName)
 
@@ -589,8 +604,12 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     nonisolated private func extractAppFromDMG(dmgUrl: URL) throws -> URL {
         let mountPoint = NSTemporaryDirectory() + "SwallowCalendar_Install_\(UUID().uuidString)"
 
-        // 创建挂载点目录
-        try FileManager.default.createDirectory(atPath: mountPoint, withIntermediateDirectories: true)
+        // 创建挂载点目录（S-12：收紧为仅当前用户可进入，共享临时目录下降低暴露面）
+        try FileManager.default.createDirectory(
+            atPath: mountPoint,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
 
         // 挂载 DMG
         let attachProcess = Process()
@@ -649,7 +668,12 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     /// 从 ZIP 中提取 .app 包
     nonisolated private func extractAppFromZip(zipUrl: URL) throws -> URL {
         let tempDir = NSTemporaryDirectory() + "SwallowCalendar_Install_\(UUID().uuidString)"
-        try FileManager.default.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
+        // S-12：解压目录同样收紧为 0700
+        try FileManager.default.createDirectory(
+            atPath: tempDir,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
 
         // 使用 unzip 命令解压
         let unzipProcess = Process()
@@ -688,15 +712,23 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
 
     /// 递归查找 .app 包
     nonisolated private func findAppBundle(in directory: URL) throws -> URL {
-        let contents = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        // S-6：显式请求符号链接标记——恶意 zip 内 symlink 可指向任意路径，
+        // copyItem 复制链接本身会造成越权读写，遇到符号链接一律跳过
+        let contents = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isSymbolicLinkKey]
+        )
+        let isSymlink: (URL) -> Bool = { url in
+            (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
+        }
 
         // 优先在当前目录找 .app
-        if let appURL = contents.first(where: { $0.pathExtension == "app" }) {
+        if let appURL = contents.first(where: { $0.pathExtension == "app" && !isSymlink($0) }) {
             return appURL
         }
 
         // 递归搜索子目录
-        for item in contents {
+        for item in contents where !isSymlink(item) {
             var isDir: ObjCBool = false
             if FileManager.default.fileExists(atPath: item.path, isDirectory: &isDir), isDir.boolValue {
                 if let found = try? findAppBundle(in: item) {

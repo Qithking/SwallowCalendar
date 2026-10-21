@@ -19,6 +19,10 @@ final class StatusBarIconManager {
     private(set) weak var statusItemButton: NSButton?
 
     private var refreshTimer: Timer?
+
+    /// V-19：日期图标生成时的"当天零点"标记，用于按日短路——
+    /// 实心/描边日期图标一天内内容不变，同日内定时触发的重绘直接跳过，跨天才重新渲染
+    private var iconGenerationDate: Date?
     
     /// 图标缓存，避免重复创建相同样式的图标
     private let iconCache = NSCache<NSString, NSImage>()
@@ -61,12 +65,25 @@ final class StatusBarIconManager {
 
     func updateIcon() {
         let settings = AppSettings.shared
+
+        // V-19：日期类图标（实心/描边日期）一天内内容不变，同日内跳过重绘，
+        // 跨天（标记为 nil 或非今天）才重新生成
+        if settings.iconStyle == .solidDate || settings.iconStyle == .strokeDate {
+            let today = Calendar.current.startOfDay(for: Date())
+            if let generated = iconGenerationDate, generated == today {
+                return
+            }
+            iconGenerationDate = today
+        }
+
         let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
         let icon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor, cache: iconCache)
         currentIcon = icon
     }
 
     func updateIconAndRestartTimer() {
+        // V-19：设置变更（样式/颜色/格式）后强制重绘，清除按日短路标记
+        iconGenerationDate = nil
         updateIcon()
         startRefreshTimer()
     }
@@ -80,6 +97,11 @@ final class StatusBarIconManager {
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.updateIcon()
+        }
+        // V-19：加入 common mode，菜单展开/拖动等 tracking 期间定时器仍能触发，
+        // 避免跨天后图标停留在旧日期直到交互结束
+        if let timer = refreshTimer {
+            RunLoop.main.add(timer, forMode: .common)
         }
     }
 

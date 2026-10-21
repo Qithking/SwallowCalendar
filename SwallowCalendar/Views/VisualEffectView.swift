@@ -8,8 +8,8 @@ import SwiftUI
 
 /// macOS 毛玻璃效果视图
 /// 根据系统版本自动选择：
-/// - macOS 26+ (Sequoia): 使用 NSGlassEffectView (新毛玻璃效果)
-/// - macOS 14 及以下: 使用 NSVisualEffectView (传统毛玻璃效果)
+/// - macOS 26+: 使用 NSGlassEffectView (新毛玻璃效果)
+/// - macOS 15 及以下: 使用 NSVisualEffectView (传统毛玻璃效果)
 struct VisualEffectView: NSViewRepresentable {
     var material: NSVisualEffectView.Material = .popover
     var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
@@ -24,9 +24,10 @@ struct VisualEffectView: NSViewRepresentable {
     
     func updateNSView(_ view: NSView, context: Context) {
         if #available(macOS 26.0, *), view is NSGlassEffectView {
-            // macOS 26+ : Glass Effect View 无需更新
+            // N-12：glass 分支无 material/blendingMode 对应属性（样式由 style 固定），
+            // 参数变化时无可更新项，与 classic 分支的参数回写区分开
         } else if let visualView = view as? NSVisualEffectView {
-            // macOS 14 及以下: 更新 Visual Effect View
+            // macOS 15 及以下: 更新 Visual Effect View
             visualView.material = material
             visualView.blendingMode = blendingMode
         }

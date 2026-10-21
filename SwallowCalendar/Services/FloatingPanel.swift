@@ -29,6 +29,8 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     var isPresented: Bool = false
     var statusBarButton: NSStatusBarButton?
     let onClose: () -> Void
+    /// E-7：保存内容视图构建闭包，close 销毁层级后 open 重建用
+    private let contentBuilder: () -> Content
     
     private var pinObserver: NSObjectProtocol?
     private var deactivateObserver: NSObjectProtocol?
@@ -56,6 +58,7 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     ) {
         self.onClose = onClose
         self.statusBarButton = statusBarButton
+        self.contentBuilder = view
         
         super.init(
             contentRect: contentRect,
@@ -88,23 +91,9 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         // 设置窗口最小和最大尺寸
         minSize = NSSize(width: 340, height: 600)
         maxSize = NSSize(width: 500, height: 1000)
-        
-        // 设置内容视图
-        let rootView = view()
-            .ignoresSafeArea()
-        
-        contentView = NSHostingView(
-            rootView: AnyView(rootView)
-        )
-        
-        // 关键：设置自动调整大小掩码，使内容跟随窗口尺寸变化
-        contentView?.autoresizingMask = [.width, .height]
-        
-        // 设置 contentView 圆角和阴影
-        contentView?.wantsLayer = true
-        contentView?.layer?.backgroundColor = NSColor.clear.cgColor
-        contentView?.layer?.cornerRadius = Popup.totalCornerRadius
-        contentView?.layer?.masksToBounds = true
+
+        // E-7：构建内容视图（NSHostingController 承载，便于 close 时销毁层级）
+        installContentView()
         
         // 监听应用失焦通知，未固定时自动关闭窗口
         deactivateObserver = NotificationCenter.default.addObserver(
@@ -130,7 +119,29 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         }
     }
     
+    /// E-7：构建并安装内容视图（init 与 open 重建共用同一入口）
+    private func installContentView() {
+        let rootView = contentBuilder()
+            .ignoresSafeArea()
+        // 用 NSHostingController 承载，close 置空 contentViewController 即可销毁层级；
+        // 直接赋值 NSHostingView 时窗口仅 orderOut，无法触发 SwiftUI onDisappear
+        let hostingController = NSHostingController(rootView: AnyView(rootView))
+        contentViewController = hostingController
+        // 关键：设置自动调整大小掩码，使内容跟随窗口尺寸变化
+        hostingController.view.autoresizingMask = [.width, .height]
+        // 设置 contentView 圆角和阴影
+        hostingController.view.wantsLayer = true
+        hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
+        hostingController.view.layer?.cornerRadius = Popup.totalCornerRadius
+        hostingController.view.layer?.masksToBounds = true
+    }
+
     func open() {
+        // E-7：close 时已销毁视图层级，重开前必须重建，否则面板空白
+        if contentViewController == nil {
+            installContentView()
+        }
+
         // 从 UserDefaults 恢复窗口尺寸
         let savedWidth = UserDefaults.standard.double(forKey: "mainWindowWidth")
         let savedHeight = UserDefaults.standard.double(forKey: "mainWindowHeight")
@@ -202,6 +213,11 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     }
     
     func windowDidResignKey(_ notification: Notification) {
+        // V-3/V-12：应用内其他窗口（编辑/设置/提醒弹窗、菜单、Popover）抢走 key 时不关闭面板，
+        // 点击其他应用的失焦场景由 deactivateObserver 兜底关闭
+        if let newKeyWindow = NSApp.keyWindow, newKeyWindow !== self, NSApp.isActive {
+            return
+        }
         if shouldClose() {
             close()
         }
@@ -209,9 +225,11 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     
     override func close() {
         super.close()
+        // E-7：NSPanel 的 close 仅 orderOut 不销毁层级，显式置空 contentViewController
+        // 触发 SwiftUI onDisappear，注销面板内倒计时等定时器，避免隐藏面板后台跑 Timer
+        contentViewController = nil
         isPresented = false
         statusBarButton?.isHighlighted = false
-        NotificationCenter.default.post(name: Notification.Name("AppDidEnterBackground"), object: nil)
         onClose()
     }
     

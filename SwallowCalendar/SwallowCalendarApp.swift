@@ -13,6 +13,9 @@ enum SwallowCalendarApp {
     static func main() {
         let app = NSApplication.shared
         app.delegate = appDelegate
+        // N-14：纯 SPM swift run 无 Info.plist（LSUIElement 缺失会显示 Dock 图标），
+        // 代码侧设置等效策略；Xcode 构建已有 LSUIElement，此处幂等无副作用
+        app.setActivationPolicy(.accessory)
         app.run()
     }
 }

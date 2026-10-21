@@ -8,6 +8,7 @@
 import Foundation
 import SwiftData
 import EventKit
+import CryptoKit
 import os
 
 @Model
@@ -79,16 +80,6 @@ final class CachedEvent {
         set { recurrenceTypeRaw = newValue.rawValue }
     }
     
-    /// 是否为订阅日历
-    var isSubscription: Bool {
-        category == .subscription
-    }
-    
-    /// 是否有具体的日期时间
-    var hasDate: Bool {
-        startDate != nil
-    }
-    
     init(
         eventID: String,
         title: String,
@@ -142,7 +133,11 @@ final class EventCacheService {
     /// 主上下文：由 ContentView 注入环境 ModelContext，确保与 @Query 使用同一上下文
     private var mainContext: ModelContext?
 
-    var isSyncing = false
+    // B-13：events 与 reminders 拆分为独立同步标志——共用一个标志时，
+    // 手动与后台并发同步不同数据源会导致后到者被静默跳过
+    var isSyncingEvents = false
+
+    var isSyncingReminders = false
 
     var isSubscriptionSyncing = false
 
@@ -183,12 +178,28 @@ final class EventCacheService {
     func getEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CachedEvent] {
         guard let context = self.context else { return [] }
         
+        // B-24：时间窗口过滤下沉到 SwiftData 谓词，避免全表加载后内存过滤。
+        // 左边界放宽 1 秒以兼容零长事件（start==end==窗口起点需纳入，见 filterEvents B-1 注释）：
+        // 非零长事件 s < e 时 (s >= wStart || e > wStart) ⟺ e > wStart，故统一用 e > wStart 表达
+        let widenedStart = startDate.addingTimeInterval(-1)
+        // 哨兵日期用局部常量捕获：#Predicate 宏展开后 Date.distantPast 是静态成员
+        // keypath（Value<Date.Type>），不符合 StandardPredicateExpression；
+        // 局部常量被捕获后转为 Value 表达式即合法
+        let distantPast = Date.distantPast
+        let distantFuture = Date.distantFuture
+        let predicate = #Predicate<CachedEvent> { event in
+            (event.startDate ?? distantPast) < endDate
+                && (event.endDate ?? distantFuture) > widenedStart
+        }
+        
         let descriptor = FetchDescriptor<CachedEvent>(
+            predicate: predicate,
             sortBy: [SortDescriptor(\.startDate)]
         )
         
         do {
             let events = try context.fetch(descriptor)
+            // 谓词仅粗筛（零长事件边界/无日期事件/日历过滤仍需精确判定），内存过滤保留
             return filterEvents(events, from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
         } catch {
             return []
@@ -199,6 +210,13 @@ final class EventCacheService {
         var filtered = events.filter { event in
             guard let start = event.startDate, let end = event.endDate else {
                 return includeNoDateReminders
+            }
+            // B-1：零长事件（start==end，如仅日期提醒映射产物 start==end==当日00:00）
+            // 视为覆盖开始当天——原判定 end > startDate 恒为 false，导致到期当天不可见。
+            // 采用审计备选方案"零长事件特殊处理"，避免单日查询右边界+1 天把次日
+            // 00:00 开始的事件误纳入当天
+            if start == end {
+                return start >= startDate && start < endDate
             }
             return start < endDate && end > startDate
         }
@@ -217,14 +235,17 @@ final class EventCacheService {
     // MARK: - 同步
     
     /// 同步日历事件到本地缓存
+    /// B-28：返回同步是否成功（保存失败/guard 提前退出均返回 false），
+    /// manualSync 依赖此结果回传 UI；@discardableResult 保持旧调用方兼容
     @MainActor
-    func syncEvents(from calendarService: CalendarService, calendars: [EKCalendar]) async {
-        guard let context = self.context else { return }
-        guard !isSyncing else { return }
+    @discardableResult
+    func syncEvents(from calendarService: CalendarService, calendars: [EKCalendar]) async -> Bool {
+        guard let context = self.context else { return false }
+        guard !isSyncingEvents else { return false }
         
-        isSyncing = true
+        isSyncingEvents = true
         defer {
-            isSyncing = false
+            isSyncingEvents = false
         }
         
         // 同步过去1年和未来2年的事件
@@ -234,30 +255,40 @@ final class EventCacheService {
         
         // 从系统日历获取事件
         let systemEvents = calendarService.fetchEvents(from: startDate, to: endDate, calendars: calendars)
-        // 获取现有的缓存事件，构建字典以优化查询
+        // 获取现有的缓存事件，构建 eventID → 行 全表映射
+        // B-10：不做窗口过滤——事件移出同步窗口后旧行不进索引，else 分支会插入
+        // 同 eventID 新行触发 @Attribute(.unique) 冲突导致整次保存失败；
+        // 全表构建让更新路径能命中窗口外旧行
         var existingByID: [String: CachedEvent] = [:]
         let descriptor = FetchDescriptor<CachedEvent>()
         if let existing = try? context.fetch(descriptor) {
             for event in existing {
-                // 使用交叉判断（与 EventKit predicateForEvents 一致），
-                // 避免跨越同步范围边界的事件被遗漏，从而防止重复插入和遗漏删除
-                if let start = event.startDate, let end = event.endDate,
-                   start < endDate && end > startDate {
-                    existingByID[event.eventID] = event
-                }
+                existingByID[event.eventID] = event
             }
         }
         
         let newIDs = Set(systemEvents.map { $0.id })
 
         // 删除已不存在的系统事件（缓存中存在但系统中已不存在）
+        // B-10：仅同步窗口内的行参与删除判定，窗口外旧行不在本次同步范围
+        //（由 cleanupOldEvents 按保留期限清理）
         let deletedIDs = Set(existingByID.keys).subtracting(newIDs)
         for eventID in deletedIDs {
             if let event = existingByID[eventID] {
+                if let start = event.startDate, let end = event.endDate,
+                   !(start < endDate && end > startDate) {
+                    continue
+                }
                 // 跳过提醒事件（由 syncReminders 管理）
                 guard !event.isReminder else { continue }
                 // 跳过用户分类事件（由用户操作管理，不在系统同步中删除）
-                guard event.category != .user else { continue }
+                // E-10：user 事件为缓存+EK 双写，走到此处说明 EK 侧已无此事件
+                //（可能被用户在系统日历 App 直接删除），缓存条目将永久残留，
+                // 记日志暴露问题以便排查
+                guard event.category != .user else {
+                    AppLogger.cache.warning("syncEvents 跳过删除 user 事件（EK 侧可能已删除）id=\(eventID)")
+                    continue
+                }
                 // 跳过订阅分类事件（由 syncSubscriptionEvents 管理）
                 guard event.category != .subscription else { continue }
                 // 删除系统中已不存在的事件
@@ -277,31 +308,47 @@ final class EventCacheService {
                 // 原因：历史已办事项在 [SC_COMPLETED] 机制引入（2026-05）之前标记完成，
                 // 其 EKEvent notes 中并无标记，若强制刷回会导致已办在重启后重新变回过期待办弹窗。
                 var newIsCompleted = existing.isCompleted
-                if let ekEvent = CalendarService.shared.getEvent(withIdentifier: event.id) {
-                    if let notes = ekEvent.notes, notes.contains("[SC_COMPLETED]") {
-                        newIsCompleted = true
-                    } else if newIsCompleted {
-                        // 缓存已完成但 EK 无标记（历史已办）：补写标记到系统日历，
-                        // 让系统日历成为完成状态真源，清缓存/换设备重新同步也能恢复完成状态
-                        CalendarService.shared.ensureCompletedMarker(for: event.id)
-                    }
+                // B-8：与插入路径对称——notes 含来源标记时恢复 user 分类，
+                // 避免 EK 侧分类信息变化后缓存残留旧分类
+                var newCategory = event.category
+                // B-25：notes 随 fetchEvents 一并带出，不再逐条 getEvent 跨进程查询；
+                // notes 为空串等价于原 EKEvent.notes 为 nil（无任何标记）
+                let notes = event.notes ?? ""
+                if notes.contains("[SC_COMPLETED]") {
+                    newIsCompleted = true
+                } else if newIsCompleted {
+                    // 缓存已完成但 EK 无标记（历史已办）：补写标记到系统日历，
+                    // 让系统日历成为完成状态真源，清缓存/换设备重新同步也能恢复完成状态
+                    CalendarService.shared.ensureCompletedMarker(for: event.id)
+                }
+                if notes.contains("此事项来自SwallowCalendar应用") {
+                    newCategory = .user
                 }
                 // 有变更才更新，避免不必要的写入
                 let newReminderMinutes = event.reminderMinutes
-                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes {
+                // B-8：变更检测与赋值补齐 isAllDay/calendarTitle/calendarColorHex/category，
+                // 避免 EK 侧修改后缓存残留旧值
+                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes || existing.isAllDay != event.isAllDay || existing.calendarTitle != event.calendarTitle || existing.calendarColorHex != event.calendarColorHex || existing.category != newCategory {
                     if existing.isCompleted != newIsCompleted {
-                        AppLogger.cache.warning("syncEvents isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID, privacy: .public)")
+                        AppLogger.cache.warning("syncEvents isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID)")
                     }
                     existing.title = newTitle
                     existing.startDate = newStart
                     existing.endDate = newEnd
                     existing.isCompleted = newIsCompleted
                     existing.reminderMinutes = newReminderMinutes
+                    existing.isAllDay = event.isAllDay
+                    existing.calendarTitle = event.calendarTitle
+                    existing.calendarColorHex = event.calendarColorHex
+                    existing.category = newCategory
                     existing.lastUpdated = Date()
                 }
             } else {
-                // 查找对应的EKCalendar获取ID
-                let targetCalendar = calendars.first { $0.title == event.calendarTitle }
+                // B-9：优先按 calendar identifier 匹配日历（title 同名/本地化差异
+                // 会取错日历导致 calendarID 记录为空串后被过滤消失），
+                // identifier 匹配失败时回退 title 匹配
+                let targetCalendar = calendars.first { $0.calendarIdentifier == event.calendarID }
+                    ?? calendars.first { $0.title == event.calendarTitle }
                 let calendarID = targetCalendar?.calendarIdentifier ?? ""
                 
                 // 检查EKEvent的备注，判断是否是SwallowCalendar事项
@@ -309,13 +356,13 @@ final class EventCacheService {
                 // 从 EKEvent 的 notes 中恢复完成状态（跨设备/清缓存后重新同步时
                 // 已完成事项仍能以已完成状态插入缓存，不丢失完成状态）
                 var isCompletedFromNotes = false
-                if let ekEvent = CalendarService.shared.getEvent(withIdentifier: event.id) {
-                    if let notes = ekEvent.notes, notes.contains("此事项来自SwallowCalendar应用") {
-                        category = .user
-                    }
-                    if let notes = ekEvent.notes, notes.contains("[SC_COMPLETED]") {
-                        isCompletedFromNotes = true
-                    }
+                // B-25：notes 随 fetchEvents 一并带出，不再逐条 getEvent 跨进程查询
+                let notes = event.notes ?? ""
+                if notes.contains("此事项来自SwallowCalendar应用") {
+                    category = .user
+                }
+                if notes.contains("[SC_COMPLETED]") {
+                    isCompletedFromNotes = true
                 }
                 
                 // 插入新事件
@@ -341,8 +388,10 @@ final class EventCacheService {
             lastSyncTime = Date()
             // 清理超过保留期限的旧事件
             cleanupOldEvents(context: context, before: startDate)
+            return true
         } catch {
-            AppLogger.cache.error("同步保存失败: \(String(describing: error), privacy: .public)")
+            AppLogger.cache.error("同步保存失败: \(String(describing: error))")
+            return false
         }
     }
 
@@ -369,7 +418,7 @@ final class EventCacheService {
                 UserDefaults.standard.set(true, forKey: migrationKey)
             } catch {
                 // 保存失败，不标记迁移完成，下次重试
-                AppLogger.cache.error("迁移保存失败: \(String(describing: error), privacy: .public)")
+                AppLogger.cache.error("迁移保存失败: \(String(describing: error))")
             }
         } else {
             // 无数据需要迁移，直接标记完成
@@ -382,11 +431,11 @@ final class EventCacheService {
     @MainActor
     func syncReminders(from calendarService: CalendarService) async {
         guard let context = self.context else { return }
-        guard !isSyncing else { return }
+        guard !isSyncingReminders else { return }
         guard AppSettings.shared.syncSystemReminders else { return }
 
-        isSyncing = true
-        defer { isSyncing = false }
+        isSyncingReminders = true
+        defer { isSyncingReminders = false }
 
         // 一次性迁移：将旧版本中通过 calendarTitle == "提醒" 标识的记录补设 isReminder 标记
         migrateReminderFlag(context: context)
@@ -425,7 +474,7 @@ final class EventCacheService {
                 // 有变更才更新，避免不必要的写入
                 if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes {
                     if existing.isCompleted != newIsCompleted {
-                        AppLogger.cache.warning("syncReminders isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID, privacy: .public)")
+                        AppLogger.cache.warning("syncReminders isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID)")
                     }
                     existing.title = newTitle
                     existing.startDate = newStart
@@ -459,7 +508,7 @@ final class EventCacheService {
             try context.save()
             lastSyncTime = Date()
         } catch {
-            AppLogger.cache.error("提醒保存失败: \(String(describing: error), privacy: .public)")
+            AppLogger.cache.error("提醒保存失败: \(String(describing: error))")
         }
     }
 
@@ -479,6 +528,35 @@ final class EventCacheService {
                 context.delete(event)
             }
             try? context.save()
+        }
+    }
+
+    /// V-38：即时删除指定订阅源的全部缓存事件（源被禁用时调用），
+    /// 原实现依赖下一次后台同步兜底，禁用后事件残留一个同步周期
+    @MainActor
+    func deleteSubscriptionEvents(sourceURL: String) {
+        guard let context else { return }
+        let subscriptionCategory = EventCategory.subscription.rawValue
+        let descriptor = FetchDescriptor<CachedEvent>(
+            predicate: #Predicate<CachedEvent> { event in
+                event.calendarID == sourceURL && event.categoryRaw == subscriptionCategory
+            }
+        )
+        // fetch 失败与空结果分开处理：fetch 异常需暴露（与落库失败同口径），空结果属正常
+        guard let events = try? context.fetch(descriptor) else {
+            AppLogger.cache.warning("查询禁用订阅源缓存事件失败，残留事件待下次同步清理: \(sourceURL)")
+            return
+        }
+        guard !events.isEmpty else { return }
+        for event in events {
+            context.delete(event)
+        }
+        do {
+            try context.save()
+            AppLogger.cache.info("已清除被禁用订阅源的缓存事件 count=\(events.count)")
+        } catch {
+            // 删除落库失败时禁用源的事件会残留（V-38 症状），必须暴露而非静默吞掉
+            AppLogger.cache.error("清除禁用订阅源缓存事件保存失败: \(error.localizedDescription)")
         }
     }
 
@@ -522,13 +600,16 @@ final class EventCacheService {
         }
 
         // 3. 构建新数据的 eventID → 数据 映射
+        // B-12：eventID 加源 URL 前缀，避免跨源 uid 冲突时 last-write-wins 覆盖；
+        // 无 uid 时用 summary+dtstart 的 SHA256 稳定哈希替代 "\(summary)_\(timestamp)"
+        //（String.hashValue 每次启动随机种子，不可用作持久化标识）
         var newEventsByID: [String: (source: CustomCalendarSource, icsEvent: ICSEvent)] = [:]
         for (source, events) in fetchedEventsBySource {
             // 对同源事件按 uid 去重：相同 uid 只保留一条
             var eventsByUID: [String: ICSEvent] = [:]
             for icsEvent in events {
                 let uid = icsEvent.uid.isEmpty
-                    ? "\(icsEvent.summary)_\(icsEvent.startDate?.timeIntervalSince1970 ?? 0)"
+                    ? Self.stableHash("\(icsEvent.summary)_\(icsEvent.startDate?.timeIntervalSince1970 ?? 0)")
                     : icsEvent.uid
                 if eventsByUID[uid] == nil {
                     eventsByUID[uid] = icsEvent
@@ -538,9 +619,9 @@ final class EventCacheService {
             for (_, icsEvent) in eventsByUID {
                 guard let startDate = icsEvent.startDate else { continue }
                 let stableUID = icsEvent.uid.isEmpty
-                    ? "\(icsEvent.summary)_\(startDate.timeIntervalSince1970)"
+                    ? Self.stableHash("\(icsEvent.summary)_\(startDate.timeIntervalSince1970)")
                     : icsEvent.uid
-                let eventID = "ics-\(stableUID)"
+                let eventID = "ics-\(source.icsURL)-\(stableUID)"
                 newEventsByID[eventID] = (source: source, icsEvent: icsEvent)
             }
         }
@@ -605,7 +686,8 @@ final class EventCacheService {
                     title: icsEvent.summary,
                     startDate: startDate,
                     endDate: endDate,
-                    isAllDay: true,
+                    // B-11：按 ICS DTSTART 是否含时间判定，不再硬编码全天
+                    isAllDay: icsEvent.isAllDay,
                     calendarID: source.icsURL,
                     calendarTitle: source.name,
                     calendarColorHex: "#FF9500",
@@ -619,8 +701,15 @@ final class EventCacheService {
             try context.save()
             lastSyncTime = Date()
         } catch {
-            // 保存失败
+            // B-30：保存失败必须记录日志，静默吞掉会丢数据且无法排查
+            AppLogger.cache.error("订阅同步保存失败: \(String(describing: error))")
         }
+    }
+
+    /// B-12：跨启动稳定的内容哈希（String.hashValue 每次启动随机种子，不可用作持久化标识）
+    private static func stableHash(_ input: String) -> String {
+        let digest = SHA256.hash(data: Data(input.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     /// 清除所有系统日历的缓存（不含订阅日历事件、用户事件和提醒）
@@ -640,28 +729,65 @@ final class EventCacheService {
         }
     }
 
-    /// 清除所有缓存
+    /// 清除缓存（分类保护：仅清系统/订阅缓存）
+    /// - Note: 用户自建事项与提醒缓存不清除——非"缓存-EK 双写"场景下
+    ///         （如关闭了"同步到系统日历"），清缓存会导致用户数据永久丢失
     func clearCache() {
         guard let context = self.context else { return }
-        
+
         let descriptor = FetchDescriptor<CachedEvent>()
         if let events = try? context.fetch(descriptor) {
+            var deletedCount = 0
             for event in events {
+                // E-1 分类过滤：跳过用户事项与提醒（与 cleanupOldEvents 保护逻辑同源），
+                // 系统/订阅缓存正常清除，重新同步即可恢复
+                if event.category == .user || event.isReminder {
+                    continue
+                }
                 context.delete(event)
+                deletedCount += 1
             }
-            try? context.save()
+            if deletedCount > 0 {
+                try? context.save()
+            }
+            AppLogger.cache.info("清除缓存：删除 \(deletedCount) 条系统/订阅缓存，用户事项与提醒已保留")
         }
     }
     
+    /// E-9：已完成用户事项/提醒的保留窗口（天），超过后从本地缓存清理
+    private static let userEventRetentionDays = 365
+
     /// 清理超过保留期限的旧事件（保留 startDate 之前的事件）
+    /// E-9：已完成的用户事项/提醒超过保留窗口后清理；未完成的永不清理
     private func cleanupOldEvents(context: ModelContext, before cutoffDate: Date) {
         let descriptor = FetchDescriptor<CachedEvent>()
         guard let events = try? context.fetch(descriptor) else { return }
-        
+
         var deletedCount = 0
+        var userDeletedCount = 0
+        // E-9：用户数据清理基准为"365 天前"，与系统缓存用的 cutoffDate（同步窗口起点）分开计算
+        let userRetentionCutoff = Calendar.current.date(byAdding: .day, value: -Self.userEventRetentionDays, to: Date())!
+
         for event in events {
-            // 跳过用户分类、订阅分类和提醒事件
-            if event.category == .user || event.category == .subscription || event.isReminder {
+            // E-9：用户事项与提醒改为有条件清理——已完成且 endDate 早于保留窗口才删除，
+            // 未完成的永不清理，避免用户数据意外丢失
+            if event.category == .user || event.isReminder {
+                if event.isCompleted, let endDate = event.endDate, endDate < userRetentionCutoff {
+                    context.delete(event)
+                    userDeletedCount += 1
+                }
+                continue
+            }
+            // 订阅分类不清理（由订阅同步自行管理）
+            if event.category == .subscription {
+                continue
+            }
+            // B-19：未来窗口外（endDate 超出同步窗口上界 2 年）的系统事件为残留行
+            //（如外部编辑推远后恰逢同步失败），仅靠过去侧清理无法回收
+            let futureWindowLimit = Calendar.current.date(byAdding: .year, value: 2, to: Date())!
+            if let endDate = event.endDate, endDate > futureWindowLimit {
+                context.delete(event)
+                deletedCount += 1
                 continue
             }
             // 删除早于保留期限且已过期的事件
@@ -670,10 +796,10 @@ final class EventCacheService {
                 deletedCount += 1
             }
         }
-        
-        if deletedCount > 0 {
+
+        if deletedCount > 0 || userDeletedCount > 0 {
             try? context.save()
-            AppLogger.cache.info("清理了 \(deletedCount) 个过期系统日历事件")
+            AppLogger.cache.info("清理过期缓存：系统事件 \(deletedCount) 条，已完成用户事项/提醒 \(userDeletedCount) 条（保留 \(Self.userEventRetentionDays) 天）")
         }
     }
 }

@@ -5,6 +5,7 @@
 
 import SwiftUI
 import SwiftData
+import AppKit
 import os
 
 struct EditEventSheet: View {
@@ -273,7 +274,14 @@ struct EditEventSheet: View {
                 
                 onDismiss?()
             } catch {
-                AppLogger.ui.error("更新事件失败: \(String(describing: error), privacy: .public)")
+                AppLogger.ui.error("更新事件失败: \(String(describing: error))")
+                // V-23：保存失败需用户可见——原实现仅写日志，窗口无反馈停留
+                // （失败时不 onDismiss，保持弹窗打开供用户修改后重试）
+                let alert = NSAlert()
+                alert.messageText = "保存失败"
+                alert.informativeText = "更新事件时出错：\(error.localizedDescription)"
+                alert.alertStyle = .warning
+                alert.runModal()
             }
             isProcessing = false
         }

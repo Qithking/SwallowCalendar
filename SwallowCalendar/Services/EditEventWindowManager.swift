@@ -7,13 +7,14 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class EditEventWindowManager {
+final class EditEventWindowManager: NSObject, NSWindowDelegate {
     static let shared = EditEventWindowManager()
 
     private var editWindow: NSWindow?
     private var isOpening = false
 
-    private init() {}
+    // 继承 NSObject 后与父类 designated init 同签名，需 override
+    private override init() {}
 
     func openEditWindow(event: CalendarEvent, calendarService: CalendarService, onDismiss: @escaping () -> Void, onSave: @escaping () -> Void = { }) {
         guard !isOpening else { return }
@@ -27,8 +28,9 @@ final class EditEventWindowManager {
         let editView = EditEventSheet(
             event: event,
             calendarService: calendarService,
-            onDismiss: {
-                self.editWindow?.close()
+            onDismiss: { [weak self] in
+                // E-8：弱引用闭包，打破 manager→window→rootView 闭包→manager 保留环
+                self?.editWindow?.close()
                 onDismiss()
             },
             onSave: {
@@ -48,6 +50,7 @@ final class EditEventWindowManager {
         )
         window.title = "修改事件"
         window.contentView = hostingView
+        window.delegate = self
         window.center()
         window.isReleasedWhenClosed = false
         window.makeKeyAndOrderFront(nil)
@@ -56,8 +59,8 @@ final class EditEventWindowManager {
         editWindow = window
     }
 
-    func closeEditWindow() {
-        editWindow?.close()
+    /// E-8：窗口红叉关闭时清空引用，打断 manager→window 保留链（红叉路径也断链）
+    func windowWillClose(_ notification: Notification) {
         editWindow = nil
     }
 }

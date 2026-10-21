@@ -79,6 +79,9 @@ struct CalendarEvent: Identifiable {
     let startDate: Date?
     let endDate: Date?
     let isAllDay: Bool
+    /// 所属日历的 EK identifier（B-9：同步插入时按 identifier 匹配日历，
+    /// 避免 title 同名/本地化差异取错日历）
+    let calendarID: String
     let calendarTitle: String
     let calendarColorHex: String
     /// 事件分类：系统、订阅、用户
@@ -97,21 +100,12 @@ struct CalendarEvent: Identifiable {
     let reminderMinutes: Int
     /// 用户选择的事件颜色（nil 时使用 calendarColorHex）
     let eventColorHex: String?
-
-    /// 是否为订阅日历（订阅日历不在用户事件列表中显示）
-    var isSubscription: Bool {
-        category == .subscription
-    }
+    /// B-25：EK 事件备注（仅系统日历同步拉取时填充，供 syncEvents 判分类/完成标记，
+    /// 避免循环内逐条 eventStore.event(withIdentifier:) 跨进程查询；其余路径为 nil）
+    var notes: String? = nil
 
     /// 是否有明确的开始时间（非全天事件）
     var hasTime: Bool {
         !isAllDay && startDate != nil
-    }
-    
-    /// 是否需要动态倒计时刷新（倒计时 < 1 天且有 startDate）
-    var needsDynamicCountdown: Bool {
-        guard let start = startDate else { return false }
-        let remainingTime = start.timeIntervalSinceNow
-        return remainingTime > 0 && remainingTime < 86400 // 大于 0 且小于 1 天
     }
 }

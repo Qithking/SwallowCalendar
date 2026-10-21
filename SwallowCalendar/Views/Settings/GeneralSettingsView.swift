@@ -117,6 +117,9 @@ struct GeneralSettingsView: View {
     }
 
     // 预览格式化器缓存：格式未变化时复用（body 每次求值都会调用本计算属性）
+    // V-25：标注 @MainActor 隔离——View 是 struct，非隔离 static var 在并发下有数据竞争；
+    // 访问方 body 与预览计算均在主线程，隔离到 MainActor 即可
+    @MainActor
     private static var previewFormatCache: (format: String, formatter: DateFormatter)?
 
     private var customFormatPreview: String {

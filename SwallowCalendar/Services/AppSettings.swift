@@ -172,7 +172,9 @@ final class AppSettings {
         var displayName: String {
             switch self {
             case .default: return "默认排序"
-            case .createTime: return "创建时间"
+            // V-24：实际按 startDate 排序（缓存事件无创建时间字段），
+            // 显示名改为"开始时间"使语义与行为一致；rawValue 保留兼容已持久化设置
+            case .createTime: return "开始时间"
             case .deadline: return "截止时间"
             case .priority: return "优先级"
             case .title: return "标题"
@@ -242,7 +244,7 @@ final class AppSettings {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            AppLogger.settings.error("更新登录项失败: \(String(describing: error), privacy: .public)")
+            AppLogger.settings.error("更新登录项失败: \(String(describing: error))")
         }
     }
 }

@@ -24,15 +24,26 @@ struct TaskInputView: View {
     @State private var taskReminderMinutes: Int = 10
     @State private var taskIsLunar = false
     @State private var showAttributeEditor = false
+    // V-7：用户手动修改过的属性标记——NLP 解析只覆盖未手动修改的字段，避免覆盖用户手选值
+    @State private var manuallyEditedDate = false
+    @State private var manuallyEditedColor = false
+    @State private var manuallyEditedPriority = false
+    @State private var manuallyEditedRecurrence = false
+    @State private var manuallyEditedReminder = false
+    @State private var manuallyEditedLunar = false
     @State private var createAsReminder = false  // 是否创建为系统提醒
-    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
+    // V-16：全天由用户显式控制，NLP"明天"解析为 00:00 不再被隐式误判为全天
+    @State private var taskIsAllDay = false
     @State private var nlpTask: Task<Void, Never>?
+
+    // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
+    private var themeAccent: Color { Color(hex: appSettings.accentColorHex) }
 
     var body: some View {
         VStack(spacing: 6) {
             HStack {
                 Image(systemName: "plus.circle.fill")
-                    .foregroundColor(accentColor)
+                    .foregroundColor(themeAccent)
                     .font(.system(size: 14))
 
                 TextField("输入待办，如：明天下午3点开会 红色 重要 每天循环", text: $inputText)
@@ -59,7 +70,7 @@ struct TaskInputView: View {
                     Button {
                         showAttributeEditor.toggle()
                     } label: {
-                        Image(systemName: showAttributeEditor ? "slider.horizontal.3" : "slider.horizontal.3")
+                        Image(systemName: "slider.horizontal.3")
                             .font(.system(size: 14))
                             .foregroundColor(.secondary)
                     }
@@ -71,7 +82,7 @@ struct TaskInputView: View {
                     } label: {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.system(size: 16))
-                            .foregroundColor(accentColor)
+                            .foregroundColor(themeAccent)
                     }
                     .buttonStyle(.plain)
                     .disabled(isProcessing)
@@ -82,7 +93,7 @@ struct TaskInputView: View {
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.clear)
-                    .stroke(accentColor.opacity(0.3), lineWidth: 1)
+                    .stroke(themeAccent.opacity(0.3), lineWidth: 1)
             )
 
             // 属性编辑面板
@@ -90,8 +101,10 @@ struct TaskInputView: View {
                 attributeEditor
             }
         }
-        .onChange(of: appSettings.accentColorHex) { _, newColor in
-            accentColor = Color(hex: newColor)
+        .onDisappear {
+            // V-15：面板关闭时取消残留的 NLP 防抖任务——200ms 后解析仍会
+            // 执行一次并覆盖已重置的状态
+            nlpTask?.cancel()
         }
     }
 
@@ -110,9 +123,26 @@ struct TaskInputView: View {
 
                 Spacer()
 
-                DatePicker("", selection: $taskDate, displayedComponents: [.date, .hourAndMinute])
-                    .labelsHidden()
-                    .scaleEffect(0.8)
+                // V-16：显式"全天"开关替代时分==0 隐式推断，用户可控可感知
+                HStack(spacing: 2) {
+                    Text("全天")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    Toggle("", isOn: $taskIsAllDay)
+                        .toggleStyle(.switch)
+                        .scaleEffect(0.6)
+                        .labelsHidden()
+                }
+                DatePicker(
+                    "",
+                    selection: Binding(
+                        get: { taskDate },
+                        set: { taskDate = $0; manuallyEditedDate = true }  // V-7：手选日期不被 NLP 覆盖
+                    ),
+                    displayedComponents: taskIsAllDay ? [.date] : [.date, .hourAndMinute]
+                )
+                .labelsHidden()
+                .scaleEffect(0.8)
             }
 
             // 第二行：农历开关 + 颜色选择
@@ -122,7 +152,10 @@ struct TaskInputView: View {
                     Text("农历")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
-                    Toggle("", isOn: $taskIsLunar)
+                    Toggle("", isOn: Binding(
+                        get: { taskIsLunar },
+                        set: { taskIsLunar = $0; manuallyEditedLunar = true }  // V-7：手选开关不被 NLP 覆盖
+                    ))
                         .toggleStyle(.switch)
                         .scaleEffect(0.65)
                 }
@@ -140,6 +173,7 @@ struct TaskInputView: View {
                             )
                             .onTapGesture {
                                 taskColor = taskColor == color ? nil : color
+                                manuallyEditedColor = true  // V-7：手选颜色不被 NLP 覆盖
                             }
                     }
                 }
@@ -152,7 +186,10 @@ struct TaskInputView: View {
                     Text("优先级")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
-                    Picker("", selection: $taskPriority) {
+                    Picker("", selection: Binding(
+                        get: { taskPriority },
+                        set: { taskPriority = $0; manuallyEditedPriority = true }  // V-7：手选优先级不被 NLP 覆盖
+                    )) {
                         ForEach(EventPriority.allCases, id: \.self) { p in
                             Text(p.displayName).tag(p)
                         }
@@ -169,7 +206,10 @@ struct TaskInputView: View {
                     Text("周期")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
-                    Picker("", selection: $taskRecurrence) {
+                    Picker("", selection: Binding(
+                        get: { taskRecurrence },
+                        set: { taskRecurrence = $0; manuallyEditedRecurrence = true }  // V-7：手选周期不被 NLP 覆盖
+                    )) {
                         Text("1次").tag(RecurrenceType.none)
                         Text("不限").tag(RecurrenceType.unlimited)
                         Text("每天").tag(RecurrenceType.daily)
@@ -190,7 +230,10 @@ struct TaskInputView: View {
                     Text("提醒")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
-                    Picker("", selection: $taskReminderMinutes) {
+                    Picker("", selection: Binding(
+                        get: { taskReminderMinutes },
+                        set: { taskReminderMinutes = $0; manuallyEditedReminder = true }  // V-7：手选提醒不被 NLP 覆盖
+                    )) {
                         Text("不提醒").tag(0)
                         Text("5分钟前").tag(5)
                         Text("10分钟前").tag(10)
@@ -228,12 +271,13 @@ struct TaskInputView: View {
         }
         let parsed = NLPTaskParser.parse(text)
         taskTitle = parsed.title
-        taskDate = parsed.date
-        taskColor = parsed.color
-        taskPriority = parsed.priority ?? .none
-        taskRecurrence = parsed.recurrence ?? .none
-        taskReminderMinutes = parsed.reminderMinutes ?? 10
-        taskIsLunar = parsed.isLunar
+        // V-7：仅覆盖用户未手动修改的字段，手选值不被 NLP 解析结果覆盖
+        if !manuallyEditedDate { taskDate = parsed.date }
+        if !manuallyEditedColor { taskColor = parsed.color }
+        if !manuallyEditedPriority { taskPriority = parsed.priority ?? .none }
+        if !manuallyEditedRecurrence { taskRecurrence = parsed.recurrence ?? .none }
+        if !manuallyEditedReminder { taskReminderMinutes = parsed.reminderMinutes ?? 10 }
+        if !manuallyEditedLunar { taskIsLunar = parsed.isLunar }
     }
 
     private func addTask() {
@@ -242,8 +286,9 @@ struct TaskInputView: View {
 
         isProcessing = true
 
-        let isAllDay = Calendar.current.component(.hour, from: taskDate) == 0
-            && Calendar.current.component(.minute, from: taskDate) == 0
+        // V-16：全天由用户开关决定——原"时分均为 0"推断会把 NLP 解析的
+        // "明天"（00:00）误判为全天事件，用户无感知
+        let isAllDay = taskIsAllDay
 
         Task { @MainActor in
             do {
@@ -265,7 +310,7 @@ struct TaskInputView: View {
                 resetTaskAttributes()
                 onTaskAdded?()
             } catch {
-                AppLogger.ui.error("任务添加失败: \(String(describing: error), privacy: .public)")
+                AppLogger.ui.error("任务添加失败: \(String(describing: error))")
             }
             isProcessing = false
         }
@@ -279,8 +324,16 @@ struct TaskInputView: View {
         taskRecurrence = .none
         taskReminderMinutes = 10
         taskIsLunar = false
+        taskIsAllDay = false
         createAsReminder = false
         showAttributeEditor = false
+        // V-7：重置手动修改标记，下一条任务的 NLP 解析恢复全字段覆盖
+        manuallyEditedDate = false
+        manuallyEditedColor = false
+        manuallyEditedPriority = false
+        manuallyEditedRecurrence = false
+        manuallyEditedReminder = false
+        manuallyEditedLunar = false
     }
 
 }

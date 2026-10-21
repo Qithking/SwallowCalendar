@@ -46,7 +46,7 @@ struct DataExportSettingsView: View {
             
             Section("数据管理") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("清除本地存储的事项数据，不会影响系统日历中的原始数据。")
+                    Text("清除系统日历与订阅的本地缓存，不会影响系统日历中的原始数据；你自建的事项与提醒会保留。")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     
@@ -116,7 +116,7 @@ struct DataExportSettingsView: View {
                 clearEventCache()
             }
         } message: {
-            Text("此操作将清除本地存储的所有事项数据，但不会影响系统日历中的原始数据。")
+            Text("此操作将清除系统日历与订阅的本地缓存，不会影响系统日历中的原始数据；自建事项与提醒缓存会保留。")
         }
     }
     
@@ -133,31 +133,33 @@ struct DataExportSettingsView: View {
     
     private func exportToICS() {
         isExporting = true
-        
+
         Task {
             do {
                 // 获取所有事项
                 let calendarService = CalendarService.shared
                 let now = Date()
-                let endDate = Calendar.current.date(byAdding: .year, value: 2, to: now)!
-                
-                // 获取所有启用的日历
+
+                // 获取所有启用的日历（modelContext 限主线程访问，数据收集保留在此处）
                 let descriptor = FetchDescriptor<CalendarPreference>()
                 let preferences = (try? modelContext.fetch(descriptor)) ?? []
                 let enabledCals = calendarService.enabledCalendars(preferences: preferences)
-                
-                let events = calendarService.fetchEvents(from: now, to: endDate, calendars: enabledCals)
-                
-                // 生成 ICS 内容
-                let icsContent = generateICS(events: events)
-                
-                // 保存到桌面
-                let desktopURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
-                let fileName = "SwallowCalendar_Export_\(formatDate(now)).ics"
-                let fileURL = desktopURL.appendingPathComponent(fileName)
-                
-                try icsContent.write(to: fileURL, atomically: true, encoding: .utf8)
-                
+
+                // V-4：导出范围改为全部时间——原"现在~+2 年"会漏掉历史与远期事项
+                let events = calendarService.fetchEvents(from: .distantPast, to: .distantFuture, calendars: enabledCals)
+
+                // V-4：ICS 生成与写盘是纯 CPU/IO 操作，移到后台线程执行，避免大量事件时卡顿主线程
+                try await Task.detached(priority: .userInitiated) {
+                    let icsContent = Self.generateICS(events: events)
+
+                    // 保存到桌面
+                    let desktopURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
+                    let fileName = "SwallowCalendar_Export_\(Self.formatDate(now)).ics"
+                    let fileURL = desktopURL.appendingPathComponent(fileName)
+
+                    try icsContent.write(to: fileURL, atomically: true, encoding: .utf8)
+                }.value
+
                 await MainActor.run {
                     isExporting = false
                     showExportSuccess = true
@@ -215,7 +217,7 @@ struct DataExportSettingsView: View {
         }
     }
     
-    private func generateICS(events: [CalendarEvent]) -> String {
+    private static func generateICS(events: [CalendarEvent]) -> String {
         var lines: [String] = [
             "BEGIN:VCALENDAR",
             "VERSION:2.0",
@@ -232,11 +234,10 @@ struct DataExportSettingsView: View {
             if let start = event.startDate {
                 if event.isAllDay {
                     lines.append("DTSTART;VALUE=DATE:\(formatICSDateOnly(start))")
-                    if let end = event.endDate {
-                        lines.append("DTEND;VALUE=DATE:\(formatICSDateOnly(end))")
-                    } else {
-                        lines.append("DTEND;VALUE=DATE:\(formatICSDateOnly(start))")
-                    }
+                    // V-5：RFC 5545 全天 DTEND 为 exclusive（不含当天），+1 天才能正确表示完整单日
+                    let inclusiveEnd = event.endDate ?? start
+                    let exclusiveEnd = Calendar.current.date(byAdding: .day, value: 1, to: inclusiveEnd) ?? inclusiveEnd
+                    lines.append("DTEND;VALUE=DATE:\(formatICSDateOnly(exclusiveEnd))")
                 } else {
                     lines.append("DTSTART:\(formatICSDate(start))")
                     if let end = event.endDate {
@@ -274,23 +275,26 @@ struct DataExportSettingsView: View {
         return formatter
     }()
     
-    private func formatICSDate(_ date: Date) -> String {
+    private static func formatICSDate(_ date: Date) -> String {
         return Self.icsDateFormatter.string(from: date)
     }
-    
-    private func formatICSDateOnly(_ date: Date) -> String {
+
+    private static func formatICSDateOnly(_ date: Date) -> String {
         return Self.icsDateOnlyFormatter.string(from: date)
     }
-    
-    private func escapeICSText(_ text: String) -> String {
+
+    private static func escapeICSText(_ text: String) -> String {
         text
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: ",", with: "\\,")
             .replacingOccurrences(of: ";", with: "\\;")
+            // V-34：RFC5545 文本中裸 CR 非法，\r 通常伴随 \n 出现（\n 已转义），
+            // 残余的单独 \r 直接移除
+            .replacingOccurrences(of: "\r", with: "")
             .replacingOccurrences(of: "\n", with: "\\n")
     }
     
-    private func formatDate(_ date: Date) -> String {
+    private static func formatDate(_ date: Date) -> String {
         return Self.fileNameDateFormatter.string(from: date)
     }
 }

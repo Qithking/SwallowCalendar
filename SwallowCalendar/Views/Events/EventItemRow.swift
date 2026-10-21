@@ -185,14 +185,6 @@ struct EventItemRow: View {
         }
     }
 
-    private var countdownColor: Color {
-        guard let start = event.startDate else { return .secondary }
-        let hours = start.timeIntervalSinceNow / 3600
-        if hours < 1 { return .red }
-        if hours < 24 { return .orange }
-        return .secondary
-    }
-
     /// 带主题色背景的倒计时标签（使用独立刷新机制）
     private var countdownBorderedView: some View {
         CountdownTextView(

@@ -11,7 +11,8 @@ struct CalendarHeaderView: View {
     @Binding var selectedDate: Date
 
     @State private var showMonthPicker = false
-    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
+    // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
+    private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
 
     private let calendar = Calendar.current
 
@@ -72,16 +73,18 @@ struct CalendarHeaderView: View {
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 6)
-        .onChange(of: appSettings.accentColorHex) { _, newColor in
-            accentColor = Color(hex: newColor)
-        }
     }
 
-    private var monthTitle: String {
+    // V-21：monthTitle 每次求值都新建 DateFormatter 开销大，提为静态缓存（仅主线程 body 使用）
+    private static let monthTitleFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "yyyy年M月"
-        return formatter.string(from: currentMonth)
+        return formatter
+    }()
+
+    private var monthTitle: String {
+        Self.monthTitleFormatter.string(from: currentMonth)
     }
 }
 
@@ -98,7 +101,8 @@ struct MonthYearPickerView: View {
     @State private var selectedYear: Int
     @State private var selectedMonth: Int
     @State private var yearText: String = ""
-    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
+    // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
+    private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
 
     init(currentMonth: Binding<Date>, selectedDate: Binding<Date>) {
         self._currentMonth = currentMonth
@@ -183,9 +187,6 @@ struct MonthYearPickerView: View {
             .padding(12)
         }
         .frame(width: 220)
-        .onChange(of: appSettings.accentColorHex) { _, newColor in
-            accentColor = Color(hex: newColor)
-        }
     }
 
     private func selectMonth(_ month: Int) {

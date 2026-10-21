@@ -31,7 +31,8 @@ struct CalendarDayCell: View {
     /// 进出格子只重渲染该格自身，不再触发父视图 42 格全网格重算（性能修复）
     @State private var isHovered = false
 
-    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
+    // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
+    private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
 
     /// 计算属性：判断是否有系统日历事件（非订阅、非用户）
     private var hasSystemEvents: Bool {
@@ -50,14 +51,14 @@ struct CalendarDayCell: View {
 
     // MARK: - Holiday/Work Marks
     
-    /// 是否显示"休"标记（标题包含"假期"或"（休）"）
+    /// V-35：兼容全角/半角括号的"休"标记（标题含"假期"或"(休)"）
     private var showRestMark: Bool {
-        eventItems.contains { $0.title.contains("假期") || $0.title.contains("（休）") }
+        eventItems.contains { $0.title.contains("假期") || $0.title.contains("（休）") || $0.title.contains("(休)") }
     }
-    
-    /// 是否显示"班"标记（标题包含"补班"或"（班）"）
+
+    /// V-35：兼容全角/半角括号的"班"标记（标题含"补班"或"(班)"）
     private var showWorkMark: Bool {
-        eventItems.contains { $0.title.contains("补班") || $0.title.contains("（班）") }
+        eventItems.contains { $0.title.contains("补班") || $0.title.contains("（班）") || $0.title.contains("(班)") }
     }
 
     var body: some View {
@@ -104,9 +105,6 @@ struct CalendarDayCell: View {
             .background(backgroundShape)
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
-            .onChange(of: appSettings.accentColorHex) { _, newColor in
-                accentColor = Color(hex: newColor)
-            }
 
             // 休/班标记（右上角）
             if showRestMark || showWorkMark {

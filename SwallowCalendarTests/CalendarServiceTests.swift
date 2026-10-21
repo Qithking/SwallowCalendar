@@ -18,6 +18,36 @@ class CalendarServiceTests: XCTestCase {
     override func tearDownWithError() throws {
         calendarService = nil
     }
+
+    // MARK: - 推进逻辑单点维护 helper
+
+    /// 5 个推进测试共用的循环推进 helper（单点维护）：逐周期 +1 推进直到超过 now。
+    /// monthly 为逐月 +1 的朴素语义，与主代码 B-16 的锚定构造（nextAnchoredMonthlyDate）
+    /// 不同——这里只收敛测试重复，不改变测试语义
+    private func advanceUntilFuture(
+        from date: Date,
+        recurrenceType: RecurrenceType,
+        until now: Date
+    ) -> Date {
+        let calendar = Calendar.current
+        var tempDate = date
+        while tempDate <= now {
+            switch recurrenceType {
+            // .unlimited 语义为无结束日期的每日重复，与主代码 getNextGregorianDate 一致按天推进
+            case .daily, .unlimited:
+                tempDate = calendar.date(byAdding: .day, value: 1, to: tempDate) ?? tempDate
+            case .weekly:
+                tempDate = calendar.date(byAdding: .weekOfYear, value: 1, to: tempDate) ?? tempDate
+            case .monthly:
+                tempDate = calendar.date(byAdding: .month, value: 1, to: tempDate) ?? tempDate
+            case .yearly:
+                tempDate = calendar.date(byAdding: .year, value: 1, to: tempDate) ?? tempDate
+            case .none, .custom:
+                break
+            }
+        }
+        return tempDate
+    }
     
     // MARK: - 周期任务时间验证测试
     
@@ -42,29 +72,13 @@ class CalendarServiceTests: XCTestCase {
         let pastDate = calendar.date(byAdding: .hour, value: -5, to: now)!
         
         // When: 推进到下一个周期
-        var tempDate = pastDate
-        let recurrenceType: RecurrenceType = .daily
-        
-        while tempDate <= now {
-            switch recurrenceType {
-            case .daily:
-                tempDate = calendar.date(byAdding: .day, value: 1, to: tempDate) ?? tempDate
-            case .weekly:
-                tempDate = calendar.date(byAdding: .weekOfYear, value: 1, to: tempDate) ?? tempDate
-            case .monthly:
-                tempDate = calendar.date(byAdding: .month, value: 1, to: tempDate) ?? tempDate
-            case .yearly:
-                tempDate = calendar.date(byAdding: .year, value: 1, to: tempDate) ?? tempDate
-            case .none, .custom:
-                break
-            }
-        }
+        let tempDate = advanceUntilFuture(from: pastDate, recurrenceType: .daily, until: now)
         
         // Then: 推进后的时间应该在当前时间之后
         XCTAssertGreaterThan(tempDate, now, "周期任务时间应该推进到未来")
         
         // 验证推进的天数正确（应该推进了1天）
-        let daysAdded = calendar.dateComponents([.day], from: pastDate, to: tempDate).day
+        let daysAdded = calendar.dateComponents([.day], from: pastDate, to: tempDate).day ?? 0
         XCTAssertGreaterThanOrEqual(daysAdded, 1, "至少应该推进1天")
     }
     
@@ -76,29 +90,13 @@ class CalendarServiceTests: XCTestCase {
         let pastDate = calendar.date(byAdding: .day, value: -3, to: now)!
         
         // When: 推进到下一个周期
-        var tempDate = pastDate
-        let recurrenceType: RecurrenceType = .weekly
-        
-        while tempDate <= now {
-            switch recurrenceType {
-            case .daily:
-                tempDate = calendar.date(byAdding: .day, value: 1, to: tempDate) ?? tempDate
-            case .weekly:
-                tempDate = calendar.date(byAdding: .weekOfYear, value: 1, to: tempDate) ?? tempDate
-            case .monthly:
-                tempDate = calendar.date(byAdding: .month, value: 1, to: tempDate) ?? tempDate
-            case .yearly:
-                tempDate = calendar.date(byAdding: .year, value: 1, to: tempDate) ?? tempDate
-            case .none, .custom:
-                break
-            }
-        }
+        let tempDate = advanceUntilFuture(from: pastDate, recurrenceType: .weekly, until: now)
         
         // Then: 推进后的时间应该在当前时间之后
         XCTAssertGreaterThan(tempDate, now, "周期任务时间应该推进到未来")
         
         // 验证推进的周数正确（应该推进了1周）
-        let weeksAdded = calendar.dateComponents([.weekOfYear], from: pastDate, to: tempDate).weekOfYear
+        let weeksAdded = calendar.dateComponents([.weekOfYear], from: pastDate, to: tempDate).weekOfYear ?? 0
         XCTAssertGreaterThanOrEqual(weeksAdded, 1, "至少应该推进1周")
     }
     
@@ -110,29 +108,13 @@ class CalendarServiceTests: XCTestCase {
         let pastDate = calendar.date(byAdding: .month, value: -2, to: now)!
         
         // When: 推进到下一个周期
-        var tempDate = pastDate
-        let recurrenceType: RecurrenceType = .monthly
-        
-        while tempDate <= now {
-            switch recurrenceType {
-            case .daily:
-                tempDate = calendar.date(byAdding: .day, value: 1, to: tempDate) ?? tempDate
-            case .weekly:
-                tempDate = calendar.date(byAdding: .weekOfYear, value: 1, to: tempDate) ?? tempDate
-            case .monthly:
-                tempDate = calendar.date(byAdding: .month, value: 1, to: tempDate) ?? tempDate
-            case .yearly:
-                tempDate = calendar.date(byAdding: .year, value: 1, to: tempDate) ?? tempDate
-            case .none, .custom:
-                break
-            }
-        }
+        let tempDate = advanceUntilFuture(from: pastDate, recurrenceType: .monthly, until: now)
         
         // Then: 推进后的时间应该在当前时间之后
         XCTAssertGreaterThan(tempDate, now, "周期任务时间应该推进到未来")
         
         // 验证推进的月数正确（应该推进了3个月）
-        let monthsAdded = calendar.dateComponents([.month], from: pastDate, to: tempDate).month
+        let monthsAdded = calendar.dateComponents([.month], from: pastDate, to: tempDate).month ?? 0
         XCTAssertGreaterThanOrEqual(monthsAdded, 1, "至少应该推进1月")
     }
     
@@ -144,29 +126,13 @@ class CalendarServiceTests: XCTestCase {
         let pastDate = calendar.date(byAdding: .year, value: -1, to: now)!
         
         // When: 推进到下一个周期
-        var tempDate = pastDate
-        let recurrenceType: RecurrenceType = .yearly
-        
-        while tempDate <= now {
-            switch recurrenceType {
-            case .daily:
-                tempDate = calendar.date(byAdding: .day, value: 1, to: tempDate) ?? tempDate
-            case .weekly:
-                tempDate = calendar.date(byAdding: .weekOfYear, value: 1, to: tempDate) ?? tempDate
-            case .monthly:
-                tempDate = calendar.date(byAdding: .month, value: 1, to: tempDate) ?? tempDate
-            case .yearly:
-                tempDate = calendar.date(byAdding: .year, value: 1, to: tempDate) ?? tempDate
-            case .none, .custom:
-                break
-            }
-        }
-        
+        let tempDate = advanceUntilFuture(from: pastDate, recurrenceType: .yearly, until: now)
+
         // Then: 推进后的时间应该在当前时间之后
         XCTAssertGreaterThan(tempDate, now, "周期任务时间应该推进到未来")
-        
+
         // 验证推进的年数正确（应该推进了1年）
-        let yearsAdded = calendar.dateComponents([.year], from: pastDate, to: tempDate).year
+        let yearsAdded = calendar.dateComponents([.year], from: pastDate, to: tempDate).year ?? 0
         XCTAssertGreaterThanOrEqual(yearsAdded, 1, "至少应该推进1年")
     }
     
@@ -198,27 +164,10 @@ class CalendarServiceTests: XCTestCase {
     /// 测试：边界情况 - 当前时间等于开始时间
     func testRecurrenceTimeEqualsNow() {
         // Given: 当前时间
-        let calendar = Calendar.current
         let now = Date()
         
-        // When: 推进到下一个周期
-        var tempDate = now
-        let recurrenceType: RecurrenceType = .daily
-        
-        while tempDate <= now {
-            switch recurrenceType {
-            case .daily:
-                tempDate = calendar.date(byAdding: .day, value: 1, to: tempDate) ?? tempDate
-            case .weekly:
-                tempDate = calendar.date(byAdding: .weekOfYear, value: 1, to: tempDate) ?? tempDate
-            case .monthly:
-                tempDate = calendar.date(byAdding: .month, value: 1, to: tempDate) ?? tempDate
-            case .yearly:
-                tempDate = calendar.date(byAdding: .year, value: 1, to: tempDate) ?? tempDate
-            case .none, .custom:
-                break
-            }
-        }
+        // When: 推进到下一个周期（恰好等于 now 时也应推进）
+        let tempDate = advanceUntilFuture(from: now, recurrenceType: .daily, until: now)
         
         // Then: 推进后的时间应该严格大于当前时间
         XCTAssertGreaterThan(tempDate, now, "等于当前时间时也应该推进")

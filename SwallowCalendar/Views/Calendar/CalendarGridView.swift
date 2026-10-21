@@ -282,7 +282,6 @@ struct CalendarGridView: View {
     let calendarPreferences: [CalendarPreference]
 
     @State private var currentMonth = Date()
-    @Query private var cachedEvents: [CachedEvent]
 
     private let calendar = Calendar.current
     private let weekDaySymbols: [String] = {
@@ -339,53 +338,19 @@ struct CalendarGridView: View {
     // MARK: - Date Grid
 
     private var dateGrid: some View {
-        let days = daysInMonth()
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
-        let events = cachedEvents
-        let enabledCalendarIDs = Set(calendarPreferences.filter { $0.isEnabled }.map { $0.calendarID })
-        let importantCalendarID = calendarPreferences.first { $0.isImportant }?.calendarID
-        let hasImportantSource = customSources.contains { $0.isImportant && $0.isEnabled }
-
-        return LazyVGrid(columns: columns, spacing: 2) {
-            ForEach(days, id: \.self) { date in
-                let dayEvents = eventsForDay(date, from: events, enabledCalendarIDs: enabledCalendarIDs)
-                let isImportant = isDayImportant(date, dayEvents: dayEvents, importantCalendarID: importantCalendarID, hasImportantSource: hasImportantSource)
-
-                CalendarDayCell(
-                    date: date,
-                    isSelected: calendar.isDate(date, inSameDayAs: selectedDate),
-                    isToday: calendar.isDateInToday(date),
-                    isCurrentMonth: calendar.isDate(date, equalTo: currentMonth, toGranularity: .month),
-                    lunarText: LunarCalendarHelper.lunarString(for: date),
-                    eventItems: dayEvents.map { CalendarEventItem(title: $0.title, colorHex: $0.eventColorHex ?? $0.calendarColorHex, category: $0.category.rawValue, timeText: Self.popoverTimeText(for: $0)) },
-                    systemCalendarColor: systemCalendarColor(),
-                    subscriptionCalendarColor: subscriptionCalendarColor(),
-                    isImportant: isImportant
-                )
-                .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        selectedDate = date
-                    }
-                }
-            }
-        }
+        // V-9：@Query 下沉到子视图并以展示月为查询窗口（视图随 currentMonth 重建时
+        // 谓词同步更新），避免全表加载后在 30+ 个日期格内重复过滤
+        MonthEventGrid(
+            month: currentMonth,
+            selectedDate: $selectedDate,
+            days: daysInMonth(),
+            enabledCalendarIDs: Set(calendarPreferences.filter { $0.isEnabled }.map { $0.calendarID }),
+            importantCalendarID: calendarPreferences.first { $0.isImportant }?.calendarID,
+            hasImportantSource: customSources.contains { $0.isImportant && $0.isEnabled }
+        )
     }
 
     // MARK: - Helpers
-
-    private static let popoverTimeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "HH:mm"
-        return formatter
-    }()
-
-    /// hover 弹窗事件行时间文本：全天显示"全天"，定时事件显示开始时间，无开始时间返回 nil
-    private static func popoverTimeText(for event: CachedEvent) -> String? {
-        if event.isAllDay { return "全天" }
-        guard let start = event.startDate else { return nil }
-        return popoverTimeFormatter.string(from: start)
-    }
 
     private func daysInMonth() -> [Date] {
         guard let monthRange = calendar.range(of: .day, in: .month, for: currentMonth) else {
@@ -429,19 +394,101 @@ struct CalendarGridView: View {
 
         return days
     }
+}
 
-    /// 获取系统日历分类颜色
-    private func systemCalendarColor() -> Color {
-        return Color(hex: appSettings.systemCalendarColorHex)
+// MARK: - 月度事件网格（V-9：@Query 携带展示月窗口谓词）
+
+/// 承载月视图日期网格与事件查询的子视图。
+/// @Query 谓词在 init 中按 month 构建视图窗口（视图随 currentMonth 变化重建时谓词同步更新），
+/// 避免父视图全表加载后在每个日期格内重复过滤。
+private struct MonthEventGrid: View {
+    @Environment(AppSettings.self) private var appSettings
+    let month: Date
+    @Binding var selectedDate: Date
+    let days: [Date]
+    let enabledCalendarIDs: Set<String>
+    let importantCalendarID: String?
+    let hasImportantSource: Bool
+
+    @Query private var cachedEvents: [CachedEvent]
+
+    private let calendar = Calendar.current
+
+    init(month: Date, selectedDate: Binding<Date>, days: [Date], enabledCalendarIDs: Set<String>, importantCalendarID: String?, hasImportantSource: Bool) {
+        self.month = month
+        _selectedDate = selectedDate
+        self.days = days
+        self.enabledCalendarIDs = enabledCalendarIDs
+        self.importantCalendarID = importantCalendarID
+        self.hasImportantSource = hasImportantSource
+
+        // 查询窗口覆盖 days 数组全部范围：当月 1 日前扩 7 天、后扩 38 天
+        //（最长 31 天月 + 7 天尾部补位），保证上月末/下月初格子的跨天事件可见
+        let firstDay = calendar.date(from: calendar.dateComponents([.year, .month], from: month))!
+        let windowStart = calendar.date(byAdding: .day, value: -7, to: firstDay)!
+        let windowEnd = calendar.date(byAdding: .day, value: 38, to: firstDay)!
+        // 哨兵日期用局部常量捕获：#Predicate 宏内不支持隐式成员访问（.distantPast），
+        // 会展开成静态成员 keypath 导致类型推断失败
+        let distantPast = Date.distantPast
+        let distantFuture = Date.distantFuture
+        // Query 初始化器参数标签是 filter/sort（predicate 是 FetchDescriptor 的标签）
+        let predicate = #Predicate<CachedEvent> { event in
+            (event.startDate ?? distantPast) < windowEnd
+                && (event.endDate ?? distantFuture) > windowStart
+        }
+        _cachedEvents = Query(
+            filter: predicate,
+            sort: [SortDescriptor(\.startDate)]
+        )
     }
 
-    /// 获取自定义日历分类颜色
-    private func subscriptionCalendarColor() -> Color {
-        return Color(hex: appSettings.subscriptionCalendarColorHex)
+    var body: some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
+        let events = cachedEvents
+
+        LazyVGrid(columns: columns, spacing: 2) {
+            ForEach(days, id: \.self) { date in
+                let dayEvents = eventsForDay(date, from: events)
+                let isImportant = isDayImportant(date, dayEvents: dayEvents)
+
+                CalendarDayCell(
+                    date: date,
+                    isSelected: calendar.isDate(date, inSameDayAs: selectedDate),
+                    isToday: calendar.isDateInToday(date),
+                    isCurrentMonth: calendar.isDate(date, equalTo: month, toGranularity: .month),
+                    lunarText: LunarCalendarHelper.lunarString(for: date),
+                    eventItems: dayEvents.map { CalendarEventItem(title: $0.title, colorHex: $0.eventColorHex ?? $0.calendarColorHex, category: $0.category.rawValue, timeText: Self.popoverTimeText(for: $0)) },
+                    systemCalendarColor: Color(hex: appSettings.systemCalendarColorHex),
+                    subscriptionCalendarColor: Color(hex: appSettings.subscriptionCalendarColorHex),
+                    isImportant: isImportant
+                )
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        selectedDate = date
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Helpers
+
+    private static let popoverTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    /// hover 弹窗事件行时间文本：全天显示"全天"，定时事件显示开始时间，无开始时间返回 nil
+    private static func popoverTimeText(for event: CachedEvent) -> String? {
+        if event.isAllDay { return "全天" }
+        guard let start = event.startDate else { return nil }
+        return popoverTimeFormatter.string(from: start)
     }
 
     /// 从 CachedEvent 列表中筛选指定日期的事件
-    private func eventsForDay(_ date: Date, from events: [CachedEvent], enabledCalendarIDs: Set<String>) -> [CachedEvent] {
+    private func eventsForDay(_ date: Date, from events: [CachedEvent]) -> [CachedEvent] {
         let startOfDay = calendar.startOfDay(for: date)
         let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
         return events.filter { event in
@@ -455,7 +502,7 @@ struct CalendarGridView: View {
     }
 
     /// 判断指定日期是否为重要日期
-    private func isDayImportant(_ date: Date, dayEvents: [CachedEvent], importantCalendarID: String?, hasImportantSource: Bool) -> Bool {
+    private func isDayImportant(_ date: Date, dayEvents: [CachedEvent]) -> Bool {
         guard importantCalendarID != nil || hasImportantSource else { return false }
         if let calID = importantCalendarID {
             if dayEvents.contains(where: { $0.category == .system && $0.calendarID == calID }) {

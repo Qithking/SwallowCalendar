@@ -8,7 +8,8 @@ import AppKit
 
 struct AboutSettingsView: View {
     @Environment(AppSettings.self) private var appSettings
-    @StateObject private var updateChecker = UpdateChecker.shared
+    // N-11：单例存活期长于视图，@StateObject 语义误用，应为 @ObservedObject
+    @ObservedObject private var updateChecker = UpdateChecker.shared
 
     var body: some View {
         VStack(spacing: 20) {
@@ -168,7 +169,8 @@ struct AboutSettingsView: View {
     }
 
     private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        // N-10：回退值与 UpdateChecker 统一为 "0.0.0"，保证关于页与更新比对基准一致
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
     }
 
     private var appBuild: String {

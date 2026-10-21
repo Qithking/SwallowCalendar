@@ -10,6 +10,8 @@ import SwiftUI
 
 // MARK: - 提醒弹窗窗口（borderless 圆角，支持成为 key 窗口以响应键盘）
 
+// E-12：NSWindow 本身主线程隔离，显式标注对齐类型系统保证
+@MainActor
 final class ReminderAlertWindow: NSWindow {
     override var canBecomeKey: Bool { true }
 }
@@ -61,7 +63,8 @@ final class ReminderAlertWindowController {
         window.contentView = hostingView
 
         // 定位到屏幕右上角（与原 NSAlert 逻辑一致：上边距 20、右边距 20）
-        let screen = NSApp.keyWindow?.screen ?? NSScreen.main ?? NSScreen.screens.first
+        // V-26：固定用主屏——keyWindow 可能是即将关闭的弹窗自身，会导致定位漂移
+        let screen = NSScreen.main ?? NSScreen.screens.first
         if let visibleFrame = screen?.visibleFrame {
             window.setFrameOrigin(NSPoint(
                 x: visibleFrame.maxX - width - 20,
@@ -88,7 +91,8 @@ struct ReminderAlertView: View {
     let onDismiss: () -> Void
     let onCompleteAll: () -> Void
 
-    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
+    // V-18：直接读共享设置的主题色（弹窗为独立窗口，无 appSettings 环境可注入）
+    private var accentColor: Color { Color(hex: AppSettings.shared.accentColorHex) }
 
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()

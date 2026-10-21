@@ -21,11 +21,20 @@ final class ReminderAlertService {
     private static let alertedEventIDsKey = "ReminderAlertService.lastAlertedEventIDs"
     /// 已提醒事件ID的最大缓存数量
     private let maxAlertedEventIDs = 1000
+    /// 持久化上次检查时间的 UserDefaults 键（B-14）
+    private static let lastCheckTimeKey = "ReminderAlertService.lastCheckTime"
+    /// 上次检查时间（B-14：挂起/睡眠恢复后以"上次检查~now"为提醒窗口，避免漏提醒）
+    private var lastCheckTime: Date?
     
     private init() {
         // 从 UserDefaults 恢复已提醒事件ID，避免应用重启后重复弹窗
         if let saved = UserDefaults.standard.stringArray(forKey: Self.alertedEventIDsKey) {
             self.lastAlertedEventIDs = saved
+        }
+        // B-14：恢复上次检查时间，重启后窗口下界不回退到"无记录"状态
+        let savedTime = UserDefaults.standard.double(forKey: Self.lastCheckTimeKey)
+        if savedTime > 0 {
+            self.lastCheckTime = Date(timeIntervalSince1970: savedTime)
         }
     }
     
@@ -80,11 +89,28 @@ final class ReminderAlertService {
         // 这种方式可以避免 SwiftData Predicate 的复杂语法问题
         // EventCategory.user.rawValue 的值是 "用户"（中文字符串）
         let userCategory = "用户"
+        // B-27：把提醒时间窗口换算为 startDate 窗口下沉到谓词粗筛，避免每分钟全表拉取。
+        // alertTime = startDate - reminderMinutes*60（reminderMinutes ≥ 0，UI 上限 1440 分钟），
+        // 因此 alertTime ∈ [windowLower, now] 的必要条件是
+        // startDate ∈ [windowLower, now + 1440 分钟]，精确判定仍由下方内存过滤完成。
+        // 常规检查下界为 B-14 的 lastCheckTime 窗口（无记录回退 90 秒）；
+        // includeExpired 需覆盖全部已过期提醒，下界放开
+        let maxReminderLeadSeconds: TimeInterval = 1440 * 60
+        let fetchUpperBound = now.addingTimeInterval(maxReminderLeadSeconds)
+        let windowStart = lastCheckTime ?? calendar.date(byAdding: .second, value: -90, to: now)!
+        let fetchLowerBound = includeExpired ? Date.distantPast : windowStart
+        // 哨兵日期用局部常量捕获：#Predicate 宏内直接写 Date.distantPast 会展开成
+        // 静态成员 keypath（Value<Date.Type>），既不符合 StandardPredicateExpression，
+        // 还会使复杂合取表达式的类型推断超时；局部常量捕获后转为 Value 表达式
+        let distantPast = Date.distantPast
+        let distantFuture = Date.distantFuture
         let baseDescriptor = FetchDescriptor<CachedEvent>(
             predicate: #Predicate {
                 $0.categoryRaw == userCategory &&
                 !$0.isCompleted &&
-                $0.startDate != nil
+                $0.startDate != nil &&
+                ($0.startDate ?? distantPast) >= fetchLowerBound &&
+                ($0.startDate ?? distantFuture) <= fetchUpperBound
             },
             sortBy: [SortDescriptor(\.startDate)]
         )
@@ -112,8 +138,10 @@ final class ReminderAlertService {
                     guard event.reminderMinutes > 0 else { return false }
                     let alertTime = startDate.addingTimeInterval(TimeInterval(-event.reminderMinutes * 60))
                     // 提醒时间已到达，且事件尚未过期（避免重复提醒已过期事项）
-                    // 窗口设为 90 秒，配合 60 秒定时器确保不遗漏
-                    let windowStart = calendar.date(byAdding: .second, value: -90, to: now)!
+                    // B-14：窗口下界改用持久化的上次检查时间——应用挂起/睡眠超 90 秒后，
+                    // 原固定 90 秒窗口会把挂起期间到期的事件滤掉导致漏提醒；
+                    // 无记录时回退 90 秒窗口（保持冷启动既有行为，配合 60 秒定时器确保不遗漏）
+                    let windowStart = lastCheckTime ?? calendar.date(byAdding: .second, value: -90, to: now)!
                     return alertTime <= now && alertTime >= windowStart
                 }
             }
@@ -123,7 +151,7 @@ final class ReminderAlertService {
             
             if newEvents.count > 0 {
                 for event in newEvents {
-                    AppLogger.reminder.info("到期提醒弹出 id=\(event.eventID, privacy: .public) start=\(event.startDate.map { String($0.timeIntervalSince1970) } ?? "nil", privacy: .public) reminderMinutes=\(event.reminderMinutes) isReminder=\(event.isReminder)")
+                    AppLogger.reminder.info("到期提醒弹出 id=\(event.eventID) start=\(event.startDate.map { String($0.timeIntervalSince1970) } ?? "nil") reminderMinutes=\(event.reminderMinutes) isReminder=\(event.isReminder)")
                 }
                 // 合并显示所有到期/即将到期的事项
                 let isExpired = includeExpired || newEvents.allSatisfy { ($0.startDate ?? now) < now }
@@ -140,13 +168,21 @@ final class ReminderAlertService {
                 trimAlertedEventIDsIfNeeded()
                 // 5分钟后允许再次提醒
                 DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak self] in
-                    newEvents.forEach { event in
-                        self?.lastAlertedEventIDs.removeAll { $0 == event.eventID }
+                    guard let self else { return }
+                    // B-29：移除后同步持久化——原实现只改内存数组，重启后
+                    // UserDefaults 仍含旧 ID，5 分钟重提醒窗口失效
+                    for event in newEvents {
+                        self.lastAlertedEventIDs.removeAll { $0 == event.eventID }
                     }
+                    self.persistAlertedEventIDs()
                 }
             }
+            // B-14：本次检查已覆盖到 now，记录检查时间作为下次检查（含挂起恢复后）的窗口下界；
+            // 仅在 fetch 成功后更新，失败时保留旧值以免跳过失败区间的提醒
+            lastCheckTime = now
+            UserDefaults.standard.set(now.timeIntervalSince1970, forKey: Self.lastCheckTimeKey)
         } catch {
-            AppLogger.reminder.error("检查到期事件失败: \(String(describing: error), privacy: .public)")
+            AppLogger.reminder.error("检查到期事件失败: \(String(describing: error))")
         }
     }
     
@@ -154,7 +190,9 @@ final class ReminderAlertService {
     private func showCombinedAlert(for events: [CachedEvent], isExpired: Bool) {
         ReminderAlertWindowController.shared.show(events: events, isExpired: isExpired) {
             Task { @MainActor in
-                for event in events {
+                // B-15：仅标记已开始的实例——"提醒时间已到但事件尚未开始"（startDate > now）
+                // 的实例被提前标完成会错误推进周期任务序列
+                for event in events where (event.startDate ?? Date()) <= Date() {
                     await self.markAsCompleted(eventID: event.eventID)
                 }
             }
@@ -181,7 +219,7 @@ final class ReminderAlertService {
                 AppLogger.reminder.info("已标记事件完成: \(eventID)")
             }
         } catch {
-            AppLogger.reminder.error("标记完成失败: \(String(describing: error), privacy: .public)")
+            AppLogger.reminder.error("标记完成失败: \(String(describing: error))")
         }
     }
     
@@ -198,12 +236,6 @@ final class ReminderAlertService {
             lastAlertedEventIDs.removeFirst(overflow)
             AppLogger.reminder.info("清理了 \(overflow) 个过期提醒记录")
         }
-        persistAlertedEventIDs()
-    }
-    
-    /// 清除已提醒记录（用于重置）
-    func clearAlertHistory() {
-        lastAlertedEventIDs.removeAll()
         persistAlertedEventIDs()
     }
 }

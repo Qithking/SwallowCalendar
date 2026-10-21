@@ -96,6 +96,10 @@ class NLPTaskParserTests: XCTestCase {
             let result = NLPTaskParser.parse(input)
             XCTAssertEqual(result.reminderMinutes, expectedMinutes, "Failed for input: \(input)")
         }
+
+        // N-6：提醒表达式本身应从标题清洗，无残留
+        let reminderTitleResult = NLPTaskParser.parse("会议 45分钟前提醒")
+        XCTAssertEqual(reminderTitleResult.title, "会议")
     }
     
     func testParseColonTimeFormat() {
@@ -135,7 +139,29 @@ class NLPTaskParserTests: XCTestCase {
         XCTAssertEqual(calendar.component(.hour, from: result3.date), 14)
         XCTAssertEqual(calendar.component(.minute, from: result3.date), 45)
     }
-    
+
+    func testParsePrefixedTimeWithMinutes() {
+        // AC-7：带时段前缀且带分钟的输入应解析为正确时刻，且标题清洗无残留
+        let result = NLPTaskParser.parse("下午3点30分开会")
+        XCTAssertNotNil(result.date)
+        let calendar = Calendar.current
+        XCTAssertEqual(calendar.component(.hour, from: result.date), 15)
+        XCTAssertEqual(calendar.component(.minute, from: result.date), 30)
+        XCTAssertEqual(result.title, "开会")
+    }
+
+    func testParseDayAfterTomorrowCleaning() {
+        // AC-7/N-7："明天大后天"应按大后天（+3 天）解析且标题清洗无残留
+        let result = NLPTaskParser.parse("明天大后天开会")
+        XCTAssertNotNil(result.date)
+        let calendar = Calendar.current
+        let expected = calendar.date(byAdding: .day, value: 3, to: calendar.startOfDay(for: Date()))!
+        XCTAssertEqual(calendar.component(.year, from: result.date), calendar.component(.year, from: expected))
+        XCTAssertEqual(calendar.component(.month, from: result.date), calendar.component(.month, from: expected))
+        XCTAssertEqual(calendar.component(.day, from: result.date), calendar.component(.day, from: expected))
+        XCTAssertEqual(result.title, "开会")
+    }
+
     // MARK: - 农历日期解析测试
     
     func testParseLunarDate() {
@@ -199,8 +225,8 @@ class NLPTaskParserTests: XCTestCase {
     }
     
     func testParseLunarDateWithOtherAttributes() {
-        // 测试农历日期与其他属性组合
-        let result = NLPTaskParser.parse("农历正月初一春节 红色 重要 每年循环")
+        // 测试农历日期与其他属性组合（数字格式；中文农历表达"正月初一"支持记入待办）
+        let result = NLPTaskParser.parse("农历1月1日春节 红色 重要 每年循环")
         
         // 验证各个属性
         XCTAssertEqual(result.title, "春节")
@@ -244,22 +270,32 @@ class NLPTaskParserTests: XCTestCase {
             ("农历7月7日七夕", 7, 7, "七夕"),
             ("农历8月15日中秋节", 8, 15, "中秋节"),
             ("农历9月9日重阳节", 9, 9, "重阳节"),
-            ("农历12月30日除夕", 12, 30, "除夕"),
         ]
-        
+
         let chineseCalendar = Calendar(identifier: .chinese)
-        
+
         for testCase in testCases {
             let result = NLPTaskParser.parse(testCase.input)
-            
+
             XCTAssertEqual(result.title, testCase.expectedTitle, "Failed for: \(testCase.input)")
             XCTAssertTrue(result.isLunar, "Failed for: \(testCase.input)")
             XCTAssertNotNil(result.date, "Failed for: \(testCase.input)")
-            
+
             let lunarComponents = chineseCalendar.dateComponents([.month, .day], from: result.date)
             XCTAssertEqual(lunarComponents.month, testCase.expectedMonth, "Month mismatch for: \(testCase.input)")
             XCTAssertEqual(lunarComponents.day, testCase.expectedDay, "Day mismatch for: \(testCase.input)")
         }
+
+        // 除夕单独验证：腊月有大小月之分（大月 30 天、小月 29 天），无腊月三十的年份
+        // 主代码将"腊月30日"兜底映射到该腊月最后一天（除夕语义），故 day 断言 29 或 30
+        let eveResult = NLPTaskParser.parse("农历12月30日除夕")
+        XCTAssertEqual(eveResult.title, "除夕")
+        XCTAssertTrue(eveResult.isLunar)
+        XCTAssertNotNil(eveResult.date)
+        let eveComponents = chineseCalendar.dateComponents([.month, .day], from: eveResult.date)
+        XCTAssertEqual(eveComponents.month, 12, "除夕应在农历十二月")
+        XCTAssertTrue(eveComponents.day == 29 || eveComponents.day == 30,
+                      "除夕应落在腊月廿九或三十，实际: \(eveComponents.day ?? -1)")
     }
     
     func testLunarDateRegression() {

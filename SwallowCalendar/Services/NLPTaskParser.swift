@@ -25,6 +25,18 @@ struct NLPTaskParser {
         catch { fatalError("Invalid lunarRegex pattern: \(error)") }
     }()
 
+    // MARK: - 解析用 Calendar（N-15：提为静态常量，避免每次解析重复构造）
+    /// "周X/星期X"匹配用：固定周日=1，不受用户 firstWeekday 设置影响
+    private static let weekdayCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.firstWeekday = 1
+        return calendar
+    }()
+    /// 农历日期换算用
+    private static let chineseCalendar = Calendar(identifier: .chinese)
+    /// 农历解析中公历日期推算用
+    private static let gregorianCalendar = Calendar.current
+
     /// 解析自然语言输入，返回任务详情
     static func parse(_ input: String) -> ParsedTask {
         let trimmed = input.trimmingCharacters(in: .whitespaces)
@@ -120,7 +132,54 @@ struct NLPTaskParser {
                 }
             }
         }
-        // 匹配 X点X分 格式（不带上午/下午前缀，如 20点15, 9点30分）
+        // 匹配带时段前缀的时间格式，如"下午3点"、"上午9点"、"晚上8点15分"
+        // N-1：带前缀分支必须先于无前缀分支，否则"下午3点30分"被无前缀正则
+        // 先拦截解析为 03:30，且带分钟输入令原带前缀分支永不可达
+        // E-13：前缀组必选——可选时"晚上开会3点"类输入会从"3点"处匹配而丢失前缀
+        else if let timeMatch = input.range(of: "(上午|下午|晚上|凌晨)(\\d{1,2})点(\\d{1,2}分)?", options: .regularExpression) {
+            let timeStr = String(input[timeMatch])
+
+            // 使用 NSRegularExpression 捕获组提取小时和分钟（避免 filter 合并数字的问题）
+            let timeRegex = Self.timeRegex
+            if let match = timeRegex.firstMatch(in: timeStr, range: NSRange(timeStr.startIndex..., in: timeStr)),
+               match.numberOfRanges >= 3,
+               let hourRange = Range(match.range(at: 2), in: timeStr),
+               let hour = Int(timeStr[hourRange]) {
+
+                var finalHour = hour
+                let isAfternoon = timeStr.contains("下午") || timeStr.contains("晚上")
+
+                if hour >= 12 {
+                    // 如果小时 >= 12，说明已经是24小时制，直接使用
+                    finalHour = hour
+                } else if isAfternoon {
+                    // 小时 < 12 且有下午/晚上标识，加12小时
+                    finalHour = hour + 12
+                }
+                // 其他情况（上午/凌晨或无标识）直接使用原始小时数
+
+                // 提取分钟（第3个捕获组，可选）
+                var minute = 0
+                if match.numberOfRanges >= 4,
+                   let minuteRange = Range(match.range(at: 3), in: timeStr),
+                   !minuteRange.isEmpty,
+                   let min = Int(timeStr[minuteRange]) {
+                    minute = min
+                }
+
+                var components = calendar.dateComponents([.year, .month, .day], from: baseDate)
+                components.hour = finalHour
+                components.minute = minute
+                components.second = 0
+
+                if let date = calendar.date(from: components) {
+                    baseDate = date
+                    matchedText = timeStr
+                }
+            }
+        }
+        // 匹配 X点X分 格式（不带上午/下午前缀，如 20点15, 9点30分；
+        // N-1：带前缀场景已由上一分支优先处理，此处自然收窄为无前缀场景）
         else if let timeMatch = input.range(of: "(\\d{1,2})点(\\d{1,2})(分)?", options: .regularExpression) {
             let timeStr = String(input[timeMatch])
             
@@ -151,19 +210,23 @@ struct NLPTaskParser {
                 }
             }
         }
-        // 匹配带时间段的时间格式，如"下午3点"、"上午9点"、"晚上8点15分"
-        else if let timeMatch = input.range(of: "(上午|下午|晚上|凌晨)?(\\d{1,2})点(\\d{1,2}分)?", options: .regularExpression) {
+        // 匹配孤立 X点 时间，如"开会3点"、"晚上开会3点"（前缀与时间被文字隔开或无前缀）
+        // E-13：原带可选前缀的定位正则在"晚上开会3点"类输入会回溯为空导致前缀丢失，
+        // 改为匹配纯时间后检查其前文是否含时段前缀
+        else if let timeMatch = input.range(of: "(\\d{1,2})点(\\d{1,2}分)?", options: .regularExpression) {
             let timeStr = String(input[timeMatch])
-            
+            // 检查匹配位置之前的文本是否含时段前缀（如"晚上开会3点"的"晚上"）
+            let leadingText = String(input[input.startIndex..<timeMatch.lowerBound])
+
             // 使用 NSRegularExpression 捕获组提取小时和分钟（避免 filter 合并数字的问题）
             let timeRegex = Self.timeRegex
             if let match = timeRegex.firstMatch(in: timeStr, range: NSRange(timeStr.startIndex..., in: timeStr)),
                match.numberOfRanges >= 3,
                let hourRange = Range(match.range(at: 2), in: timeStr),
                let hour = Int(timeStr[hourRange]) {
-                
+
                 var finalHour = hour
-                let isAfternoon = timeStr.contains("下午") || timeStr.contains("晚上")
+                let isAfternoon = leadingText.contains("下午") || leadingText.contains("晚上")
                 
                 if hour >= 12 {
                     // 如果小时 >= 12，说明已经是24小时制，直接使用
@@ -314,9 +377,8 @@ struct NLPTaskParser {
         }
 
         // 匹配星期X 或 周X 格式（如"周五"、"星期三"）
-        // 使用固定周日=1的Calendar，不受用户firstWeekday设置影响
-        var gregorianForWeekday = Calendar(identifier: .gregorian)
-        gregorianForWeekday.firstWeekday = 1  // 周日=1
+        // 使用固定周日=1的Calendar（N-15 静态常量），不受用户firstWeekday设置影响
+        let gregorianForWeekday = Self.weekdayCalendar
         
         let weekdayKeywords: [(keyword: String, targetWeekday: Int)] = [
             ("周日", 1), ("星期日", 1),
@@ -403,28 +465,42 @@ struct NLPTaskParser {
               lunarDay >= 1, lunarDay <= 30 else {
             return nil
         }
-        
-        let chineseCalendar = Calendar(identifier: .chinese)
-        let gregorianCalendar = Calendar.current
-        
+
+        // N-15：chineseCalendar/gregorianCalendar 已提为静态常量，逐天搜索直接复用
+
         // 从今天开始，逐天搜索，最多搜索1年
         // 农历年约354天，1年约365天，性能更好
-        var currentDate = gregorianCalendar.startOfDay(for: now)
-        let maxDate = gregorianCalendar.date(byAdding: .year, value: 1, to: currentDate)!
-        
+        var currentDate = Self.gregorianCalendar.startOfDay(for: now)
+        let maxDate = Self.gregorianCalendar.date(byAdding: .year, value: 1, to: currentDate)!
+        // 最近一个腊月的最后一天（除夕候选），用于"腊月三十不存在"的年份兜底
+        var lastTwelfthMonthEnd: Date?
+
         while currentDate < maxDate {
             // 将公历日期转为农历，检查是否匹配
-            let lunarComponents = chineseCalendar.dateComponents([.month, .day], from: currentDate)
-            
+            let lunarComponents = Self.chineseCalendar.dateComponents([.month, .day], from: currentDate)
+
             if lunarComponents.month == lunarMonth && lunarComponents.day == lunarDay {
                 // 找到匹配的农历日期
                 return (currentDate, matched, true)
             }
-            
+
+            // 跟踪腊月末日：今天属农历十二月且明天不再属于（即腊月最后一天）
+            if lunarComponents.month == 12,
+               Self.chineseCalendar.dateComponents([.month], from: Self.gregorianCalendar.date(byAdding: .day, value: 1, to: currentDate)!).month != 12 {
+                lastTwelfthMonthEnd = currentDate
+            }
+
             // 前进一天
-            currentDate = gregorianCalendar.date(byAdding: .day, value: 1, to: currentDate)!
+            currentDate = Self.gregorianCalendar.date(byAdding: .day, value: 1, to: currentDate)!
         }
-        
+
+        // 腊月三十兜底：小月年份腊月仅 29 天（如 2027 年除夕为 2027-02-05 腊月廿九），
+        // 逐天搜索永远找不到"12月30日"，原实现返回 nil 后误走公历解析把"12月30日"
+        // 当公历日期；此时映射到该腊月最后一天（除夕语义）
+        if lunarMonth == 12, lunarDay == 30, let fallback = lastTwelfthMonthEnd {
+            return (fallback, matched, true)
+        }
+
         return nil
     }
 
@@ -464,7 +540,7 @@ struct NLPTaskParser {
         if input.contains("每年农历") || input.contains("每年阴历") {
             return .yearly
         }
-        if input.contains("每天") || input.contains("日循环") || input.contains("循环") {
+        if input.contains("每天") || input.contains("日循环") {
             return .daily
         }
         if input.contains("每周") || input.contains("周循环") {
@@ -475,6 +551,11 @@ struct NLPTaskParser {
         }
         if input.contains("每年") || input.contains("年循环") {
             return .yearly
+        }
+        // 孤立"循环"（无周期前缀）默认每日——必须放在周期组合之后，
+        // 否则"每年循环"会被无约束 contains("循环") 抢先判为 daily
+        if input.contains("循环") {
+            return .daily
         }
         return nil
     }
@@ -533,22 +614,8 @@ struct NLPTaskParser {
             }
         }
         
-        // 兼容原有的固定格式
-        if input.contains("提前10分钟") || input.contains("10分钟前") {
-            return 10
-        }
-        if input.contains("提前30分钟") || input.contains("30分钟前") {
-            return 30
-        }
-        if input.contains("提前1小时") || input.contains("1小时前") {
-            return 60
-        }
-        if input.contains("提前1天") || input.contains("1天前") {
-            return 1440
-        }
-        if input.contains("提前5分钟") || input.contains("5分钟前") {
-            return 5
-        }
+        // N-8b：原"兼容固定格式"分支不可达——上方正则 (\d+) 已覆盖全部数字形式
+        // （如"提前10分钟"/"10分钟前"），固定字面量必然先被正则命中
         return nil
     }
 
@@ -558,7 +625,9 @@ struct NLPTaskParser {
         var result = input
 
         // 移除日期关键词
-        let dateKeywords = ["明天", "后天", "大后天", "今天", "昨天", "前天"]
+        // N-7："大后天"必须在"后天"之前——子串替换会先命中"后天"，
+        // 导致"大后天"残留孤立的"大"字
+        let dateKeywords = ["明天", "大后天", "后天", "今天", "昨天", "前天"]
         for kw in dateKeywords {
             result = result.replacingOccurrences(of: kw, with: "")
         }
@@ -575,6 +644,13 @@ struct NLPTaskParser {
             result = result.replacingOccurrences(of: kw, with: "")
         }
 
+        // N-6：移除星期词——必须在周期关键词之前，否则"每周一"先移除"每周"后
+        // 残留孤立的"一"无法再匹配；正则需同时吞掉前缀"每"，否则"每周一"移除
+        // "周一"后残留孤立的"每"字（swift test 暴露）
+        if let weekdayRange = result.range(of: "每?(?:星期|周|礼拜)[一二三四五六日天]", options: .regularExpression) {
+            result.removeSubrange(weekdayRange)
+        }
+
         // 移除周期关键词
         let recurrenceKeywords = ["每年农历", "每年阴历", "每天", "每周", "每月", "每年", "循环", "重复"]
         for kw in recurrenceKeywords {
@@ -588,11 +664,17 @@ struct NLPTaskParser {
         result = result.replacingOccurrences(of: "农历", with: "")
         result = result.replacingOccurrences(of: "阴历", with: "")
 
-        // 移除提醒关键词（包括通用模式）
-        let reminderKeywords = ["提前10分钟", "提前30分钟", "提前1小时", "提前1天", "提前5分钟",
-                               "10分钟前", "30分钟前", "1小时前", "1天前", "5分钟前", "提醒"]
-        for kw in reminderKeywords {
-            result = result.replacingOccurrences(of: kw, with: "")
+        // N-6：移除公历日期，如"10月21日"、"3月5号"（与 dateRegex 模式一致，需有日/号后缀）
+        if let gregorianRange = result.range(of: "\\d+月\\d+[日号]", options: .regularExpression) {
+            result.removeSubrange(gregorianRange)
+        }
+
+        // N-6：提醒关键词改为通用模式——原仅枚举特定值（提前10/30/5分钟等），
+        // "提前15分钟"、"45分钟前"等任意数值残留标题
+        let reminderPatterns = ["提前\\d+分钟", "提前\\d+小时", "提前\\d+天",
+                                "\\d+分钟前", "\\d+小时前", "\\d+天前", "提醒"]
+        for pattern in reminderPatterns {
+            result = result.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
         }
         
         // 移除时间表达式，如"下午3点"、"上午9点"、"20:15"、"20点15分"等
@@ -600,8 +682,10 @@ struct NLPTaskParser {
         if let timeRange = result.range(of: "\\d{1,2}:\\d{2}", options: .regularExpression) {
             result.removeSubrange(timeRange)
         }
-        // 再移除 X点X分 格式（不带时间段前缀）
-        else if let timeRange = result.range(of: "\\d{1,2}点\\d{1,2}(分)?", options: .regularExpression) {
+        // 再移除 X点X分 格式（N-1 同源：可选时段前缀需覆盖，否则"下午3点30分开会"
+        // 仅命中"3点30分"而残留"下午"，违反 AC-7 标题清洗无残留；分钟数字组保持
+        // 必选，否则"20点15开会"这类无"分"字输入只能由本分支完整清除）
+        else if let timeRange = result.range(of: "(?:上午|下午|晚上|凌晨)?\\d{1,2}点\\d{1,2}(?:分)?", options: .regularExpression) {
             result.removeSubrange(timeRange)
         }
         // 最后移除带时间段的时间格式
@@ -647,6 +731,8 @@ struct ParsedTask {
     var priority: EventPriority?
     var recurrence: RecurrenceType?
     var isLunar: Bool = false
+    // N-8：仅解析打标（yearly + "农历"关键词），暂无消费方——农历 yearly 重复
+    // 实际按公历推进、日期逐年漂移。保留字段待后续补实现农历重复功能（用户已确认）
     var isRecurringLunar: Bool = false
     var reminderMinutes: Int?
 

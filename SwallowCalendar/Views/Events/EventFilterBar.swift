@@ -8,7 +8,8 @@ import SwiftUI
 struct EventFilterBar: View {
     @Environment(AppSettings.self) private var appSettings
     @Binding var selectedFilter: EventFilterMode
-    @State private var accentColor: Color = Color(hex: AppSettings.shared.accentColorHex)
+    // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
+    private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
     @State private var showSortMenu = false
 
     var body: some View {
@@ -55,9 +56,6 @@ struct EventFilterBar: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .onChange(of: appSettings.accentColorHex) { _, newColor in
-            accentColor = Color(hex: newColor)
-        }
     }
     
     // MARK: - Sort Menu Content
