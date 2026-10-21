@@ -273,12 +273,17 @@ final class EventCacheService {
                 let newStart = event.startDate ?? now
                 let newEnd = event.endDate ?? now
                 // 从 EKEvent 的 notes 中读取完成状态
+                // 注意：notes 无 [SC_COMPLETED] 标记时保留缓存状态，不强制刷回 false。
+                // 原因：历史已办事项在 [SC_COMPLETED] 机制引入（2026-05）之前标记完成，
+                // 其 EKEvent notes 中并无标记，若强制刷回会导致已办在重启后重新变回过期待办弹窗。
                 var newIsCompleted = existing.isCompleted
                 if let ekEvent = CalendarService.shared.getEvent(withIdentifier: event.id) {
                     if let notes = ekEvent.notes, notes.contains("[SC_COMPLETED]") {
                         newIsCompleted = true
-                    } else {
-                        newIsCompleted = false
+                    } else if newIsCompleted {
+                        // 缓存已完成但 EK 无标记（历史已办）：补写标记到系统日历，
+                        // 让系统日历成为完成状态真源，清缓存/换设备重新同步也能恢复完成状态
+                        CalendarService.shared.ensureCompletedMarker(for: event.id)
                     }
                 }
                 // 有变更才更新，避免不必要的写入
@@ -301,9 +306,15 @@ final class EventCacheService {
                 
                 // 检查EKEvent的备注，判断是否是SwallowCalendar事项
                 var category = event.category
+                // 从 EKEvent 的 notes 中恢复完成状态（跨设备/清缓存后重新同步时
+                // 已完成事项仍能以已完成状态插入缓存，不丢失完成状态）
+                var isCompletedFromNotes = false
                 if let ekEvent = CalendarService.shared.getEvent(withIdentifier: event.id) {
                     if let notes = ekEvent.notes, notes.contains("此事项来自SwallowCalendar应用") {
                         category = .user
+                    }
+                    if let notes = ekEvent.notes, notes.contains("[SC_COMPLETED]") {
+                        isCompletedFromNotes = true
                     }
                 }
                 
@@ -318,6 +329,7 @@ final class EventCacheService {
                     calendarTitle: event.calendarTitle,
                     calendarColorHex: event.calendarColorHex,
                     category: category,
+                    isCompleted: isCompletedFromNotes,
                     reminderMinutes: event.reminderMinutes
                 )
                 context.insert(cached)

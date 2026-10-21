@@ -736,6 +736,37 @@ final class CalendarService {
         }
     }
     
+    /// 确保 EKEvent 的 notes 中带有完成标记（自愈历史已办）
+    /// - Note: 历史已办（[SC_COMPLETED] 机制引入前标记完成）的系统日历事件 notes 中没有标记，
+    ///         同步时若缓存已完成而 EK 无标记，调用此方法补写标记，让系统日历成为完成状态的真源，
+    ///         此后清缓存/换设备重新同步也能从系统日历恢复完成状态。
+    /// - Returns: 是否补写成功（事件不存在或保存失败返回 false，但缓存已完成状态不受影响）
+    @MainActor
+    func ensureCompletedMarker(for eventID: String) -> Bool {
+        let completedMarker = "[SC_COMPLETED]"
+        guard let event = eventStore.event(withIdentifier: eventID) else {
+            AppLogger.sync.warning("ensureCompletedMarker EKEvent NOT-FOUND id=\(eventID, privacy: .public)")
+            return false
+        }
+        // 已有标记则无需补写
+        if let notes = event.notes, notes.contains(completedMarker) {
+            return true
+        }
+        if let notes = event.notes {
+            event.notes = notes + " " + completedMarker
+        } else {
+            event.notes = completedMarker
+        }
+        do {
+            try eventStore.save(event, span: .thisEvent)
+            AppLogger.sync.info("ensureCompletedMarker 补写完成标记 id=\(eventID, privacy: .public)")
+            return true
+        } catch {
+            AppLogger.sync.error("ensureCompletedMarker 补写失败 id=\(eventID, privacy: .public) err=\(String(describing: error), privacy: .public)")
+            return false
+        }
+    }
+
     /// 标记事件完成/未完成
     /// - Note: 对于系统提醒，会同步更新到系统提醒应用
     /// - Note: 对于系统日历事件，在 EKEvent 的 notes 中追加完成标记以持久化状态；
