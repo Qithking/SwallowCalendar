@@ -11,6 +11,8 @@ permissions:
 env:
   PRODUCT_BUNDLE_IDENTIFIER: com.swallowcalendar.app
   MACOSX_DEPLOYMENT_TARGET: "14.0"
+  # S-3：是否配置了 Developer ID 证书（存在时走真签名+公证，否则走硬化 ad-hoc）
+  HAS_DEVELOPER_ID: ${{ secrets.DEVELOPER_ID_P12 != '' }}
 
 jobs:
   build:
@@ -115,13 +117,51 @@ jobs:
           ls -la SwallowCalendar.app/Contents/MacOS/
           cat SwallowCalendar.app/Contents/Info.plist
 
-      - name: Ad-hoc Sign App
+      - name: Import Developer ID Certificate
+        if: env.HAS_DEVELOPER_ID == 'true'
+        env:
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
         run: |
-          # 使用 ad-hoc 签名
-          codesign --force --deep --sign "-" SwallowCalendar.app
+          # S-3：将 base64 的 p12 证书导入临时 keychain（CI 无 GUI，需允许 codesign 无交互访问）
+          CERT_DIR=$(mktemp -d)
+          KEYCHAIN="$CERT_DIR/build.keychain-db"
+          KEYCHAIN_PASS=$(openssl rand -hex 24)
+          echo -n "$DEVELOPER_ID_P12" | base64 --decode -o "$CERT_DIR/cert.p12"
+
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security import "$CERT_DIR/cert.p12" -k "$KEYCHAIN" -P "$DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN"
+
+          echo "KEYCHAIN_PATH=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PASS=$KEYCHAIN_PASS" >> "$GITHUB_ENV"
+
+      - name: Sign App
+        env:
+          # 签名身份（默认 Developer ID Application，可在 secrets 覆盖）
+          SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_NAME || 'Developer ID Application' }}
+        run: |
+          # S-3：签名统一启用 hardened runtime 并嵌入 entitlements，与本地构建配置一致
+          ENTITLEMENTS="SwallowCalendar/SwallowCalendar.entitlements"
+
+          if [ "$HAS_DEVELOPER_ID" = "true" ]; then
+            # Developer ID 签名（带时间戳，可通过 Gatekeeper）
+            codesign --force --deep --options runtime \
+              --entitlements "$ENTITLEMENTS" \
+              --keychain "$KEYCHAIN_PATH" \
+              --sign "$SIGN_IDENTITY" --timestamp \
+              SwallowCalendar.app
+          else
+            # 未配置证书：硬化 ad-hoc 签名（启用 runtime 缓解注入类攻击）
+            codesign --force --deep --options runtime \
+              --entitlements "$ENTITLEMENTS" \
+              --sign "-" \
+              SwallowCalendar.app
+          fi
 
           echo "=== Verify Signature ==="
-          codesign -vvv SwallowCalendar.app || true
+          codesign -vvv --deep SwallowCalendar.app || true
           spctl --assess --type exec --verbose=2 SwallowCalendar.app 2>&1 || true
 
       - name: Create DMG
@@ -149,6 +189,33 @@ jobs:
             "dmg_temp/"
 
           ls -la *.dmg
+
+      - name: Notarize and Staple DMG
+        if: env.HAS_DEVELOPER_ID == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # S-3：公证 DMG 并装订票据（需在仓库 secrets 配置 Apple 账号与专用密码）
+          DMG_FILE=$(ls SwallowCalendar-*.dmg | head -1)
+
+          xcrun notarytool submit "$DMG_FILE" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+
+          xcrun stapler staple "$DMG_FILE"
+          xcrun stapler validate "$DMG_FILE"
+
+      - name: Generate SHA256 Checksums
+        run: |
+          # S-1 配套：为每个 DMG 生成 ".sha256" 旁文件，作为客户端在线校验的 fallback 参照值
+          for f in SwallowCalendar-*.dmg; do
+            shasum -a 256 "$f" > "$f.sha256"
+            cat "$f.sha256"
+          done
 
       - name: Generate Release Body
         id: release_body
@@ -181,7 +248,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body_path: release_body.txt
-          files: SwallowCalendar-*.dmg
+          files: |
+            SwallowCalendar-*.dmg
+            SwallowCalendar-*.dmg.sha256
           draft: false
           prerelease: false
         env:

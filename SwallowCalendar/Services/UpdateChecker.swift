@@ -7,6 +7,7 @@ import Foundation
 import AppKit
 import Combine
 import SwiftUI
+import CryptoKit
 
 struct ReleaseInfo: Decodable {
     let tagName: String
@@ -29,10 +30,13 @@ struct ReleaseInfo: Decodable {
 struct ReleaseAsset: Decodable {
     let name: String
     let browserDownloadUrl: String
+    // GitHub 官方资产摘要（格式 "sha256:..."），作为下载完整性校验的权威参照值
+    let digest: String?
 
     enum CodingKeys: String, CodingKey {
         case name
         case browserDownloadUrl = "browser_download_url"
+        case digest
     }
 }
 
@@ -54,6 +58,10 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     @Published var showDownloadWindow = false
     @Published var usingProxy = false  // 是否正在使用代理下载
     @Published var isInstalling = false  // 是否正在安装
+    // S-1 完整性校验：最新 release 资产的权威 SHA256（来自 GitHub API，不经代理）
+    @Published var expectedDigest: String?
+    // S-1 完整性校验：本次下载的比对结果（true=一致 / nil=参照值不可得降级 / false=不一致已拦截）
+    @Published var digestVerified: Bool?
 
     private var downloadSession: URLSession?
     private var downloadTask: URLSessionDownloadTask?
@@ -71,12 +79,30 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     private override init() {
         self.currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
         super.init()
-        
+
         // 使用临时目录配置 session，避免沙盒限制
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 300
         self.downloadSession = URLSession(configuration: config, delegate: self, delegateQueue: .main)
+
+        // S-14：启动时后台清理上次更新遗留的 ".old-" 备份包
+        // （新版本已成功启动，说明替换完成，备份可安全删除）
+        Self.cleanupStaleBackups()
+    }
+
+    /// 扫描应用所在目录，删除历史更新留下的 "AppName.old-xxx" 备份。
+    /// nonisolated：纯文件操作，放后台队列执行，不阻塞启动。
+    nonisolated private static func cleanupStaleBackups() {
+        DispatchQueue.global(qos: .utility).async {
+            let appURL = Bundle.main.bundleURL
+            let parentDir = appURL.deletingLastPathComponent()
+            let prefix = appURL.lastPathComponent + ".old-"
+            guard let entries = try? FileManager.default.contentsOfDirectory(atPath: parentDir.path) else { return }
+            for name in entries where name.hasPrefix(prefix) {
+                try? FileManager.default.removeItem(at: parentDir.appendingPathComponent(name))
+            }
+        }
     }
     
     deinit {
@@ -181,15 +207,20 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
 
             // 优先获取 dmg 文件，其次是 zip 文件
             var directDownloadUrl = release.htmlUrl
+            var assetDigest: String?
             if let dmgAsset = release.assets?.first(where: { $0.name.lowercased().contains(".dmg") }) {
                 directDownloadUrl = dmgAsset.browserDownloadUrl
+                assetDigest = dmgAsset.digest
             } else if let zipAsset = release.assets?.first(where: { $0.name.lowercased().contains(".zip") }) {
                 directDownloadUrl = zipAsset.browserDownloadUrl
+                assetDigest = zipAsset.digest
             }
 
             await MainActor.run {
                 self.latestVersion = latestTag
                 self.releaseUrl = directDownloadUrl
+                // 提取 "sha256:xxx" 中的摘要部分作为校验参照值
+                self.expectedDigest = assetDigest.flatMap { $0.hasPrefix("sha256:") ? String($0.dropFirst("sha256:".count)).lowercased() : nil }
                 self.releaseNotes = release.body ?? ""
                 self.updateAvailable = self.isNewerVersion(latestTag)
             }
@@ -400,6 +431,18 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
                 // 移动文件到下载文件夹
                 try FileManager.default.moveItem(at: tempDestURL, to: destinationUrl)
 
+                // S-1：下载完整性校验，与权威 SHA256 参照值比对
+                let digestResult = await self.verifyDownloadedFileSha256(fileUrl: destinationUrl)
+                if digestResult == false {
+                    // 校验不一致：删除文件并中止，绝不进入安装流程
+                    try? FileManager.default.removeItem(at: destinationUrl)
+                    self.downloadError = "下载文件校验失败，与官方发布内容可能不一致，已自动删除。请前往 Release 页面手动下载。"
+                    self.isDownloading = false
+                    return
+                }
+                // 记录校验结果（nil=参照值不可得，安装确认弹窗中降级提示）
+                self.digestVerified = digestResult
+
                 self.downloadProgress = 1.0
                 self.isDownloading = false
                 self.closeDownloadWindow()
@@ -457,7 +500,17 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "下载完成"
-        alert.informativeText = "SwallowCalendar v\(latestVersion) 已下载完成，是否立即安装并重启应用？"
+        // S-1：弹窗中如实呈现完整性校验结果
+        let digestNote: String
+        switch digestVerified {
+        case true:
+            digestNote = "已通过 SHA256 完整性校验。"
+        case false:
+            digestNote = ""
+        case nil:
+            digestNote = "注意：未能获取在线校验和（网络受限），无法核对文件完整性，请确认下载来源可信。"
+        }
+        alert.informativeText = "SwallowCalendar v\(latestVersion) 已下载完成，是否立即安装并重启应用？\n\n\(digestNote)"
         alert.alertStyle = .informational
         alert.addButton(withTitle: "安装并重启")
         alert.addButton(withTitle: "稍后手动安装")
@@ -479,6 +532,9 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let appBundleURL = try self.extractAppBundle(from: downloadedFileUrl)
+
+                // S-1：替换前进行本地签名链校验（签名结构 + Bundle ID + 身份一致性）
+                try self.verifyExtractedApp(at: appBundleURL)
 
                 // 切回主线程执行替换和重启
                 DispatchQueue.main.async {
@@ -652,6 +708,69 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         throw InstallError.appNotFoundInArchive
     }
 
+    /// S-1 本地签名链校验：codesign --verify --strict + Bundle ID 比对 + 签名身份一致性
+    /// - Note: 当前应用若由开发者证书签名，新包必须同身份；ad-hoc（无 Team ID）产物跳过身份比对。
+    nonisolated private func verifyExtractedApp(at appUrl: URL) throws {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: appUrl.path) else {
+            throw InstallError.verificationFailed("应用包不存在")
+        }
+
+        // 1. 签名结构完整性校验
+        let verifyProcess = Process()
+        verifyProcess.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        verifyProcess.arguments = ["--verify", "--deep", "--strict", appUrl.path]
+        let verifyPipe = Pipe()
+        verifyProcess.standardError = verifyPipe
+        try verifyProcess.run()
+        verifyProcess.waitUntilExit()
+        guard verifyProcess.terminationStatus == 0 else {
+            let errData = verifyPipe.fileHandleForReading.readDataToEndOfFile()
+            let errMsg = String(data: errData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "未知错误"
+            throw InstallError.integrityCheckFailed("签名验证未通过：\(errMsg)")
+        }
+
+        // 2. Bundle ID 必须与当前运行中的应用一致（防止替换任意 .app）
+        guard let newBundleId = Bundle(url: appUrl)?.bundleIdentifier,
+              let currentBundleId = Bundle.main.bundleIdentifier,
+              newBundleId == currentBundleId else {
+            throw InstallError.integrityCheckFailed(
+                "Bundle ID 不匹配（期望 \(Bundle.main.bundleIdentifier ?? "未知")，实际 \(Bundle(url: appUrl)?.bundleIdentifier ?? "缺失")）"
+            )
+        }
+
+        // 3. 签名身份一致性：TeamIdentifier 相同才允许替换
+        let currentTeam = Self.signingTeamIdentifier(of: Bundle.main.bundleURL)
+        let newTeam = Self.signingTeamIdentifier(of: appUrl)
+        if let currentTeam, !currentTeam.isEmpty {
+            guard let newTeam, newTeam == currentTeam else {
+                throw InstallError.integrityCheckFailed("签名身份不一致（当前 \(currentTeam)，新包 \(newTeam ?? "无")）")
+            }
+        }
+    }
+
+    /// 从 codesign -dvv 输出解析 TeamIdentifier（"not set" 表示 ad-hoc，返回 nil）
+    nonisolated private static func signingTeamIdentifier(of appUrl: URL) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        // codesign -dvv 将描述信息输出到 stderr
+        process.arguments = ["-dvv", appUrl.path]
+        let pipe = Pipe()
+        process.standardError = pipe
+        try? process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        for line in output.split(separator: "\n") {
+            if line.hasPrefix("TeamIdentifier=") {
+                let value = line.dropFirst("TeamIdentifier=".count).trimmingCharacters(in: .whitespaces)
+                return value.isEmpty || value == "not set" ? nil : value
+            }
+        }
+        return nil
+    }
+
     /// 替换当前应用包
     nonisolated private func replaceAppBundle(with newAppURL: URL) throws {
         let currentAppURL = Bundle.main.bundleURL
@@ -671,11 +790,25 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
             finalNewAppURL = newAppURL
         }
 
-        // 删除旧应用
-        try FileManager.default.removeItem(at: currentAppURL)
+        // S-14：原子替换——同卷 rename 将旧应用移为备份（原子操作），
+        // 再将新应用移入原位置；中途失败立即回滚，避免出现"应用已删除但新包未就位"的窗口。
+        let backupURL = currentAppURL.deletingLastPathComponent()
+            .appendingPathComponent("\(currentAppName).old-\(UUID().uuidString)")
 
-        // 将新应用移动到原位置
-        try FileManager.default.moveItem(at: finalNewAppURL, to: currentAppURL)
+        // 第一步：旧应用改名备份（同卷 rename，原子完成）
+        try FileManager.default.moveItem(at: currentAppURL, to: backupURL)
+
+        // 第二步：新应用移入原位置；失败则回滚备份
+        do {
+            try FileManager.default.moveItem(at: finalNewAppURL, to: currentAppURL)
+        } catch {
+            // 回滚：将备份移回原位置，尽量恢复替换前状态
+            try? FileManager.default.moveItem(at: backupURL, to: currentAppURL)
+            throw error
+        }
+
+        // 第三步：替换成功，清理备份（失败不影响结果，启动时会再次兜底清理）
+        try? FileManager.default.removeItem(at: backupURL)
     }
 
     /// 重启应用
@@ -707,6 +840,62 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     }
 }
 
+// MARK: - 下载完整性校验（S-1）
+
+extension UpdateChecker {
+    /// 分块计算文件 SHA256（避免大文件整体载入内存）。
+    /// nonisolated：供后台线程调用。
+    nonisolated static func sha256(of fileUrl: URL) throws -> String {
+        guard let handle = try? FileHandle(forReadingFrom: fileUrl) else {
+            throw InstallError.verificationFailed("无法读取文件计算校验和")
+        }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        // 每次读取 1MB 分块更新，降低内存峰值
+        while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// 校验下载文件 SHA256 是否与权威参照值一致。
+    /// 参照值来源（按优先级）：
+    /// 1. GitHub Release API 资产 digest（检查更新时已取得，不经代理，权威）
+    /// 2. 同名 ".sha256" 旁文件（fallback，api.github.com 不可达时使用）
+    /// 返回：true=校验一致；false=不一致或计算失败；nil=参照值不可得（降级提示，不静默放行）
+    private func verifyDownloadedFileSha256(fileUrl: URL) async -> Bool? {
+        var expected = expectedDigest
+
+        // fallback：尝试拉取 release 资产同名 .sha256 旁文件
+        if expected == nil, let url = URL(string: releaseUrl + ".sha256") {
+            do {
+                let (data, resp) = try await URLSession.shared.data(from: url)
+                if (resp as? HTTPURLResponse)?.statusCode == 200 {
+                    let text = String(data: data, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    // 兼容 "digest  filename" 与纯 digest 两种格式
+                    let hex = text.split(separator: " ").first.map(String.init) ?? text
+                    if hex.count == 64 { expected = hex.lowercased() }
+                }
+            } catch {
+                // 参照值不可得，走降级路径
+            }
+        }
+
+        guard let expected, !expected.isEmpty else { return nil }
+
+        // SHA256 计算放后台线程，避免阻塞主线程
+        do {
+            let actual = try await Task.detached(priority: .userInitiated) {
+                try UpdateChecker.sha256(of: fileUrl)
+            }.value
+            return actual == expected
+        } catch {
+            return false
+        }
+    }
+}
+
 // MARK: - Install Errors
 
 enum InstallError: LocalizedError {
@@ -714,6 +903,8 @@ enum InstallError: LocalizedError {
     case dmgMountFailed(String)
     case zipExtractFailed(String)
     case appNotFoundInArchive
+    case verificationFailed(String)
+    case integrityCheckFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -725,6 +916,10 @@ enum InstallError: LocalizedError {
             return "ZIP 解压失败: \(msg)"
         case .appNotFoundInArchive:
             return "在安装包中未找到应用程序"
+        case .verificationFailed(let msg):
+            return "完整性校验失败: \(msg)"
+        case .integrityCheckFailed(let msg):
+            return "应用签名校验失败: \(msg)"
         }
     }
 }
