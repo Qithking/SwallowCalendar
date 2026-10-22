@@ -21,6 +21,15 @@ struct ContentView: View {
     // V-32：CalendarService.shared 是单例引用，语义为常量依赖，用 let 而非 @State（@State 用于值语义状态）
     private let calendarService = CalendarService.shared
     @State private var eventsChangedSyncTask: Task<Void, Never>?  // V-1：事件变更防抖同步任务
+    @State private var syncState: SyncFeedbackState = .idle  // 同步按钮反馈状态
+
+    // 同步按钮反馈三态：同步中菊花 / 成功绿勾 / 失败红 X（附弹窗），终态 2 秒后复原
+    private enum SyncFeedbackState {
+        case idle
+        case syncing
+        case success
+        case failure(String)
+    }
     
     // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
     private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
@@ -111,14 +120,56 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .help("设置")
             
-            // 同步按钮
+            // 同步按钮（三态反馈：点击菊花 → 成功绿勾 / 失败红 X + 弹窗，终态 2 秒后复原）
             Button {
+                // 仅空闲态可触发：同步中/结果展示中忽略连点
+                guard case .idle = syncState else { return }
+                syncState = .syncing
                 Task {
-                    await BackgroundSyncService.shared.syncOnce()
+                    let start = ContinuousClock.now
+                    let failure = await BackgroundSyncService.shared.syncOnce()
+                    // 最短展示 0.6s：同步极快完成时状态变化仍可感知（防闪烁无感知）
+                    let elapsed = start.duration(to: .now)
+                    if elapsed < .seconds(0.6) {
+                        try? await Task.sleep(for: .seconds(0.6) - elapsed)
+                    }
+                    if let failure {
+                        syncState = .failure(failure)
+                        // 弹出错误说明（模态弹窗，关闭后红 X 保留 2 秒再复原）
+                        NSApp.activate(ignoringOtherApps: true)
+                        let alert = NSAlert()
+                        alert.messageText = "同步失败"
+                        alert.informativeText = failure
+                        alert.alertStyle = .critical
+                        alert.addButton(withTitle: "好的")
+                        alert.runModal()
+                        try? await Task.sleep(for: .seconds(2))
+                    } else {
+                        syncState = .success
+                        try? await Task.sleep(for: .seconds(2))
+                    }
+                    syncState = .idle
                 }
             } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 13))
+                Group {
+                    switch syncState {
+                    case .idle:
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 13))
+                    case .syncing:
+                        ProgressView()
+                            .controlSize(.small)
+                    case .success:
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 13))
+                            .foregroundColor(.green)
+                    case .failure:
+                        Image(systemName: "xmark.circle")
+                            .font(.system(size: 13))
+                            .foregroundColor(.red)
+                    }
+                }
+                .frame(width: 16, height: 16)  // 固定占位，切换不跳动
             }
             .buttonStyle(.plain)
             .help("同步数据")

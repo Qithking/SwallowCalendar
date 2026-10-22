@@ -30,15 +30,21 @@ final class BackgroundSyncService {
         startTimer()
     }
 
-    func syncOnce() async {
-        guard !isSyncing else { return }
-        guard modelContainer != nil else { return }
+    /// 执行一次全量同步
+    /// - Returns: nil 同步成功；非 nil 为失败原因描述（多个失败以"；"拼接），
+    ///            供手动同步 UI 错误反馈；启动/定时/防抖等后台调用忽略返回值
+    @discardableResult
+    func syncOnce() async -> String? {
+        guard !isSyncing else { return "同步正在进行中，请稍后重试" }
+        guard modelContainer != nil else { return "本地存储未就绪，请稍后重试" }
 
         isSyncing = true
         defer { isSyncing = false }
 
         // 使用 EventCacheService 的统一上下文（优先为环境上下文，与 @Query 共享）
-        guard let context = EventCacheService.shared.context else { return }
+        guard let context = EventCacheService.shared.context else { return "本地存储未就绪，请稍后重试" }
+
+        var failures: [String] = []
 
         let preferences = fetchPreferences(context: context)
         let customSources = fetchCustomSources(context: context)
@@ -50,7 +56,9 @@ final class BackgroundSyncService {
             let enabledCals = CalendarService.shared.enabledCalendars(preferences: preferences)
 
             if !enabledCals.isEmpty {
-                await CalendarService.shared.cacheService.syncEvents(from: CalendarService.shared, calendars: enabledCals)
+                if !(await CalendarService.shared.cacheService.syncEvents(from: CalendarService.shared, calendars: enabledCals)) {
+                    failures.append("日历事件同步失败")
+                }
             } else {
                 // clearSystemCalendarCache 为 @MainActor 同步方法，同类 @MainActor 上下文可直接调用
                 CalendarService.shared.cacheService.clearSystemCalendarCache()
@@ -58,7 +66,9 @@ final class BackgroundSyncService {
         }
 
         if AppSettings.shared.syncSystemReminders && CalendarService.shared.reminderAuthorizationStatus == .fullAccess {
-            await CalendarService.shared.cacheService.syncReminders(from: CalendarService.shared)
+            if !(await CalendarService.shared.cacheService.syncReminders(from: CalendarService.shared)) {
+                failures.append("提醒事项同步失败")
+            }
         } else {
             // clearRemindersCache 为 @MainActor 同步方法，同类 @MainActor 上下文可直接调用
             CalendarService.shared.cacheService.clearRemindersCache()
@@ -66,7 +76,11 @@ final class BackgroundSyncService {
 
         let enabledSources = customSources.filter { $0.isEnabled }
         // 始终调用同步（即使没有启用的源），确保禁用所有订阅时能清理旧缓存
-        await CalendarService.shared.cacheService.syncSubscriptionEvents(sources: enabledSources)
+        if !(await CalendarService.shared.cacheService.syncSubscriptionEvents(sources: enabledSources)) {
+            failures.append("订阅日历同步失败")
+        }
+
+        return failures.isEmpty ? nil : failures.joined(separator: "；")
     }
 
     private func startTimer() {

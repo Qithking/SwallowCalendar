@@ -508,11 +508,13 @@ final class EventCacheService {
 
     /// 同步系统提醒到本地缓存
     /// - Note: 无到期时间的提醒也会同步，但不受日期范围限制
+    /// - Returns: 同步是否成功（guard 提前退出/保存失败返回 false），供手动同步错误反馈
     @MainActor
-    func syncReminders(from calendarService: CalendarService) async {
-        guard let context = self.context else { return }
-        guard !isSyncingReminders else { return }
-        guard AppSettings.shared.syncSystemReminders else { return }
+    @discardableResult
+    func syncReminders(from calendarService: CalendarService) async -> Bool {
+        guard let context = self.context else { return false }
+        guard !isSyncingReminders else { return false }
+        guard AppSettings.shared.syncSystemReminders else { return false }
 
         isSyncingReminders = true
         defer { isSyncingReminders = false }
@@ -597,7 +599,9 @@ final class EventCacheService {
             NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
         } catch {
             AppLogger.cache.error("提醒保存失败: \(String(describing: error))")
+            return false
         }
+        return true
     }
 
     /// 清除所有提醒缓存（isReminder 为 true 的记录）
@@ -652,10 +656,13 @@ final class EventCacheService {
     /// - Parameter sources: 启用的 ICS 订阅源列表
     /// - Note: 采用增删改模式：已存在的更新、源中不存在的删除、应用中没有的新增
     ///         获取失败的源保留旧数据不删除
+    /// - Returns: 同步是否成功（guard 提前退出/启用源全部获取失败/保存失败返回 false），
+    ///            供手动同步错误反馈；获取失败保留旧数据属容错设计，但需向 UI 暴露
     @MainActor
-    func syncSubscriptionEvents(sources: [CustomCalendarSource]) async {
-        guard let context = self.context else { return }
-        guard !isSubscriptionSyncing else { return }
+    @discardableResult
+    func syncSubscriptionEvents(sources: [CustomCalendarSource]) async -> Bool {
+        guard let context = self.context else { return false }
+        guard !isSubscriptionSyncing else { return false }
         isSubscriptionSyncing = true
         defer { isSubscriptionSyncing = false }
 
@@ -684,7 +691,7 @@ final class EventCacheService {
 
         // 2. 如果有启用的源但全部获取失败，保留旧数据不删除
         if !enabledSources.isEmpty && fetchedEventsBySource.isEmpty {
-            return
+            return false
         }
 
         // 3. 构建新数据的 eventID → 数据 映射
@@ -791,7 +798,9 @@ final class EventCacheService {
         } catch {
             // B-30：保存失败必须记录日志，静默吞掉会丢数据且无法排查
             AppLogger.cache.error("订阅同步保存失败: \(String(describing: error))")
+            return false
         }
+        return true
     }
 
     /// B-12：跨启动稳定的内容哈希（String.hashValue 每次启动随机种子，不可用作持久化标识）
