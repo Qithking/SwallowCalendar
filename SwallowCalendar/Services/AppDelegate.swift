@@ -27,6 +27,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }()
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 构建隐藏主菜单（accessory 应用不显示菜单栏，但 mainMenu 快捷键仍参与
+        // key equivalent 匹配——无 Edit 菜单时 Cmd+C/X/V/A 无法路由到文本
+        // field editor，应用内全部输入框将无法粘贴复制）
+        setupMainMenu()
+
         // 设置状态栏图标
         updateStatusItemIcon()
         
@@ -65,6 +70,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    /// 构建隐藏主菜单：仅承载文本编辑快捷键（撤销/重做/剪切/拷贝/粘贴/全选）。
+    /// 菜单项 target 为 nil，触发时经 responder chain 路由到当前 field editor；
+    /// autoenables 默认开启，非文本聚焦态自动禁用，不影响其它快捷键行为。
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+        let edit = NSMenu(title: "编辑")
+
+        let addItem: (String, Selector, String, NSEvent.ModifierFlags?) -> Void = { title, action, key, extraMask in
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            if let extraMask { item.keyEquivalentModifierMask = extraMask.union([.command]) }
+            edit.addItem(item)
+        }
+        // undo:/redo: 未在 NSResponder 的 Swift 接口显式暴露，用字符串 Selector 构造
+        addItem("撤销", Selector(("undo:")), "z", nil)
+        addItem("重做", Selector(("redo:")), "z", [.shift])
+        edit.addItem(.separator())
+        addItem("剪切", #selector(NSText.cut(_:)), "x", nil)
+        addItem("拷贝", #selector(NSText.copy(_:)), "c", nil)
+        addItem("粘贴", #selector(NSText.paste(_:)), "v", nil)
+        addItem("全选", #selector(NSText.selectAll(_:)), "a", nil)
+
+        let editItem = NSMenuItem()
+        editItem.submenu = edit
+        mainMenu.addItem(editItem)
+        NSApplication.shared.mainMenu = mainMenu
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // 应用退出时的清理工作
     }
