@@ -19,9 +19,17 @@ struct NLPTaskParser {
         do { return try NSRegularExpression(pattern: "(\\d+)月(\\d+)[日号]") }
         catch { fatalError("Invalid dateRegex pattern: \(error)") }
     }()
+    /// 农历日期片段 pattern：月序支持"正月/二月/…/冬月(十一月)/腊月(十二月)/数字"，
+    /// 日序支持"初一~初十/十一~十九/二十、廿一~廿九/三十/数字"，"日/号"可省略；
+    /// 单字日序刻意不含"七"——避免"农历七月七夕"中"七夕"的"七"被误当日序吃掉
+    ///（标准表达"七月初七"由"初"分支覆盖、数字格式由 \d 覆盖，不受影响）；
+    /// 供 lunarRegex、parseLunarDate 匹配、cleanTitle 清洗三处复用，避免多份 pattern 漂移
+    private static let lunarPatternString =
+        "(?:农历|阴历)\\s*((?:正|冬|腊|[一二三四五六七八九十]{1,2}|\\d{1,2})\\s*月)\\s*" +
+        "(三十|(?:廿|二十)[一二三四五六七八九]?|十[一二三四五六七八九]?|初[一二三四五六七八九十]|[一二三四五六八九]|\\d{1,2})\\s*[日号]?"
     /// 匹配农历日期格式
     private static let lunarRegex: NSRegularExpression = {
-        do { return try NSRegularExpression(pattern: "(?:农历|阴历)\\s*(\\d+)\\s*月\\s*(\\d+)\\s*[日号]?") }
+        do { return try NSRegularExpression(pattern: lunarPatternString) }
         catch { fatalError("Invalid lunarRegex pattern: \(error)") }
     }()
 
@@ -79,11 +87,6 @@ struct NLPTaskParser {
                 currentDate = advanceToNextPeriod(date: currentDate, recurrence: recurrence)
             }
             result.date = currentDate
-        }
-
-        // 标记是否为循环农历
-        if result.recurrence == .yearly && (trimmed.contains("农历") || trimmed.contains("阴历")) {
-            result.isRecurringLunar = true
         }
 
         // 提取农历标记（如果没有解析到农历日期，但包含农历关键词）
@@ -446,23 +449,19 @@ struct NLPTaskParser {
     /// 注意：农历Calendar使用佛历纪元，year不是公历年份
     /// 策略：从今年开始，逐天搜索，找到第一个匹配的农历日期
     private static func parseLunarDate(_ input: String, now: Date) -> (date: Date, matched: String, isLunar: Bool)? {
-        // 匹配"农历X月X日"或"阴历X月X日"格式（支持数字前后有空格，如"农历 7 月 8 日"）
-        let lunarPattern = "(?:农历|阴历)\\s*(\\d+)\\s*月\\s*(\\d+)\\s*[日号]?"
-        guard let match = input.range(of: lunarPattern, options: .regularExpression) else {
+        // 匹配"农历X月X日"（月序/日序支持中文与数字，如"正月初一""腊月三十"，"日/号"可省略）
+        guard let match = input.range(of: Self.lunarPatternString, options: .regularExpression) else {
             return nil
         }
         
         let matched = String(input[match])
-        // 提取月份和日期数字
-        let lunarRegex = Self.lunarRegex
-        guard let fullMatch = lunarRegex.firstMatch(in: input, range: NSRange(match, in: input)),
+        // 提取月序/日序 token 并转为数字（token 形态已由 pattern 限定，范围校验在转换函数内）
+        guard let fullMatch = Self.lunarRegex.firstMatch(in: input, range: NSRange(match, in: input)),
               fullMatch.numberOfRanges >= 3,
               let monthRange = Range(fullMatch.range(at: 1), in: input),
               let dayRange = Range(fullMatch.range(at: 2), in: input),
-              let lunarMonth = Int(String(input[monthRange])),
-              let lunarDay = Int(String(input[dayRange])),
-              lunarMonth >= 1, lunarMonth <= 12,
-              lunarDay >= 1, lunarDay <= 30 else {
+              let lunarMonth = lunarMonthValue(String(input[monthRange])),
+              let lunarDay = lunarDayValue(String(input[dayRange])) else {
             return nil
         }
 
@@ -502,6 +501,45 @@ struct NLPTaskParser {
         }
 
         return nil
+    }
+
+    // MARK: - 农历月序/日序换算
+
+    /// 中文数字（一~三十常用表达）转整数：一~九、十、十一~十九、二十/廿、二十一~二十九、三十
+    private static func chineseNumeral(_ text: String) -> Int? {
+        let digit: [String: Int] = ["一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+                                    "六": 6, "七": 7, "八": 8, "九": 9]
+        if let d = digit[text] { return d }
+        switch text {
+        case "十": return 10
+        case "二十", "廿": return 20
+        case "三十": return 30
+        default: break
+        }
+        if text.hasPrefix("十"), let d = digit[String(text.dropFirst())] { return 10 + d }
+        if text.hasPrefix("廿"), let d = digit[String(text.dropFirst())] { return 20 + d }
+        if text.hasPrefix("二十"), let d = digit[String(text.dropFirst(2))] { return 20 + d }
+        return nil
+    }
+
+    /// 农历月序 token 转数字（1~12）：正月=1、冬月=11、腊月=12，其余中文/数字月序通用换算
+    private static func lunarMonthValue(_ token: String) -> Int? {
+        // token 内允许空白（如"农历 7 月"），先去除再换算
+        let t = token.components(separatedBy: .whitespaces).joined()
+        let special = ["正月": 1, "冬月": 11, "腊月": 12]
+        if let v = special[t] { return v }
+        guard t.hasSuffix("月") else { return nil }
+        let body = String(t.dropLast())
+        guard let n = Int(body) ?? chineseNumeral(body), (1...12).contains(n) else { return nil }
+        return n
+    }
+
+    /// 农历日序 token 转数字（1~30）：初X=1~10，其余中文/数字日序通用换算
+    private static func lunarDayValue(_ token: String) -> Int? {
+        let t = token.components(separatedBy: .whitespaces).joined()
+        if let n = Int(t) { return (1...30).contains(n) ? n : nil }
+        if t.hasPrefix("初"), let d = chineseNumeral(String(t.dropFirst())) { return d }
+        return chineseNumeral(t)
     }
 
     // MARK: - 颜色解析
@@ -651,18 +689,20 @@ struct NLPTaskParser {
             result.removeSubrange(weekdayRange)
         }
 
-        // 移除周期关键词
-        let recurrenceKeywords = ["每年农历", "每年阴历", "每天", "每周", "每月", "每年", "循环", "重复"]
-        for kw in recurrenceKeywords {
-            result = result.replacingOccurrences(of: kw, with: "")
-        }
-
-        // 移除农历标记（包括农历日期，支持可选空格如"农历 7 月 8 日"）
-        if let lunarRange = result.range(of: "(?:农历|阴历)\\s*(?:\\d+)\\s*月\\s*(?:\\d+)\\s*[日号]?", options: .regularExpression) {
+        // 移除农历标记（含农历日期，月序/日序支持中文与数字）——必须在周期关键词之前：
+        // 否则"每年农历"先被移除会丢掉农历前缀，中文日序"正月初一"将无法匹配而残留标题
+        //（数字格式原靠下方公历移除兜底，中文表达无数字不适用）
+        if let lunarRange = result.range(of: Self.lunarPatternString, options: .regularExpression) {
             result.removeSubrange(lunarRange)
         }
         result = result.replacingOccurrences(of: "农历", with: "")
         result = result.replacingOccurrences(of: "阴历", with: "")
+
+        // 移除周期关键词
+        let recurrenceKeywords = ["每天", "每周", "每月", "每年", "循环", "重复"]
+        for kw in recurrenceKeywords {
+            result = result.replacingOccurrences(of: kw, with: "")
+        }
 
         // N-6：移除公历日期，如"10月21日"、"3月5号"（与 dateRegex 模式一致，需有日/号后缀）
         if let gregorianRange = result.range(of: "\\d+月\\d+[日号]", options: .regularExpression) {
@@ -731,9 +771,6 @@ struct ParsedTask {
     var priority: EventPriority?
     var recurrence: RecurrenceType?
     var isLunar: Bool = false
-    // N-8：仅解析打标（yearly + "农历"关键词），暂无消费方——农历 yearly 重复
-    // 实际按公历推进、日期逐年漂移。保留字段待后续补实现农历重复功能（用户已确认）
-    var isRecurringLunar: Bool = false
     var reminderMinutes: Int?
 
     init(title: String, date: Date) {
@@ -743,7 +780,6 @@ struct ParsedTask {
         self.priority = nil
         self.recurrence = nil
         self.isLunar = false
-        self.isRecurringLunar = false
         self.reminderMinutes = nil
     }
 }

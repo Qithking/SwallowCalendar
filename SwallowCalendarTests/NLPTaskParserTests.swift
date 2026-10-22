@@ -199,9 +199,8 @@ class NLPTaskParserTests: XCTestCase {
         // 验证标题清理正确
         XCTAssertEqual(result.title, "老妈生日")
         
-        // 验证标记为农历和循环农历
+        // 验证标记为农历（农历 yearly 重复由 isLunar + recurrence 驱动，无独立标记字段）
         XCTAssertTrue(result.isLunar)
-        XCTAssertTrue(result.isRecurringLunar)
         
         // 验证周期为每年
         XCTAssertEqual(result.recurrence, .yearly)
@@ -225,8 +224,8 @@ class NLPTaskParserTests: XCTestCase {
     }
     
     func testParseLunarDateWithOtherAttributes() {
-        // 测试农历日期与其他属性组合（数字格式；中文农历表达"正月初一"支持记入待办）
-        let result = NLPTaskParser.parse("农历1月1日春节 红色 重要 每年循环")
+        // 测试农历日期（中文表达"正月初一"）与其他属性组合
+        let result = NLPTaskParser.parse("农历正月初一春节 红色 重要 每年循环")
         
         // 验证各个属性
         XCTAssertEqual(result.title, "春节")
@@ -270,6 +269,12 @@ class NLPTaskParserTests: XCTestCase {
             ("农历7月7日七夕", 7, 7, "七夕"),
             ("农历8月15日中秋节", 8, 15, "中秋节"),
             ("农历9月9日重阳节", 9, 9, "重阳节"),
+            // 中文月序/日序表达（与数字格式等价）
+            ("农历五月初五端午", 5, 5, "端午"),
+            ("农历八月十五中秋", 8, 15, "中秋"),
+            ("农历腊月初八腊八", 12, 8, "腊八"),
+            ("农历冬月廿五记事", 11, 25, "记事"),
+            ("农历十一月十一团圆", 11, 11, "团圆"),
         ]
 
         let chineseCalendar = Calendar(identifier: .chinese)
@@ -296,6 +301,16 @@ class NLPTaskParserTests: XCTestCase {
         XCTAssertEqual(eveComponents.month, 12, "除夕应在农历十二月")
         XCTAssertTrue(eveComponents.day == 29 || eveComponents.day == 30,
                       "除夕应落在腊月廿九或三十，实际: \(eveComponents.day ?? -1)")
+
+        // 中文表达的除夕（腊月三十）走同一兜底路径
+        let eveCnResult = NLPTaskParser.parse("农历腊月三十除夕")
+        XCTAssertEqual(eveCnResult.title, "除夕")
+        XCTAssertTrue(eveCnResult.isLunar)
+        XCTAssertNotNil(eveCnResult.date)
+        let eveCnComponents = chineseCalendar.dateComponents([.month, .day], from: eveCnResult.date)
+        XCTAssertEqual(eveCnComponents.month, 12, "除夕应在农历十二月")
+        XCTAssertTrue(eveCnComponents.day == 29 || eveCnComponents.day == 30,
+                      "除夕应落在腊月廿九或三十，实际: \(eveCnComponents.day ?? -1)")
     }
     
     func testLunarDateRegression() {
@@ -332,7 +347,6 @@ class NLPTaskParserTests: XCTestCase {
         
         XCTAssertEqual(result.title, "老妈生日")
         XCTAssertTrue(result.isLunar)
-        XCTAssertTrue(result.isRecurringLunar)
         XCTAssertEqual(result.recurrence, .yearly)
         XCTAssertNotNil(result.date)
     }
