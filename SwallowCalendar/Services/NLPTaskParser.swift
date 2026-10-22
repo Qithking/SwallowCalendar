@@ -139,7 +139,9 @@ struct NLPTaskParser {
         // N-1：带前缀分支必须先于无前缀分支，否则"下午3点30分"被无前缀正则
         // 先拦截解析为 03:30，且带分钟输入令原带前缀分支永不可达
         // E-13：前缀组必选——可选时"晚上开会3点"类输入会从"3点"处匹配而丢失前缀
-        else if let timeMatch = input.range(of: "(上午|下午|晚上|凌晨)(\\d{1,2})点(\\d{1,2}分)?", options: .regularExpression) {
+        // 口语时间：分钟单位兼容"分/点"（"晚上7点30点"把"分"读作"点"）或省略单位
+        //（"晚上7点30"），否则仅命中"晚上7点"而丢分钟；与 cleanTitle 清洗范围保持一致
+        else if let timeMatch = input.range(of: "(上午|下午|晚上|凌晨)(\\d{1,2})点(\\d{1,2}[分点]?)?", options: .regularExpression) {
             let timeStr = String(input[timeMatch])
 
             // 使用 NSRegularExpression 捕获组提取小时和分钟（避免 filter 合并数字的问题）
@@ -724,8 +726,9 @@ struct NLPTaskParser {
         }
         // 再移除 X点X分 格式（N-1 同源：可选时段前缀需覆盖，否则"下午3点30分开会"
         // 仅命中"3点30分"而残留"下午"，违反 AC-7 标题清洗无残留；分钟数字组保持
-        // 必选，否则"20点15开会"这类无"分"字输入只能由本分支完整清除）
-        else if let timeRange = result.range(of: "(?:上午|下午|晚上|凌晨)?\\d{1,2}点\\d{1,2}(?:分)?", options: .regularExpression) {
+        // 必选，否则"20点15开会"这类无"分"字输入只能由本分支完整清除）；
+        // 分钟单位兼容"分/点"（口语"晚上7点30点下班"），否则清洗后残留"点下班"
+        else if let timeRange = result.range(of: "(?:上午|下午|晚上|凌晨)?\\d{1,2}点\\d{1,2}[分点]?", options: .regularExpression) {
             result.removeSubrange(timeRange)
         }
         // 最后移除带时间段的时间格式
