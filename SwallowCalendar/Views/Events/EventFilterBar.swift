@@ -10,9 +10,10 @@ struct EventFilterBar: View {
     @Binding var selectedFilter: EventFilterMode
     // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
     private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
-    @State private var showSortMenu = false
 
     var body: some View {
+        // @Bindable 局部投影：appSettings 为 @Observable 环境，取 $binding 需经 Bindable
+        @Bindable var appSettings = appSettings
         HStack(spacing: 8) {
             // 左侧：过滤选项
             ScrollView(.horizontal, showsIndicators: false) {
@@ -41,86 +42,37 @@ struct EventFilterBar: View {
             
             Spacer()
             
-            // 右侧：排序按钮
-            Button {
-                showSortMenu.toggle()
+            // 右侧：排序菜单（改用系统 NSMenu 承载：macOS 26 上 NSPopover 的
+            // Liquid Glass 材质呈现时内存跳升明显——用户实测仅排序弹框异常、
+            // 自研窗口弹窗正常；系统菜单无该开销且更符合菜单栏应用规范）
+            Menu {
+                // 排序字段：Picker 内联渲染，当前项勾选由系统绘制
+                // （NSMenu 菜单项不渲染 SwiftUI Label 图标，Button + checkmark 方式勾选无效）
+                Picker("排序字段", selection: $appSettings.sortMode) {
+                    ForEach(AppSettings.SortMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .pickerStyle(.inline)
+
+                Divider()
+
+                // 排序方向
+                Picker("排序方向", selection: $appSettings.sortOrder) {
+                    ForEach(AppSettings.SortOrder.allCases, id: \.self) { order in
+                        Text(order.displayName).tag(order)
+                    }
+                }
+                .pickerStyle(.inline)
             } label: {
                 Image(systemName: "line.3.horizontal.decrease.circle")
                     .font(.system(size: 14))
                     .foregroundColor(.secondary)
             }
-            .buttonStyle(.plain)
-            .popover(isPresented: $showSortMenu, arrowEdge: .bottom) {
-                sortMenuContent
-            }
+            .menuIndicator(.hidden)
+            .fixedSize()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-    }
-    
-    // MARK: - Sort Menu Content
-    
-    private var sortMenuContent: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            // 排序字段
-            ForEach(AppSettings.SortMode.allCases, id: \.self) { mode in
-                Button {
-                    appSettings.sortMode = mode
-                    showSortMenu = false
-                } label: {
-                    HStack(spacing: 8) {
-                        if appSettings.sortMode == mode {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 10))
-                                .foregroundColor(accentColor)
-                                .frame(width: 12)
-                        } else {
-                            Spacer()
-                                .frame(width: 12)
-                        }
-                        Text(mode.displayName)
-                            .font(.system(size: 12))
-                            .foregroundColor(.primary)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-            }
-            
-            Divider()
-            
-            // 排序方向
-            ForEach(AppSettings.SortOrder.allCases, id: \.self) { order in
-                Button {
-                    appSettings.sortOrder = order
-                    showSortMenu = false
-                } label: {
-                    HStack(spacing: 8) {
-                        if appSettings.sortOrder == order {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 10))
-                                .foregroundColor(accentColor)
-                                .frame(width: 12)
-                        } else {
-                            Spacer()
-                                .frame(width: 12)
-                        }
-                        Text(order.displayName)
-                            .font(.system(size: 12))
-                            .foregroundColor(.primary)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-            }
-        }
-        .padding(.vertical, 4)
-        .frame(minWidth: 120)
     }
 }
