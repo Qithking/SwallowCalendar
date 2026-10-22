@@ -5,6 +5,7 @@
 
 import AppKit
 import SwiftUI
+import SwiftData
 
 @Observable
 final class StatusBarIconManager {
@@ -32,21 +33,25 @@ final class StatusBarIconManager {
 
     private var refreshInterval: TimeInterval {
         let settings = AppSettings.shared
+        let base: TimeInterval
         switch settings.iconStyle {
         case .calendarIcon:
-            return 0
+            base = 0
         case .solidDate, .strokeDate:
-            return 60
+            base = 60
         case .customFormat:
             let fmt = settings.customIconFormat
             if fmt.contains("ss") || fmt.contains("s") {
-                return 1
+                base = 1
+            } else {
+                // mm/HH 及纯日期格式均为分钟级精度，60 秒刷新即可
+                base = 60
             }
-            if fmt.contains("mm") || fmt.contains("m") || fmt.contains("HH") || fmt.contains("H") {
-                return 60
-            }
-            return 60
         }
+        // D2：徽标开启时兜底刷新间隔取 max(30, 原间隔)——秒级 customFormat 也不压过
+        // 徽标更新节奏；即时刷新以 CachedEventsChanged 通知为主，定时器仅兜底
+        guard settings.statusBarCountdownEnabled else { return base }
+        return max(30, base)
     }
 
     private init() {
@@ -54,6 +59,14 @@ final class StatusBarIconManager {
         let settings = AppSettings.shared
         let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
         currentIcon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor, cache: iconCache)
+        // D2/G7v2：订阅缓存变更通知，收到即刷新（不重启定时器），30s 定时器兜底
+        NotificationCenter.default.addObserver(
+            forName: .cachedEventsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateIcon()
+        }
     }
 
     /// 绑定 statusItem 按钮（由 AppDelegate 在创建 statusItem 后调用）
@@ -65,6 +78,12 @@ final class StatusBarIconManager {
 
     func updateIcon() {
         let settings = AppSettings.shared
+
+        // D2：徽标开启时渲染最近未完成事项倒计时，无事项回退默认图标
+        if settings.statusBarCountdownEnabled {
+            renderCountdownBadge(settings: settings)
+            return
+        }
 
         // V-19：日期类图标（实心/描边日期）一天内内容不变，同日内跳过重绘，
         // 跨天（标记为 nil 或非今天）才重新生成
@@ -79,6 +98,48 @@ final class StatusBarIconManager {
         let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
         let icon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor, cache: iconCache)
         currentIcon = icon
+    }
+
+    /// D2：查询最近未完成事项并渲染倒计时徽标
+    /// G3：EventCacheService 为 @MainActor，而本方法由 RunLoop Timer / 通知触发，
+    /// 徽标查询经 Task { @MainActor } 派发，避免跨 actor 访问缓存服务
+    private func renderCountdownBadge(settings: AppSettings) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard let text = Self.latestCountdownText() else {
+                // 无最近未完成事项：回退默认图标
+                let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
+                self.currentIcon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor, cache: self.iconCache)
+                return
+            }
+            // 徽标外观跟随自定义格式样式设置（无背景/实心/描边）
+            let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
+            self.currentIcon = Self.renderBadgeText(text, style: settings.customFormatStyle, iconColor: iconColor)
+        }
+    }
+
+    /// D2：取最近未完成用户事项的倒计时文案（nil = 无可显示事项）
+    /// 复用 B-27 谓词粗筛模式：粗筛限定用户分类 + 未完成 + startDate ∈ (now, now+365 天]，
+    /// 升序取第一个即最近事项；精确判定由谓词完成
+    @MainActor
+    private static func latestCountdownText(now: Date = Date()) -> String? {
+        guard let context = EventCacheService.shared.context else { return nil }
+        let upperBound = now.addingTimeInterval(365 * 86400)
+        let userCategory = "用户"
+        let distantPast = Date.distantPast
+        let descriptor = FetchDescriptor<CachedEvent>(
+            predicate: #Predicate {
+                $0.categoryRaw == userCategory &&
+                !$0.isCompleted &&
+                $0.startDate != nil &&
+                ($0.startDate ?? distantPast) > now &&
+                ($0.startDate ?? distantPast) <= upperBound
+            },
+            sortBy: [SortDescriptor(\.startDate)]
+        )
+        guard let nearest = try? context.fetch(descriptor).first,
+              let start = nearest.startDate else { return nil }
+        return CountdownFormatter.formatCountdown(remaining: start.timeIntervalSince(now))
     }
 
     func updateIconAndRestartTimer() {
@@ -252,8 +313,11 @@ final class StatusBarIconManager {
     }
 
     private static func renderCustomFormatIcon(format: String, style: AppSettings.CustomFormatStyle, iconColor: NSColor) -> NSImage {
-        let text = customFormatter(for: format).string(from: Date())
-        
+        renderBadgeText(customFormatter(for: format).string(from: Date()), style: style, iconColor: iconColor)
+    }
+
+    /// D2：按给定文本渲染宽度自适应的菜单栏图标（自定义格式图标与倒计时徽标共用）
+    private static func renderBadgeText(_ text: String, style: AppSettings.CustomFormatStyle, iconColor: NSColor) -> NSImage {
         // 使用系统菜单栏标准字体（13pt, regular）
         let fontSize: CGFloat = 13
         let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)

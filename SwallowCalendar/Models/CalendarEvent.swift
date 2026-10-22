@@ -98,6 +98,8 @@ struct CalendarEvent: Identifiable {
     let recurrenceType: RecurrenceType
     /// 提醒提前分钟数（0=不提醒）
     let reminderMinutes: Int
+    /// 多级提醒提前分钟数组（plan 步骤 7，nil = EK 侧无多级 alarm；与 reminderMinutes.max 同源）
+    var reminderOffsets: [Int]? = nil
     /// 用户选择的事件颜色（nil 时使用 calendarColorHex）
     let eventColorHex: String?
     /// B-25：EK 事件备注（仅系统日历同步拉取时填充，供 syncEvents 判分类/完成标记，

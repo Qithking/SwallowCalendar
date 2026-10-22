@@ -73,6 +73,8 @@ struct EventPanelView: View {
                         Task {
                             // V-2：先 await 数据变更完成，再触发刷新，避免列表回显旧状态
                             await calendarService.toggleEventCompleted(eventID: event.id, isCompleted: true, isReminder: event.isReminder)
+                            // D2/G7v2：完成路径广播缓存变更（徽标即时刷新）
+                            NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
                             refreshTrigger.toggle()
                         }
                     },
@@ -113,6 +115,8 @@ struct EventPanelView: View {
                         Task {
                             // V-2：先 await 数据变更完成，再触发刷新，避免列表回显旧状态
                             await calendarService.toggleEventCompleted(eventID: event.id, isCompleted: false, isReminder: event.isReminder)
+                            // D2/G7v2：取消完成同样改变未完成集合，广播缓存变更（徽标即时刷新）
+                            NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
                             refreshTrigger.toggle()
                         }
                     },
@@ -225,6 +229,7 @@ enum EventFilterMode: String, CaseIterable, Codable {
     case thisMonth = "本月"
     case thisYear = "本年"
     case all = "全部"
+    case expired = "已过期"
 
     func dateRange(from base: Date) -> (start: Date, end: Date) {
         let calendar = Calendar.current
@@ -256,6 +261,9 @@ enum EventFilterMode: String, CaseIterable, Codable {
             // V-22："全部"语义修正为真全部（与 ICS 导出语义一致），
             // 不再隐含 ±5 年窗口，避免用户 5 年前/后的历史事项在"全部"视图不可见
             return (.distantPast, .distantFuture)
+        case .expired:
+            // C4/G2："已过期"档 = startDate ∈ (distantPast, now)，只读列出过期未完成事项
+            return (.distantPast, Date())
         }
     }
 }

@@ -11,6 +11,44 @@ import SwiftData
 import os
 import SwiftUI  // 为了导入 CalendarEvent
 
+/// 去重键：持久化元素 "eventID|alertTs"（plan 步骤 5 / AC-7 多级提醒各级独立去重）。
+/// 旧格式（无 "|"，仅 eventID）惰性兼容：alertTime 回退 .distantPast，
+/// 匹配语义为"该事件已提醒过"；孤儿键不迁移，保留至 trim（1000 上限）自然淘汰
+struct ReminderAlertKey: Equatable {
+    let eventID: String
+    let alertTime: Date
+
+    init(eventID: String, alertTime: Date) {
+        self.eventID = eventID
+        self.alertTime = alertTime
+    }
+
+    /// 解码持久化串：时间戳取末段 "|" 之后（eventID 本身不含 "|"，末段分割对
+    /// 新旧格式均正确；时间戳段非法时按旧格式兼容处理）
+    init(raw: String) {
+        if let idx = raw.lastIndex(of: "|"),
+           let ts = TimeInterval(raw[raw.index(after: idx)...]) {
+            self.eventID = String(raw[..<idx])
+            self.alertTime = Date(timeIntervalSince1970: ts)
+        } else {
+            self.eventID = raw
+            self.alertTime = .distantPast
+        }
+    }
+
+    /// 编码为持久化串（秒级时间戳）
+    var encoded: String {
+        "\(eventID)|\(String(format: "%.0f", alertTime.timeIntervalSince1970))"
+    }
+}
+
+/// C2 稍后提醒记录：持久化到 UserDefaults（键 snoozeRecordsKey），
+/// 由 60s 轮询检查触发，不建独立 Timer
+struct SnoozeRecord: Codable, Equatable {
+    let eventID: String
+    let fireDate: Date
+}
+
 @MainActor
 final class ReminderAlertService {
     static let shared = ReminderAlertService()
@@ -117,49 +155,72 @@ final class ReminderAlertService {
         
         do {
             let allUserEvents = try context.fetch(baseDescriptor)
-            
-            // 在内存中过滤日期范围
-            let dueEvents = allUserEvents.filter { event in
-                guard let startDate = event.startDate else { return false }
 
+            // 步骤 8 多级扫描：按 offsets 各级生成 alertTime，逐级窗口判定，
+            // 产出 (事件, 本次应触发的各级 alertTime) 对；同一事件多级同时到期合并为一条
+            var duePairs: [(event: CachedEvent, alertTimes: [Date])] = []
+            for event in allUserEvents {
+                guard let startDate = event.startDate else { continue }
+                let offsets = event.reminderOffsets
+                var alertTimes: [Date] = []
                 if includeExpired {
                     // 启动时的过期检查：
-                    // - 设置了提醒的事项：提醒时间已过（startDate - reminderMinutes <= now）
-                    // - 未设置提醒的事项：事件已过期（startDate < now）
-                    if event.reminderMinutes > 0 {
-                        let alertTime = startDate.addingTimeInterval(TimeInterval(-event.reminderMinutes * 60))
-                        return alertTime <= now
+                    // - 未设置提醒（单级 0）：事件已过期（startDate < now）
+                    // - 设置了提醒：任一级 alertTime 已过即触发
+                    if event.reminderOffsetsJSON == nil && event.reminderMinutes == 0 {
+                        if startDate < now { alertTimes = [startDate] }
                     } else {
-                        return startDate < now
+                        alertTimes = offsets.compactMap { offset in
+                            let t = startDate.addingTimeInterval(TimeInterval(-offset * 60))
+                            return t <= now ? t : nil
+                        }
                     }
                 } else {
-                    // 常规定时检查：按照用户设置的提醒时间触发
-                    // 未设置提醒（reminderMinutes == 0）的事项不弹窗
-                    guard event.reminderMinutes > 0 else { return false }
-                    let alertTime = startDate.addingTimeInterval(TimeInterval(-event.reminderMinutes * 60))
-                    // 提醒时间已到达，且事件尚未过期（避免重复提醒已过期事项）
-                    // B-14：窗口下界改用持久化的上次检查时间——应用挂起/睡眠超 90 秒后，
-                    // 原固定 90 秒窗口会把挂起期间到期的事件滤掉导致漏提醒；
-                    // 无记录时回退 90 秒窗口（保持冷启动既有行为，配合 60 秒定时器确保不遗漏）
-                    let windowStart = lastCheckTime ?? calendar.date(byAdding: .second, value: -90, to: now)!
-                    return alertTime <= now && alertTime >= windowStart
+                    // 常规定时检查：逐级窗口判定 [windowStart, now]；
+                    // 未设置提醒（无正档位）的事项不弹窗
+                    // B-14：窗口下界用持久化的上次检查时间——应用挂起/睡眠超 90 秒后，
+                    // 固定 90 秒窗口会滤掉挂起期间到期的事项导致漏提醒；
+                    // 无记录时回退 90 秒窗口（配合 60 秒定时器确保不遗漏）
+                    alertTimes = offsets.compactMap { offset in
+                        guard offset > 0 else { return nil }
+                        let t = startDate.addingTimeInterval(TimeInterval(-offset * 60))
+                        return (t <= now && t >= windowStart) ? t : nil
+                    }
+                }
+                guard !alertTimes.isEmpty else { continue }
+                // (eventID, alertTime) 级别级去重：已提醒过的级剔除（启动时忽略缓存确保过期事项始终提示）；
+                // 旧格式键（纯 eventID）经 hasAlertedKey 惰性兼容
+                if !ignoreAlertedCache {
+                    alertTimes = alertTimes.filter { !hasAlertedKey(eventID: event.eventID, alertTime: $0) }
+                }
+                if !alertTimes.isEmpty {
+                    duePairs.append((event, alertTimes))
                 }
             }
-            
-            // 过滤掉已经提醒过的事件（启动时忽略缓存，确保过期事项始终提示）
-            let newEvents = ignoreAlertedCache ? dueEvents : dueEvents.filter { !lastAlertedEventIDs.contains($0.eventID) }
-            
-            if newEvents.count > 0 {
-                for event in newEvents {
-                    AppLogger.reminder.info("到期提醒弹出 id=\(event.eventID) start=\(event.startDate.map { String($0.timeIntervalSince1970) } ?? "nil") reminderMinutes=\(event.reminderMinutes) isReminder=\(event.isReminder)")
+
+            // C2：snooze 到期事件并入本次弹窗（同事件以常规触发优先，按 eventID 去重）
+            var mergedEvents = duePairs.map(\.event)
+            for snoozed in consumeDueSnoozes(now: now)
+            where !mergedEvents.contains(where: { $0.eventID == snoozed.eventID }) {
+                mergedEvents.append(snoozed)
+            }
+
+            if !mergedEvents.isEmpty {
+                // 日志记录触发级别与时刻（不带标题，避免隐私泄露）
+                for pair in duePairs {
+                    for alertTime in pair.alertTimes {
+                        // startDate 异常缺失时以 alertTime 兜底（level 归 0），避免强解包崩溃
+                        let level = Int((pair.event.startDate ?? alertTime).timeIntervalSince(alertTime) / 60)
+                        AppLogger.reminder.info("到期提醒弹出 id=\(pair.event.eventID) level=\(level)min alertTime=\(Int(alertTime.timeIntervalSince1970)) isReminder=\(pair.event.isReminder)")
+                    }
                 }
                 // 合并显示所有到期/即将到期的事项
-                let isExpired = includeExpired || newEvents.allSatisfy { ($0.startDate ?? now) < now }
-                showCombinedAlert(for: newEvents, isExpired: isExpired)
-                // 记录已提醒的事件ID（追加到末尾，保持插入顺序）
-                newEvents.forEach { event in
-                    if !lastAlertedEventIDs.contains(event.eventID) {
-                        lastAlertedEventIDs.append(event.eventID)
+                let isExpired = includeExpired || mergedEvents.allSatisfy { ($0.startDate ?? now) < now }
+                showCombinedAlert(for: mergedEvents, isExpired: isExpired)
+                // 记录已提醒的各级键（追加到末尾，保持插入顺序；snooze 键已在 consumeDueSnoozes 记录）
+                duePairs.forEach { pair in
+                    pair.alertTimes.forEach { alertTime in
+                        lastAlertedEventIDs.append(ReminderAlertKey(eventID: pair.event.eventID, alertTime: alertTime).encoded)
                     }
                 }
                 // 持久化到 UserDefaults，避免应用重启后重复弹窗
@@ -171,8 +232,11 @@ final class ReminderAlertService {
                     guard let self else { return }
                     // B-29：移除后同步持久化——原实现只改内存数组，重启后
                     // UserDefaults 仍含旧 ID，5 分钟重提醒窗口失效
-                    for event in newEvents {
-                        self.lastAlertedEventIDs.removeAll { $0 == event.eventID }
+                    for event in mergedEvents {
+                        // 按事件匹配移除（含新键前缀与旧格式键），300 秒后允许再次提醒
+                        self.lastAlertedEventIDs.removeAll { raw in
+                            ReminderAlertKey(raw: raw).eventID == event.eventID
+                        }
                     }
                     self.persistAlertedEventIDs()
                 }
@@ -187,16 +251,98 @@ final class ReminderAlertService {
     }
     
     /// 显示合并的过期事项提醒弹窗（自定义 SwiftUI 窗口，替代系统 NSAlert）
+    /// G4：单条完成接 markAsCompleted、稍后提醒接 snooze
     private func showCombinedAlert(for events: [CachedEvent], isExpired: Bool) {
-        ReminderAlertWindowController.shared.show(events: events, isExpired: isExpired) {
-            Task { @MainActor in
-                // B-15：仅标记已开始的实例——"提醒时间已到但事件尚未开始"（startDate > now）
-                // 的实例被提前标完成会错误推进周期任务序列
-                for event in events where (event.startDate ?? Date()) <= Date() {
-                    await self.markAsCompleted(eventID: event.eventID)
+        ReminderAlertWindowController.shared.show(
+            events: events,
+            isExpired: isExpired,
+            onCompleteAll: { [weak self] in
+                Task { @MainActor in
+                    // B-15：仅标记已开始的实例——"提醒时间已到但事件尚未开始"（startDate > now）
+                    // 的实例被提前标完成会错误推进周期任务序列
+                    guard let self else { return }
+                    for event in events where (event.startDate ?? Date()) <= Date() {
+                        await self.markAsCompleted(eventID: event.eventID)
+                    }
+                }
+            },
+            onEventComplete: { [weak self] eventID in
+                Task { @MainActor in
+                    // 单条完成与"全部完成"同一 B-15 语义：仅已开始实例才标记
+                    guard let self,
+                          let event = events.first(where: { $0.eventID == eventID }),
+                          (event.startDate ?? Date()) <= Date() else { return }
+                    await self.markAsCompleted(eventID: eventID)
+                }
+            },
+            onSnooze: { [weak self] eventID, minutes in
+                Task { @MainActor in
+                    self?.snooze(eventID: eventID, minutes: minutes)
                 }
             }
+        )
+    }
+
+    // MARK: - C2 稍后提醒（snooze）
+
+    private static let snoozeRecordsKey = "ReminderAlertService.snoozeRecords"
+
+    /// 稍后提醒：弹窗关闭，约 minutes 分钟后重新提醒（startDate 不变，AC-5）
+    /// SnoozeRecord 入 UserDefaults，由 60s 轮询检查触发；同事件重复 snooze 覆盖旧记录
+    func snooze(eventID: String, minutes: Int) {
+        var records = Self.loadSnoozeRecords()
+        records.removeAll { $0.eventID == eventID }
+        records.append(SnoozeRecord(eventID: eventID, fireDate: Date().addingTimeInterval(TimeInterval(minutes * 60))))
+        Self.saveSnoozeRecords(records)
+        AppLogger.reminder.info("稍后提醒 id=\(eventID) minutes=\(minutes)")
+    }
+
+    static func loadSnoozeRecords() -> [SnoozeRecord] {
+        guard let data = UserDefaults.standard.data(forKey: snoozeRecordsKey),
+              let records = try? JSONDecoder().decode([SnoozeRecord].self, from: data) else { return [] }
+        return records
+    }
+
+    static func saveSnoozeRecords(_ records: [SnoozeRecord]) {
+        if let data = try? JSONEncoder().encode(records) {
+            UserDefaults.standard.set(data, forKey: snoozeRecordsKey)
         }
+    }
+
+    /// 收集到期的 snooze 记录（checkDueEvents 轮询内调用，复用轮询不建独立 Timer）
+    /// 到期记录：事件存在且未完成 → 触发并转 AlertKey（后续去重生效）；
+    /// 失效（已删除/已完成）→ GC 清除（防幽灵提醒）
+    private func consumeDueSnoozes(now: Date) -> [CachedEvent] {
+        guard let context = EventCacheService.shared.context else { return [] }
+        let records = Self.loadSnoozeRecords()
+        guard !records.isEmpty else { return [] }
+
+        var triggered: [CachedEvent] = []
+        var surviving: [SnoozeRecord] = []
+        for record in records {
+            if record.fireDate > now {
+                surviving.append(record)
+                continue
+            }
+            let descriptor = FetchDescriptor<CachedEvent>(
+                predicate: #Predicate { $0.eventID == record.eventID }
+            )
+            if let event = try? context.fetch(descriptor).first, !event.isCompleted {
+                triggered.append(event)
+                // snooze 重提醒写入新 AlertKey（fireDate 时刻）；5 分钟重提醒机制照常运行，
+                // 两窗口重叠致同事项短时重复提醒由合并弹窗替换机制收敛为单窗（已定案行为）
+                let key = ReminderAlertKey(eventID: record.eventID, alertTime: record.fireDate).encoded
+                if !lastAlertedEventIDs.contains(key) {
+                    lastAlertedEventIDs.append(key)
+                }
+                AppLogger.reminder.info("稍后提醒触发 id=\(record.eventID) fireDate=\(Int(record.fireDate.timeIntervalSince1970))")
+            }
+            // 到期记录不再保留：存活的已转 AlertKey，失效即 GC
+        }
+        if surviving.count != records.count {
+            Self.saveSnoozeRecords(surviving)
+        }
+        return triggered
     }
 
     /// 标记事件为完成
@@ -216,6 +362,8 @@ final class ReminderAlertService {
                     isCompleted: true,
                     isReminder: event.isReminder
                 )
+                // D2/G7v2：弹窗完成路径广播缓存变更（徽标即时刷新）
+                NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
                 AppLogger.reminder.info("已标记事件完成: \(eventID)")
             }
         } catch {
@@ -237,5 +385,17 @@ final class ReminderAlertService {
             AppLogger.reminder.info("清理了 \(overflow) 个过期提醒记录")
         }
         persistAlertedEventIDs()
+    }
+
+    // MARK: - 去重键辅助
+
+    /// 判断 (eventID, alertTime) 是否已提醒过：新键精确匹配 alertTime；
+    /// 旧格式键（解码 alertTime == .distantPast）惰性兼容——视为该事件已提醒过
+    private func hasAlertedKey(eventID: String, alertTime: Date) -> Bool {
+        lastAlertedEventIDs.contains { raw in
+            let decoded = ReminderAlertKey(raw: raw)
+            return decoded.eventID == eventID &&
+                   (decoded.alertTime == alertTime || decoded.alertTime == .distantPast)
+        }
     }
 }

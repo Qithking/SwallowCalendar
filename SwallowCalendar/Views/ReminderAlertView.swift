@@ -27,7 +27,14 @@ final class ReminderAlertWindowController {
     private init() {}
 
     /// 显示提醒弹窗（重复调用会替换已有窗口）
-    func show(events: [CachedEvent], isExpired: Bool, onCompleteAll: @escaping () -> Void) {
+    /// G4：onEventComplete 单条完成回调、onSnooze 稍后提醒回调（10/30/60 分钟）
+    func show(
+        events: [CachedEvent],
+        isExpired: Bool,
+        onCompleteAll: @escaping () -> Void,
+        onEventComplete: @escaping (String) -> Void = { _ in },
+        onSnooze: @escaping (String, Int) -> Void = { _, _ in }
+    ) {
         window?.close()
 
         // 宽 340 与主面板一致；高度由 SwiftUI 内容自适应（fittingSize），
@@ -42,6 +49,12 @@ final class ReminderAlertWindowController {
             onCompleteAll: { [weak self] in
                 self?.close()
                 onCompleteAll()
+            },
+            onEventComplete: { eventID in
+                onEventComplete(eventID)
+            },
+            onSnooze: { eventID, minutes in
+                onSnooze(eventID, minutes)
             }
         )
 
@@ -90,6 +103,30 @@ struct ReminderAlertView: View {
     let isExpired: Bool
     let onDismiss: () -> Void
     let onCompleteAll: () -> Void
+    /// C2：单条完成回调（eventID）
+    let onEventComplete: (String) -> Void
+    /// C2：稍后提醒回调（eventID, minutes）
+    let onSnooze: (String, Int) -> Void
+
+    /// 单条完成/稍后提醒后从弹窗移除该行（其余保留，全部移除后自动关闭）
+    @State private var displayedEvents: [CachedEvent]
+
+    init(
+        events: [CachedEvent],
+        isExpired: Bool,
+        onDismiss: @escaping () -> Void,
+        onCompleteAll: @escaping () -> Void,
+        onEventComplete: @escaping (String) -> Void,
+        onSnooze: @escaping (String, Int) -> Void
+    ) {
+        self.events = events
+        self.isExpired = isExpired
+        self.onDismiss = onDismiss
+        self.onCompleteAll = onCompleteAll
+        self.onEventComplete = onEventComplete
+        self.onSnooze = onSnooze
+        _displayedEvents = State(initialValue: events)
+    }
 
     // V-18：直接读共享设置的主题色（弹窗为独立窗口，无 appSettings 环境可注入）
     private var accentColor: Color { Color(hex: AppSettings.shared.accentColorHex) }
@@ -125,7 +162,7 @@ struct ReminderAlertView: View {
                 .font(.system(size: 22))
                 .foregroundColor(isExpired ? .orange : accentColor)
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(events.count) 个待办事项")
+                Text("\(displayedEvents.count) 个待办事项")
                     .font(.system(size: 14, weight: .semibold))
                 Text(isExpired ? "已过期，请及时处理" : "即将到期")
                     .font(.system(size: 11))
@@ -141,9 +178,9 @@ struct ReminderAlertView: View {
     /// >5 项用固定高度的 ScrollView 滚动查看
     @ViewBuilder
     private var eventList: some View {
-        if events.count <= 5 {
+        if displayedEvents.count <= 5 {
             VStack(spacing: 6) {
-                ForEach(events, id: \.eventID) { event in
+                ForEach(displayedEvents, id: \.eventID) { event in
                     eventRow(event)
                 }
             }
@@ -152,7 +189,7 @@ struct ReminderAlertView: View {
         } else {
             ScrollView {
                 VStack(spacing: 6) {
-                    ForEach(events, id: \.eventID) { event in
+                    ForEach(displayedEvents, id: \.eventID) { event in
                         eventRow(event)
                     }
                 }
@@ -164,7 +201,7 @@ struct ReminderAlertView: View {
         }
     }
 
-    /// 单条事项行：状态圆点 + 标题 + 时间
+    /// 单条事项行：状态圆点 + 标题 + 时间 + 行内操作（稍后提醒菜单 / 单条完成）
     private func eventRow(_ event: CachedEvent) -> some View {
         let isOverdue = (event.startDate ?? Date()) < Date()
         return HStack(spacing: 10) {
@@ -182,6 +219,34 @@ struct ReminderAlertView: View {
                 }
             }
             Spacer()
+            // 稍后提醒菜单（10/30/60 分钟，复用 60s 轮询触发）
+            Menu {
+                ForEach([10, 30, 60], id: \.self) { minutes in
+                    Button("稍后 \(minutes) 分钟") {
+                        removeRow(event)
+                        onSnooze(event.eventID, minutes)
+                    }
+                }
+            } label: {
+                Image(systemName: "clock")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("稍后提醒")
+            // 单条完成：事项变已办并从弹窗移除，其余保留（AC-4）
+            Button {
+                removeRow(event)
+                onEventComplete(event.eventID)
+            } label: {
+                Image(systemName: "checkmark.circle")
+                    .font(.system(size: 13))
+                    .foregroundColor(.accentColor)
+            }
+            .buttonStyle(.plain)
+            .help("标记完成")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -189,6 +254,14 @@ struct ReminderAlertView: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.primary.opacity(0.05))
         )
+    }
+
+    /// 从弹窗移除一行；全部移除后自动关闭
+    private func removeRow(_ event: CachedEvent) {
+        displayedEvents.removeAll { $0.eventID == event.eventID }
+        if displayedEvents.isEmpty {
+            onDismiss()
+        }
     }
 
     /// 底部按钮区：次要（知道了）+ 主要（全部标记完成）

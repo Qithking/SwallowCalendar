@@ -70,6 +70,14 @@ final class AppSettings {
         }
     }
 
+    /// 菜单栏显示最近待办事项倒计时徽标（D2，默认关闭）
+    var statusBarCountdownEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(statusBarCountdownEnabled, forKey: "statusBarCountdownEnabled")
+            StatusBarIconManager.shared.updateIconAndRestartTimer()
+        }
+    }
+
     /// 系统日历分类颜色
     var systemCalendarColorHex: String {
         didSet {
@@ -231,6 +239,7 @@ final class AppSettings {
         self.sortMode = SortMode(rawValue: UserDefaults.standard.string(forKey: "sortMode") ?? "") ?? .default
         self.sortOrder = SortOrder(rawValue: UserDefaults.standard.string(forKey: "sortOrder") ?? "") ?? .descending
         self.defaultFilterMode = UserDefaults.standard.string(forKey: "defaultFilterMode") ?? "本月"
+        self.statusBarCountdownEnabled = UserDefaults.standard.object(forKey: "statusBarCountdownEnabled") as? Bool ?? false
 
         // 初始化时同步一次开机启动状态（让 SMAppService 生效）
         updateLaunchAtLogin()

@@ -340,8 +340,9 @@ private struct CountdownTextView: View {
     let eventID: String
     
     @State private var countdownText: String = ""
+    @State private var tier: CountdownFormatter.Tier = .normal
     @ObservedObject private var timerManager = CountdownTimerManager.shared
-    
+
     var body: some View {
         Text(countdownText)
             .font(.system(size: 10, weight: .medium))
@@ -350,7 +351,7 @@ private struct CountdownTextView: View {
             .padding(.vertical, 1)
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(hex: accentColorHex))
+                    .fill(CountdownFormatter.tierColor(tier, accentHex: accentColorHex))
             )
             .onAppear {
                 updateCountdown()
@@ -373,30 +374,9 @@ private struct CountdownTextView: View {
             countdownText = ""
             return
         }
-        let now = Date()
-        guard start > now else {
-            countdownText = "已过期"
-            return
-        }
-        let interval = start.timeIntervalSince(now)
-        let days = Int(interval) / 86400
-        let hours = (Int(interval) % 86400) / 3600
-        let minutes = (Int(interval) % 3600) / 60
-        let seconds = Int(interval) % 60
-        
-        if days >= 365 {
-            let years = days / 365
-            let remainDays = days % 365
-            countdownText = remainDays > 0 ? "\(years)年\(remainDays)天" : "\(years)年"
-        } else if days >= 1 {
-            countdownText = "\(days)天"
-        } else if hours >= 1 {
-            countdownText = "\(hours)小时"
-        } else if minutes > 0 {
-            countdownText = "\(minutes)分\(seconds)秒"
-        } else {
-            countdownText = "\(seconds)秒"
-        }
+        let remaining = start.timeIntervalSince(Date())
+        countdownText = CountdownFormatter.formatCountdown(remaining: remaining)
+        tier = CountdownFormatter.tier(remaining: remaining)
     }
 }
 

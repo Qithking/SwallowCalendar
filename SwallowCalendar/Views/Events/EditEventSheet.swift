@@ -20,7 +20,9 @@ struct EditEventSheet: View {
     @State private var taskColor: EventColor?
     @State private var taskPriority: EventPriority = .none
     @State private var taskRecurrence: RecurrenceType = .none
-    @State private var taskReminderMinutes: Int = 10
+    @State private var taskReminderOffsets: [Int] = []
+    @State private var showCustomReminderInput: Bool = false
+    @State private var customReminderText: String = ""
     @State private var isProcessing = false
     
     // 保存原始周期类型，用于检测变更
@@ -48,7 +50,8 @@ struct EditEventSheet: View {
                 originalRec = cached.recurrenceType
                 _taskRecurrence = State(initialValue: cached.recurrenceType)
                 _taskPriority = State(initialValue: EventPriority(rawValue: cached.priority) ?? .none)
-                _taskReminderMinutes = State(initialValue: cached.reminderMinutes)
+                // 多级提醒 chips 初始选中：过滤 0 档（0 = 不提醒，即无选中态）
+                _taskReminderOffsets = State(initialValue: cached.reminderOffsets.filter { $0 > 0 })
                 if let hex = cached.eventColorHex {
                     _taskColor = State(initialValue: EventColor(rawValue: hex))
                 }
@@ -155,17 +158,63 @@ struct EditEventSheet: View {
                     .frame(width: 110)
                 }
 
+                // 多级提醒 chips（G5 档位上限 1440 分钟；全部取消 = 不提醒）
                 FormRow(label: "提醒") {
-                    Picker("", selection: $taskReminderMinutes) {
-                        Text("不提醒").tag(0)
-                        Text("5分钟前").tag(5)
-                        Text("10分钟前").tag(10)
-                        Text("30分钟前").tag(30)
-                        Text("1小时前").tag(60)
-                        Text("1天前").tag(1440)
+                    VStack(alignment: .trailing, spacing: 5) {
+                        // 第一行：预设档位
+                        HStack(spacing: 4) {
+                            ForEach([5, 10, 30, 60, 1440], id: \.self) { minutes in
+                                ReminderChip(
+                                    label: Self.chipLabel(for: minutes),
+                                    isOn: taskReminderOffsets.contains(minutes)
+                                ) {
+                                    if let idx = taskReminderOffsets.firstIndex(of: minutes) {
+                                        taskReminderOffsets.remove(at: idx)
+                                    } else {
+                                        taskReminderOffsets.append(minutes)
+                                    }
+                                }
+                            }
+                            // 自定义档入口
+                            Button {
+                                showCustomReminderInput.toggle()
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .frame(width: 20, height: 18)
+                            }
+                            .buttonStyle(.plain)
+                            .help("添加自定义提前分钟数（不超过 1440）")
+                        }
+                        // 第二行：自定义档输入（点 + 出现）
+                        if showCustomReminderInput {
+                            HStack(spacing: 4) {
+                                TextField("分钟", text: $customReminderText)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 56)
+                                    .font(.system(size: 11))
+                                    .onSubmit(addCustomReminder)
+                                Button("添加", action: addCustomReminder)
+                                    .font(.system(size: 10))
+                                    .buttonStyle(.plain)
+                                    .foregroundColor(.accentColor)
+                            }
+                        }
+                        // 第三行：已添加的自定义档 chips（不在预设内的选中档）
+                        let customOffsets = taskReminderOffsets.filter { ![5, 10, 30, 60, 1440].contains($0) }
+                        if !customOffsets.isEmpty {
+                            HStack(spacing: 4) {
+                                ForEach(customOffsets, id: \.self) { minutes in
+                                    ReminderChip(
+                                        label: Self.chipLabel(for: minutes),
+                                        isOn: true
+                                    ) {
+                                        taskReminderOffsets.removeAll { $0 == minutes }
+                                    }
+                                }
+                            }
+                        }
                     }
-                    .labelsHidden()
-                    .frame(width: 110)
                 }
             }
 
@@ -234,6 +283,49 @@ struct EditEventSheet: View {
         }
     }
 
+    /// 提醒档位圆片：点选/取消，选中高亮描边
+    private struct ReminderChip: View {
+        let label: String
+        let isOn: Bool
+        let action: () -> Void
+
+        var body: some View {
+            Button(action: action) {
+                Text(label)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(isOn ? Color.accentColor.opacity(0.16) : Color(nsColor: .controlBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(isOn ? Color.accentColor : Color.secondary.opacity(0.35), lineWidth: isOn ? 1.2 : 0.8)
+                    )
+                    .foregroundColor(isOn ? .accentColor : .secondary)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// 档位标签：1440 的倍数→天、60 的倍数→时、其余→分
+    private static func chipLabel(for minutes: Int) -> String {
+        if minutes >= 1440 && minutes % 1440 == 0 { return "\(minutes / 1440)天" }
+        if minutes >= 60 && minutes % 60 == 0 { return "\(minutes / 60)时" }
+        return "\(minutes)分"
+    }
+
+    /// 添加自定义档位：G5 上限 1440 分钟；非法输入保留文本等待修正，不弹提示
+    private func addCustomReminder() {
+        guard let minutes = Int(customReminderText), minutes > 0, minutes <= 1440 else { return }
+        if !taskReminderOffsets.contains(minutes) {
+            taskReminderOffsets.append(minutes)
+        }
+        customReminderText = ""
+        showCustomReminderInput = false
+    }
+
     private func saveEvent() {
         isProcessing = true
         Task { @MainActor in
@@ -257,9 +349,12 @@ struct EditEventSheet: View {
                     isReminder: event.isReminder,
                     // .none 的 rawValue 为 0，直接传入可正确清除已有优先级
                     priority: taskPriority,
-                    reminderMinutes: taskReminderMinutes,
+                    // 多级提醒：始终传 offsets（空数组 = 清除全部提醒），单级 minutes 不再单独维护
+                    reminderOffsets: taskReminderOffsets.sorted(),
                     color: taskColor
                 )
+                // D2/G7v2：编辑保存成功，广播缓存变更（徽标即时刷新）
+                NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
                 
                 // 如果周期类型发生变化，处理周期任务逻辑
                 if taskRecurrence != originalRecurrence {

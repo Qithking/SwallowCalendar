@@ -111,7 +111,10 @@ struct EventTodoListView: View {
             }
         }
         
-        allEvents.append(contentsOf: noDateEvents)
+        // C4/G6："已过期"档不纳入无日期事项（无到期语义即无"过期"）
+        if filterMode != .expired {
+            allEvents.append(contentsOf: noDateEvents)
+        }
         cachedEvents = allEvents
     }
 

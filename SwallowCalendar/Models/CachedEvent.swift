@@ -61,8 +61,32 @@ final class CachedEvent {
     /// 是否农历
     var isLunar: Bool = false
     
-    /// 提醒提前分钟数（0=不提醒）
-    var reminderMinutes: Int = 0
+    /// 提醒提前分钟数（0=不提醒）；多级模式下恒等于 reminderOffsets 的最大值（硬不变量，G1）
+    var reminderMinutes: Int = 0 {
+        didSet {
+            // G1 双向联动：offsets 非空且 max 失配时反向重写 offsetsJSON（把最高档替换为
+            // 新值），使既有 reminderMinutes 直赋值点（syncEvents/syncReminders/创建路径）
+            // 无需逐点改造即保持不变量 reminderMinutes == offsets.max()
+            guard let json = reminderOffsetsJSON,
+                  let data = json.data(using: .utf8),
+                  var offsets = try? JSONDecoder().decode([Int].self, from: data),
+                  !offsets.isEmpty,
+                  let oldMax = offsets.max(),
+                  reminderMinutes != oldMax else { return }
+            if let idx = offsets.firstIndex(of: oldMax) {
+                offsets[idx] = reminderMinutes
+            } else {
+                offsets.append(reminderMinutes)
+            }
+            let normalized = Array(Set(offsets)).sorted()
+            if let data = try? JSONEncoder().encode(normalized) {
+                reminderOffsetsJSON = String(data: data, encoding: .utf8)
+            }
+        }
+    }
+
+    /// 多级提醒提前分钟数（JSON 持久化，plan 步骤 6；nil = 未设置多级，回退单级）
+    var reminderOffsetsJSON: String?
     
     /// 用户选择的事件颜色（十六进制，nil 时使用日历颜色）
     var eventColorHex: String?
@@ -79,7 +103,43 @@ final class CachedEvent {
         get { RecurrenceType(rawValue: recurrenceTypeRaw ?? RecurrenceType.none.rawValue) ?? .none }
         set { recurrenceTypeRaw = newValue.rawValue }
     }
+
+    /// 多级提醒提前分钟数组（计算属性，真源为 reminderOffsetsJSON 镜像 EventKit 多 alarm）
+    /// 读取：解码 JSON，未设置/坏数据/空数组回退 [reminderMinutes]（单级语义）
+    /// 写入：去重升序编码 JSON，并维护硬不变量 reminderMinutes == max
+    var reminderOffsets: [Int] {
+        get {
+            guard let json = reminderOffsetsJSON,
+                  let data = json.data(using: .utf8),
+                  let offsets = try? JSONDecoder().decode([Int].self, from: data),
+                  !offsets.isEmpty else {
+                return [reminderMinutes]
+            }
+            return offsets
+        }
+        set {
+            let normalized = Array(Set(newValue)).sorted()
+            guard !normalized.isEmpty else {
+                // 空数组：清空多级，回退单级语义（reminderMinutes 保持当前值）
+                reminderOffsetsJSON = nil
+                return
+            }
+            if let data = try? JSONEncoder().encode(normalized) {
+                reminderOffsetsJSON = String(data: data, encoding: .utf8)
+            }
+            // 硬不变量：reminderMinutes == offsets.max()
+            reminderMinutes = normalized.max() ?? 0
+        }
+    }
     
+    /// 编码多级偏移数组为持久化 JSON（nil/空 → nil，未设置多级语义）
+    /// 供同步/中转模型比较与落库使用；提取端已去重升序，此处原样编码
+    static func encodeOffsetsJSON(_ offsets: [Int]?) -> String? {
+        guard let offsets, !offsets.isEmpty else { return nil }
+        guard let data = try? JSONEncoder().encode(offsets) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     init(
         eventID: String,
         title: String,
@@ -98,6 +158,7 @@ final class CachedEvent {
         recurrenceType: RecurrenceType = .none,
         isLunar: Bool = false,
         reminderMinutes: Int = 0,
+        reminderOffsetsJSON: String? = nil,
         eventColorHex: String? = nil
     ) {
         self.eventID = eventID
@@ -117,9 +178,19 @@ final class CachedEvent {
         self.recurrenceTypeRaw = recurrenceType.rawValue
         self.isLunar = isLunar
         self.reminderMinutes = reminderMinutes
+        self.reminderOffsetsJSON = reminderOffsetsJSON
         self.eventColorHex = eventColorHex
         self.lastUpdated = Date()
     }
+}
+
+// MARK: - 缓存变更通知
+
+/// D2/G7v2：缓存事件变更通知（字符串名风格，同项目既有通知）。
+/// 发送点为结构性位置：syncEvents/syncReminders 保存成功、编辑保存、完成/取消完成路径；
+/// 消费方（状态栏徽标）收到后即时刷新，30s 定时器仅作兜底
+extension Notification.Name {
+    static let cachedEventsChanged = Notification.Name("CachedEventsChanged")
 }
 
 // MARK: - 缓存服务
@@ -326,9 +397,13 @@ final class EventCacheService {
                 }
                 // 有变更才更新，避免不必要的写入
                 let newReminderMinutes = event.reminderMinutes
+                // 步骤7：多级偏移随 EK alarm 数组带出，编码后与缓存比较——变更检测
+                // 必须同时比较 reminderMinutes 与 offsets（Architect steelman 采纳项）
+                let newOffsetsJSON = CachedEvent.encodeOffsetsJSON(event.reminderOffsets)
+                let offsetsChanged = existing.reminderOffsetsJSON != newOffsetsJSON
                 // B-8：变更检测与赋值补齐 isAllDay/calendarTitle/calendarColorHex/category，
                 // 避免 EK 侧修改后缓存残留旧值
-                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes || existing.isAllDay != event.isAllDay || existing.calendarTitle != event.calendarTitle || existing.calendarColorHex != event.calendarColorHex || existing.category != newCategory {
+                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes || offsetsChanged || existing.isAllDay != event.isAllDay || existing.calendarTitle != event.calendarTitle || existing.calendarColorHex != event.calendarColorHex || existing.category != newCategory {
                     if existing.isCompleted != newIsCompleted {
                         AppLogger.cache.warning("syncEvents isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID)")
                     }
@@ -336,6 +411,8 @@ final class EventCacheService {
                     existing.startDate = newStart
                     existing.endDate = newEnd
                     existing.isCompleted = newIsCompleted
+                    // 先写 JSON 再写 minutes：didSet 联动自动维护 max 不变量
+                    existing.reminderOffsetsJSON = newOffsetsJSON
                     existing.reminderMinutes = newReminderMinutes
                     existing.isAllDay = event.isAllDay
                     existing.calendarTitle = event.calendarTitle
@@ -377,7 +454,8 @@ final class EventCacheService {
                     calendarColorHex: event.calendarColorHex,
                     category: category,
                     isCompleted: isCompletedFromNotes,
-                    reminderMinutes: event.reminderMinutes
+                    reminderMinutes: event.reminderMinutes,
+                    reminderOffsetsJSON: CachedEvent.encodeOffsetsJSON(event.reminderOffsets)
                 )
                 context.insert(cached)
             }
@@ -388,6 +466,8 @@ final class EventCacheService {
             lastSyncTime = Date()
             // 清理超过保留期限的旧事件
             cleanupOldEvents(context: context, before: startDate)
+            // D2/G7v2：系统日历回流完成，广播缓存变更（徽标即时刷新）
+            NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
             return true
         } catch {
             AppLogger.cache.error("同步保存失败: \(String(describing: error))")
@@ -471,8 +551,11 @@ final class EventCacheService {
                 let newEnd = reminder.endDate
                 let newIsCompleted = reminder.isCompleted
                 let newReminderMinutes = reminder.reminderMinutes
+                // 步骤7：变更检测同时比较 offsets（多级偏移随 EK alarm 数组带出）
+                let newOffsetsJSON = CachedEvent.encodeOffsetsJSON(reminder.reminderOffsets)
+                let offsetsChanged = existing.reminderOffsetsJSON != newOffsetsJSON
                 // 有变更才更新，避免不必要的写入
-                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes {
+                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes || offsetsChanged {
                     if existing.isCompleted != newIsCompleted {
                         AppLogger.cache.warning("syncReminders isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID)")
                     }
@@ -480,6 +563,8 @@ final class EventCacheService {
                     existing.startDate = newStart
                     existing.endDate = newEnd
                     existing.isCompleted = newIsCompleted
+                    // 先写 JSON 再写 minutes：didSet 联动自动维护 max 不变量
+                    existing.reminderOffsetsJSON = newOffsetsJSON
                     existing.reminderMinutes = newReminderMinutes
                     existing.lastUpdated = Date()
                 }
@@ -498,7 +583,8 @@ final class EventCacheService {
                     isReminder: true,
                     isCompleted: reminder.isCompleted,
                     priority: 0,
-                    reminderMinutes: reminder.reminderMinutes
+                    reminderMinutes: reminder.reminderMinutes,
+                    reminderOffsetsJSON: CachedEvent.encodeOffsetsJSON(reminder.reminderOffsets)
                 )
                 context.insert(cached)
             }
@@ -507,6 +593,8 @@ final class EventCacheService {
         do {
             try context.save()
             lastSyncTime = Date()
+            // D2/G7v2：系统提醒回流完成，广播缓存变更（徽标即时刷新）
+            NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
         } catch {
             AppLogger.cache.error("提醒保存失败: \(String(describing: error))")
         }

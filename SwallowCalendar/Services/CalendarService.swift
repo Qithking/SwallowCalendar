@@ -227,6 +227,7 @@ final class CalendarService {
             groupId: nil,
             recurrenceType: .none,
             reminderMinutes: Self.extractReminderMinutes(from: reminder.alarms),
+            reminderOffsets: Self.extractReminderOffsets(from: reminder.alarms),
             eventColorHex: nil
         )
     }
@@ -247,6 +248,29 @@ final class CalendarService {
         return maxMinutes
     }
 
+    /// 从 EKAlarm 数组提取完整提醒提前分钟数组（多级，plan 步骤 7）
+    /// 与 extractReminderMinutes 同口径（仅相对偏移 alarm）；去重升序；
+    /// 无有效 alarm 返回 nil（未设置多级语义）
+    static func extractReminderOffsets(from alarms: [EKAlarm]?) -> [Int]? {
+        guard let alarms else { return nil }
+        let offsets = Set(alarms.compactMap { alarm -> Int? in
+            guard alarm.relativeOffset < 0 else { return nil }
+            return Int(-alarm.relativeOffset / 60)
+        }).sorted()
+        return offsets.isEmpty ? nil : offsets
+    }
+
+    /// 生成 EKAlarm 数组：多级 offsets 非空时逐档生成；否则按单级 minutes 兼容口径
+    private static func makeAlarms(offsets: [Int]?, minutes: Int?) -> [EKAlarm] {
+        if let offsets, !offsets.isEmpty {
+            return offsets.map { EKAlarm(relativeOffset: TimeInterval(-$0 * 60)) }
+        }
+        if let minutes, minutes > 0 {
+            return [EKAlarm(relativeOffset: TimeInterval(-minutes * 60))]
+        }
+        return []
+    }
+
     // MARK: - CRUD
 
     /// 创建日历事件或提醒
@@ -262,6 +286,7 @@ final class CalendarService {
         priority: EventPriority? = nil,
         recurrence: RecurrenceType? = nil,
         reminderMinutes: Int? = nil,
+        reminderOffsets: [Int]? = nil,
         category: EventCategory = .system,
         asReminder: Bool = false,
         isLunar: Bool = false,
@@ -347,6 +372,7 @@ final class CalendarService {
         priority: EventPriority? = nil,
         recurrenceType: RecurrenceType,
         reminderMinutes: Int? = nil,
+        reminderOffsets: [Int]? = nil,
         category: EventCategory,
         asReminder: Bool,
         isLunar: Bool,
@@ -419,6 +445,7 @@ final class CalendarService {
         priority: EventPriority? = nil,
         recurrence: RecurrenceType? = nil,
         reminderMinutes: Int? = nil,
+        reminderOffsets: [Int]? = nil,
         category: EventCategory = .system,
         color: EventColor? = nil
     ) throws {
@@ -455,11 +482,8 @@ final class CalendarService {
             event.addRecurrenceRule(rule)
         }
 
-        // 设置提醒（仅当用户指定时才添加）
-        if let minutes = reminderMinutes, minutes > 0 {
-            let alarm = EKAlarm(relativeOffset: TimeInterval(-minutes * 60))
-            event.addAlarm(alarm)
-        }
+        // 设置提醒（仅当用户指定时才添加）：多级 offsets 优先，单级 minutes 兼容
+        event.alarms = Self.makeAlarms(offsets: reminderOffsets, minutes: reminderMinutes)
 
         guard event.calendar != nil else {
             throw EventError.noCalendarAvailable
@@ -490,6 +514,10 @@ final class CalendarService {
                 reminderMinutes: reminderMinutes ?? 0,
                 eventColorHex: color?.rawValue
             )
+            // 多级提醒：经 setter 写入以维护硬不变量 reminderMinutes == offsets.max()
+            if let offsets = reminderOffsets, !offsets.isEmpty {
+                cached.reminderOffsets = offsets
+            }
             context.insert(cached)
             do {
                 try context.save()
@@ -522,6 +550,7 @@ final class CalendarService {
         priority: EventPriority? = nil,
         recurrence: RecurrenceType? = nil,
         reminderMinutes: Int? = nil,
+        reminderOffsets: [Int]? = nil,
         color: EventColor? = nil
     ) throws {
         guard reminderAuthorizationStatus == .fullAccess else {
@@ -547,11 +576,8 @@ final class CalendarService {
         // 语义映射：本项目 EventPriority 9=最高，EKReminder 1=最高、9=最低、0=无
         reminder.priority = Self.ekPriority(from: priority)
         
-        // 设置提醒闹钟
-        if let minutes = reminderMinutes, minutes > 0 {
-            let alarm = EKAlarm(relativeOffset: TimeInterval(-minutes * 60))
-            reminder.addAlarm(alarm)
-        }
+        // 设置提醒闹钟：多级 offsets 优先，单级 minutes 兼容
+        reminder.alarms = Self.makeAlarms(offsets: reminderOffsets, minutes: reminderMinutes)
         
         try eventStore.save(reminder, commit: true)
         
@@ -573,6 +599,10 @@ final class CalendarService {
                 reminderMinutes: reminderMinutes ?? 0,
                 eventColorHex: color?.rawValue
             )
+            // 多级提醒：经 setter 写入以维护硬不变量 reminderMinutes == offsets.max()
+            if let offsets = reminderOffsets, !offsets.isEmpty {
+                cached.reminderOffsets = offsets
+            }
             context.insert(cached)
             do {
                 try context.save()
@@ -592,6 +622,7 @@ final class CalendarService {
         calendar: EKCalendar?,
         priority: EventPriority? = nil,
         reminderMinutes: Int? = nil,
+        reminderOffsets: [Int]? = nil,
         category: EventCategory,
         groupId: String,
         groupIndex: Int,
@@ -618,11 +649,8 @@ final class CalendarService {
         let targetCalendar = calendar ?? eventStore.defaultCalendarForNewEvents ?? calendars.first
         event.calendar = targetCalendar
 
-        // 设置提醒（仅当用户指定时才添加）
-        if let minutes = reminderMinutes, minutes > 0 {
-            let alarm = EKAlarm(relativeOffset: TimeInterval(-minutes * 60))
-            event.addAlarm(alarm)
-        }
+        // 设置提醒（仅当用户指定时才添加）：多级 offsets 优先，单级 minutes 兼容
+        event.alarms = Self.makeAlarms(offsets: reminderOffsets, minutes: reminderMinutes)
 
         guard event.calendar != nil else {
             throw EventError.noCalendarAvailable
@@ -656,6 +684,10 @@ final class CalendarService {
                 reminderMinutes: reminderMinutes ?? 0,
                 eventColorHex: color?.rawValue
             )
+            // 多级提醒：经 setter 写入以维护硬不变量 reminderMinutes == offsets.max()
+            if let offsets = reminderOffsets, !offsets.isEmpty {
+                cached.reminderOffsets = offsets
+            }
             context.insert(cached)
             do {
                 try context.save()
@@ -677,6 +709,7 @@ final class CalendarService {
         recurrenceType: RecurrenceType,
         isLunar: Bool,
         reminderMinutes: Int? = nil,
+        reminderOffsets: [Int]? = nil,
         color: EventColor? = nil
     ) throws {
         guard reminderAuthorizationStatus == .fullAccess else {
@@ -698,11 +731,8 @@ final class CalendarService {
         }
         reminder.dueDateComponents = components
         
-        // 设置提醒闹钟
-        if let minutes = reminderMinutes, minutes > 0 {
-            let alarm = EKAlarm(relativeOffset: TimeInterval(-minutes * 60))
-            reminder.addAlarm(alarm)
-        }
+        // 设置提醒闹钟：多级 offsets 优先，单级 minutes 兼容
+        reminder.alarms = Self.makeAlarms(offsets: reminderOffsets, minutes: reminderMinutes)
         
         try eventStore.save(reminder, commit: true)
         
@@ -728,6 +758,10 @@ final class CalendarService {
                 reminderMinutes: reminderMinutes ?? 0,
                 eventColorHex: color?.rawValue
             )
+            // 多级提醒：经 setter 写入以维护硬不变量 reminderMinutes == offsets.max()
+            if let offsets = reminderOffsets, !offsets.isEmpty {
+                cached.reminderOffsets = offsets
+            }
             context.insert(cached)
             do {
                 try context.save()
@@ -809,6 +843,13 @@ final class CalendarService {
     /// - Note: 如果是周期任务，完成时会自动追加新的实例
     @MainActor
     func toggleEventCompleted(eventID: String, isCompleted: Bool, isReminder: Bool = false) async {
+        // 幂等守卫：目标状态与缓存一致时跳过全部写入。防止“弹窗单条完成 + 全部完成”
+        // 双重完成路径对同一周期事项重复追加实例（审查 P1：完成分支缺少状态检查）
+        if let cached = findCachedEvent(eventID: eventID), cached.isCompleted == isCompleted {
+            AppLogger.sync.debug("完成状态未变化，跳过写入 id=\(eventID) completed=\(isCompleted)")
+            return
+        }
+
         // B-2：跟踪 EK 写入是否失败（对象不存在不算失败——无旧状态可翻转）
         var ekSaveFailed = false
 
@@ -903,8 +944,9 @@ final class CalendarService {
     }
 
     /// 更新事件（日历事件或提醒）
+    /// - Parameter reminderOffsets: 多级提醒偏移数组；nil = 不改提醒，空数组 = 清除全部提醒
     @MainActor
-    func updateEvent(eventID: String, title: String?, startDate: Date?, endDate: Date?, isAllDay: Bool? = nil, isReminder: Bool = false, priority: EventPriority? = nil, reminderMinutes: Int? = nil, color: EventColor? = nil) throws {
+    func updateEvent(eventID: String, title: String?, startDate: Date?, endDate: Date?, isAllDay: Bool? = nil, isReminder: Bool = false, priority: EventPriority? = nil, reminderMinutes: Int? = nil, reminderOffsets: [Int]? = nil, color: EventColor? = nil) throws {
         if isReminder {
             guard let reminder = eventStore.calendarItem(withIdentifier: eventID) as? EKReminder else { return }
             if let title { reminder.title = title }
@@ -928,9 +970,10 @@ final class CalendarService {
                 }
                 reminder.dueDateComponents = components
             }
-            // 更新提醒闹钟
-            if let reminderMinutes {
-                reminder.alarms = reminderMinutes > 0 ? [EKAlarm(relativeOffset: TimeInterval(-reminderMinutes * 60))] : []
+            // 更新提醒闹钟：多级 offsets 优先（空数组=清除），单级 minutes 兼容；
+            // 两者均未传时不动 alarms（保持 nil = 不改提醒语义）
+            if reminderOffsets != nil || reminderMinutes != nil {
+                reminder.alarms = Self.makeAlarms(offsets: reminderOffsets, minutes: reminderMinutes)
             }
             try eventStore.save(reminder, commit: true)
         } else {
@@ -944,9 +987,10 @@ final class CalendarService {
             if let isAllDay, isAllDay {
                 event.endDate = event.startDate
             }
-            // 更新日历事件闹钟
-            if let reminderMinutes {
-                event.alarms = reminderMinutes > 0 ? [EKAlarm(relativeOffset: TimeInterval(-reminderMinutes * 60))] : []
+            // 更新日历事件闹钟：多级 offsets 优先（空数组=清除），单级 minutes 兼容；
+            // 两者均未传时不动 alarms（保持 nil = 不改提醒语义）
+            if reminderOffsets != nil || reminderMinutes != nil {
+                event.alarms = Self.makeAlarms(offsets: reminderOffsets, minutes: reminderMinutes)
             }
             try eventStore.save(event, span: .thisEvent)
         }
@@ -974,7 +1018,16 @@ final class CalendarService {
             // isAllDay 必须同步，否则"全天 ↔ 带时间"切换后缓存与 EK 不一致，UI 显示错误
             if let isAllDay { cached.isAllDay = isAllDay }
             if let priority { cached.priority = priority.rawValue }
-            if let reminderMinutes { cached.reminderMinutes = reminderMinutes }
+            if let reminderOffsets {
+                // 多级：经 setter 写入维护硬不变量（空数组=清除多级回退单级）
+                cached.reminderOffsets = reminderOffsets
+                if reminderOffsets.isEmpty {
+                    // 清除提醒时单级归零，避免 includeExpired 分支按旧 max 误判"已设置提醒"
+                    cached.reminderMinutes = 0
+                }
+            } else if let reminderMinutes {
+                cached.reminderMinutes = reminderMinutes
+            }
             if let color { cached.eventColorHex = color.rawValue }
             cached.lastUpdated = Date()
             do {
@@ -1311,6 +1364,7 @@ final class CalendarService {
             groupId: nil,
             recurrenceType: .none,
             reminderMinutes: Self.extractReminderMinutes(from: ekEvent.alarms),
+            reminderOffsets: Self.extractReminderOffsets(from: ekEvent.alarms),
             eventColorHex: nil,
             notes: ekEvent.notes
         )
