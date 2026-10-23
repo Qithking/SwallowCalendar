@@ -10,7 +10,10 @@ import SwiftData
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var panel: FloatingPanel<AnyView>?
-    
+
+    // hover 弹层控制器：悬停状态栏图标显示今天待办
+    private var hoverController: StatusItemHoverController?
+
     // 全局共享的 ModelContainer
     static var sharedModelContainer: ModelContainer!
     
@@ -61,13 +64,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             onClose: {}
         ) {
             let settings = AppSettings.shared
-            
+
             AnyView(
                 ContentView()
                     .environment(settings)
                     .modelContainer(Self.sharedModelContainer)
             )
         }
+
+        // 装配 hover 弹层：条目点击 → 关弹层并打开主面板（主面板已开时 open 仅前置，不会被关掉）
+        let hover = StatusItemHoverController()
+        hover.contentProvider = { [weak hover] in
+            NSHostingController(
+                rootView: TodayTodoPopoverView(onOpenMainPanel: { hover?.openMainPanel() })
+            )
+        }
+        if let button = statusItem.button {
+            hover.bind(button: button) { [weak self] in
+                self?.panel?.open()
+            }
+        }
+        hoverController = hover
     }
     
     /// 构建隐藏主菜单：仅承载文本编辑快捷键（撤销/重做/剪切/拷贝/粘贴/全选）。
@@ -103,8 +120,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     /// 点击状态栏图标时的处理
     @objc private func performStatusItemClick() {
-        guard let panel = panel else { return }
-        panel.toggle()
+        // 状态栏 action 固定在主线程，assumeIsolated 进入 MainActor 上下文
+        MainActor.assumeIsolated {
+            // 点击前先关 hover 弹层，避免弹层与主面板叠加（AC-7：点击行为不变）
+            hoverController?.closePopover()
+            guard let panel = panel else { return }
+            panel.toggle()
+        }
     }
     
     /// 点击菜单栏图标但窗口未显示时调用

@@ -1026,7 +1026,9 @@ final class CalendarService {
                     cached.reminderMinutes = 0
                 }
             } else if let reminderMinutes {
-                cached.reminderMinutes = reminderMinutes
+                // G1：多级 JSON 可能已存在，直赋必须经显式方法反向重写最高档
+                //（@Model 宏不保留 didSet，联动已显式化）
+                cached.setReminderMinutesRewritingMax(reminderMinutes)
             }
             if let color { cached.eventColorHex = color.rawValue }
             cached.lastUpdated = Date()

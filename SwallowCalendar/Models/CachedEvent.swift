@@ -62,26 +62,28 @@ final class CachedEvent {
     var isLunar: Bool = false
     
     /// 提醒提前分钟数（0=不提醒）；多级模式下恒等于 reminderOffsets 的最大值（硬不变量，G1）
-    var reminderMinutes: Int = 0 {
-        didSet {
-            // G1 双向联动：offsets 非空且 max 失配时反向重写 offsetsJSON（把最高档替换为
-            // 新值），使既有 reminderMinutes 直赋值点（syncEvents/syncReminders/创建路径）
-            // 无需逐点改造即保持不变量 reminderMinutes == offsets.max()
-            guard let json = reminderOffsetsJSON,
-                  let data = json.data(using: .utf8),
-                  var offsets = try? JSONDecoder().decode([Int].self, from: data),
-                  !offsets.isEmpty,
-                  let oldMax = offsets.max(),
-                  reminderMinutes != oldMax else { return }
-            if let idx = offsets.firstIndex(of: oldMax) {
-                offsets[idx] = reminderMinutes
-            } else {
-                offsets.append(reminderMinutes)
-            }
-            let normalized = Array(Set(offsets)).sorted()
-            if let data = try? JSONEncoder().encode(normalized) {
-                reminderOffsetsJSON = String(data: data, encoding: .utf8)
-            }
+    /// 注意：@Model 宏不保留 didSet（已探针实证），G1 反向重写由 setReminderMinutesRewritingMax 显式承担
+    var reminderMinutes: Int = 0
+
+    /// G1 反向重写（原 didSet 联动，因 @Model 宏丢弃 didSet 而显式化）：
+    /// 直赋单级 minutes 时把多级 offsets 最高档替换为新值并去重，
+    /// 维护硬不变量 reminderMinutes == offsets.max()；直赋点必须调用本方法而非直接赋值
+    func setReminderMinutesRewritingMax(_ value: Int) {
+        reminderMinutes = value
+        guard let json = reminderOffsetsJSON,
+              let data = json.data(using: .utf8),
+              var offsets = try? JSONDecoder().decode([Int].self, from: data),
+              !offsets.isEmpty,
+              let oldMax = offsets.max(),
+              value != oldMax else { return }
+        if let idx = offsets.firstIndex(of: oldMax) {
+            offsets[idx] = value
+        } else {
+            offsets.append(value)
+        }
+        let normalized = Array(Set(offsets)).sorted()
+        if let data = try? JSONEncoder().encode(normalized) {
+            reminderOffsetsJSON = String(data: data, encoding: .utf8)
         }
     }
 
@@ -411,7 +413,7 @@ final class EventCacheService {
                     existing.startDate = newStart
                     existing.endDate = newEnd
                     existing.isCompleted = newIsCompleted
-                    // 先写 JSON 再写 minutes：didSet 联动自动维护 max 不变量
+                    // 双写同源一致值（JSON 与 minutes 均来自 EK，本就满足 max 不变量）
                     existing.reminderOffsetsJSON = newOffsetsJSON
                     existing.reminderMinutes = newReminderMinutes
                     existing.isAllDay = event.isAllDay
@@ -565,7 +567,7 @@ final class EventCacheService {
                     existing.startDate = newStart
                     existing.endDate = newEnd
                     existing.isCompleted = newIsCompleted
-                    // 先写 JSON 再写 minutes：didSet 联动自动维护 max 不变量
+                    // 双写同源一致值（JSON 与 minutes 均来自 EK，本就满足 max 不变量）
                     existing.reminderOffsetsJSON = newOffsetsJSON
                     existing.reminderMinutes = newReminderMinutes
                     existing.lastUpdated = Date()

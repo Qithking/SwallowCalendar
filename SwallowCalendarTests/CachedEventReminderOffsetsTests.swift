@@ -55,9 +55,9 @@ final class CachedEventReminderOffsetsTests: XCTestCase {
     func testMinutesDirectAssignRewritesMax() {
         let event = makeEvent()
         event.reminderOffsets = [5, 10, 60]
-        // G1：既有 reminderMinutes 直赋值点（同步/创建路径）反向重写 offsets，
-        // 语义为"最高档被改为新值"
-        event.reminderMinutes = 30
+        // G1：直赋 minutes 语义为"最高档被改为新值"（@Model 宏不保留 didSet，
+        // 反向重写经显式方法 setReminderMinutesRewritingMax 承担）
+        event.setReminderMinutesRewritingMax(30)
         XCTAssertEqual(event.reminderOffsets, [5, 10, 30])
         XCTAssertEqual(event.reminderMinutes, 30)
     }
@@ -65,7 +65,7 @@ final class CachedEventReminderOffsetsTests: XCTestCase {
     func testMinutesDirectAssignDedupesAfterRewrite() {
         let event = makeEvent()
         event.reminderOffsets = [5, 30, 60]
-        event.reminderMinutes = 30
+        event.setReminderMinutesRewritingMax(30)
         // 旧 max 60 替换为 30 后与新档 30 重复，去重后不破坏不变量
         XCTAssertEqual(event.reminderOffsets, [5, 30])
         XCTAssertEqual(event.reminderMinutes, 30)
@@ -75,7 +75,7 @@ final class CachedEventReminderOffsetsTests: XCTestCase {
         let event = makeEvent()
         event.reminderOffsets = [10, 60]
         let jsonBefore = event.reminderOffsetsJSON
-        event.reminderMinutes = 60
+        event.setReminderMinutesRewritingMax(60)
         // max 未失配：JSON 不重写
         XCTAssertEqual(event.reminderOffsetsJSON, jsonBefore)
         XCTAssertEqual(event.reminderOffsets, [10, 60])
