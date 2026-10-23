@@ -112,9 +112,10 @@ final class StatusBarIconManager {
                 self.currentIcon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor, cache: self.iconCache)
                 return
             }
-            // 徽标外观跟随自定义格式样式设置（无背景/实心/描边）
+            // 徽标外观与「菜单栏图标」样式逐项配合（实心→实心、描边→描边、日历→无背景、自定义格式→跟随自定义样式）
             let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
-            self.currentIcon = Self.renderBadgeText(text, style: settings.customFormatStyle, iconColor: iconColor)
+            let badgeStyle = settings.iconStyle.badgeStyle(customFormatStyle: settings.customFormatStyle)
+            self.currentIcon = Self.renderBadgeText(text, style: badgeStyle, iconColor: iconColor)
         }
     }
 

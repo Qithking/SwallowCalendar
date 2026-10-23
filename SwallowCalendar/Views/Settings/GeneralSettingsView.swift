@@ -51,7 +51,7 @@ struct GeneralSettingsView: View {
                 // D2：菜单栏倒计时徽标开关
                 Toggle("显示最近待办倒计时", isOn: $settings.statusBarCountdownEnabled)
                     .toggleStyle(.switch)
-                    .help("在菜单栏显示最近未完成待办事项的剩余时间，事项变更后即时刷新")
+                    .help("在菜单栏显示最近未完成待办事项的剩余时间，事项变更后即时刷新；徽标外观跟随「菜单栏图标」样式（实心/描边/无背景）")
 
                 // 主题
                 Picker("主题", selection: $settings.themeMode) {
