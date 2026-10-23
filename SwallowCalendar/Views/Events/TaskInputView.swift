@@ -66,6 +66,22 @@ struct TaskInputView: View {
                         }
                     }
 
+                // 批量添加入口：打开独立弹窗，多行输入每行一条（spec: batch-add-events）
+                Button {
+                    BatchAddWindowManager.shared.open(
+                        calendarService: calendarService,
+                        appSettings: appSettings,
+                        onTaskAdded: { onTaskAdded?() }
+                    )
+                } label: {
+                    // 图标须用本机 SF Symbols 名单存在的名称，无效名称会渲染空白导致按钮不可见
+                    Image(systemName: "plus.square.on.square")
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("批量添加")
+
                 if !inputText.isEmpty {
                     Button {
                         showAttributeEditor.toggle()
