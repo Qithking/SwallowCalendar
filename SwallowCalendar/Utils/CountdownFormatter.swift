@@ -16,27 +16,25 @@ enum CountdownFormatter {
         case urgent       // < 1h（未过期）
     }
 
-    /// 剩余秒数 -> 倒计时文案（N年N天/N天/N小时/N分N秒/N秒/已过期）
+    /// 剩余秒数 -> 倒计时文案（badge-realtime-countdown 实时格式）
+    /// 1天内 "HH:mm:ss"（如 08:56:43）；超1天 "N天HH:mm:ss"（如 29天08:56:43）；
+    /// ≥1年 "N年M天HH:mm:ss"；≤0 "已过期"
     static func formatCountdown(remaining: TimeInterval) -> String {
         guard remaining > 0 else { return "已过期" }
         let total = Int(remaining)
         let days = total / 86400
-        let hours = (total % 86400) / 3600
-        let minutes = (total % 3600) / 60
-        let seconds = total % 60
+        // 天内余量统一补零为 HH:mm:ss 形态
+        let inDay = total % 86400
+        let time = String(format: "%02d:%02d:%02d", inDay / 3600, (inDay % 3600) / 60, inDay % 60)
 
         if days >= 365 {
             let years = days / 365
             let remainDays = days % 365
-            return remainDays > 0 ? "\(years)年\(remainDays)天" : "\(years)年"
+            return remainDays > 0 ? "\(years)年\(remainDays)天\(time)" : "\(years)年\(time)"
         } else if days >= 1 {
-            return "\(days)天"
-        } else if hours >= 1 {
-            return "\(hours)小时"
-        } else if minutes > 0 {
-            return "\(minutes)分\(seconds)秒"
+            return "\(days)天\(time)"
         } else {
-            return "\(seconds)秒"
+            return time
         }
     }
 

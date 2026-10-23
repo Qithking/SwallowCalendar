@@ -161,7 +161,7 @@ struct BatchAddView: View {
                         isAllDay: false,                                     // 批量无全天开关，沿用 V-16 不隐式判全天
                         calendar: nil,
                         priority: line.parsed.priority,
-                        recurrence: line.parsed.recurrence ?? .none,
+                        recurrence: line.parsed.recurrence ?? RecurrenceType.none,
                         reminderMinutes: line.parsed.reminderMinutes ?? 10,  // 与单条默认提醒一致
                         category: .user,
                         asReminder: false,

@@ -119,36 +119,23 @@ final class CountdownTimerManager: ObservableObject {
         adjustRefreshInterval()
     }
     
-    /// 根据堆顶事件的剩余时间调整刷新频率
+    /// 根据堆内事件调整刷新频率（badge-realtime-countdown：可见期间固定 1s 实时刷新）
     private func adjustRefreshInterval() {
         guard let topEvent = minHeap.peek() else {
             stopTimer()
             return
         }
-        
-        let remainingTime = topEvent.deadline.timeIntervalSinceNow
-        
-        // 如果已过期，从堆中移除
-        if remainingTime <= 0 {
+
+        // 已过期事件从堆中移除，递归检查下一个
+        if topEvent.deadline.timeIntervalSinceNow <= 0 {
             minHeap.removeTop()
             adjustRefreshInterval() // 递归检查下一个
             return
         }
-        
-        // 智能调整刷新频率
-        let newInterval: TimeInterval
-        if remainingTime < 3600 {
-            // < 1 小时：每秒刷新
-            newInterval = 1
-        } else if remainingTime < 86400 {
-            // 1-24 小时：每 10 秒刷新
-            newInterval = 10
-        } else {
-            // > 24 小时：不需要动态刷新，停止 Timer
-            stopTimer()
-            return
-        }
-        
+
+        // 实时倒计时：只要有可见事件即保持 1s 节奏（不再按剩余时长分档停表）
+        let newInterval: TimeInterval = 1
+
         // 如果间隔发生变化，重新调度 Timer
         if abs(newInterval - currentInterval) > 0.1 {
             currentInterval = newInterval

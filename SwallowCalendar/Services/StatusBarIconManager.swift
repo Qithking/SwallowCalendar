@@ -33,25 +33,12 @@ final class StatusBarIconManager {
 
     private var refreshInterval: TimeInterval {
         let settings = AppSettings.shared
-        let base: TimeInterval
-        switch settings.iconStyle {
-        case .calendarIcon:
-            base = 0
-        case .solidDate, .strokeDate:
-            base = 60
-        case .customFormat:
-            let fmt = settings.customIconFormat
-            if fmt.contains("ss") || fmt.contains("s") {
-                base = 1
-            } else {
-                // mm/HH 及纯日期格式均为分钟级精度，60 秒刷新即可
-                base = 60
-            }
-        }
-        // D2：徽标开启时兜底刷新间隔取 max(30, 原间隔)——秒级 customFormat 也不压过
-        // 徽标更新节奏；即时刷新以 CachedEventsChanged 通知为主，定时器仅兜底
-        guard settings.statusBarCountdownEnabled else { return base }
-        return max(30, base)
+        // badge-realtime-countdown B3：间隔策略抽至 StatusBarRefreshPolicy（徽标开启→1s 实时节奏）
+        return StatusBarRefreshPolicy.computeRefreshInterval(
+            iconStyle: settings.iconStyle,
+            customFormat: settings.customIconFormat,
+            badgeEnabled: settings.statusBarCountdownEnabled
+        )
     }
 
     private init() {
@@ -115,7 +102,7 @@ final class StatusBarIconManager {
             // 徽标外观与「菜单栏图标」样式逐项配合（实心→实心、描边→描边、日历→无背景、自定义格式→跟随自定义样式）
             let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
             let badgeStyle = settings.iconStyle.badgeStyle(customFormatStyle: settings.customFormatStyle)
-            self.currentIcon = Self.renderBadgeText(text, style: badgeStyle, iconColor: iconColor)
+            self.currentIcon = BadgeTextRenderer.render(text, style: badgeStyle, iconColor: iconColor)
         }
     }
 
@@ -128,7 +115,7 @@ final class StatusBarIconManager {
         let upperBound = now.addingTimeInterval(365 * 86400)
         let userCategory = "用户"
         let distantPast = Date.distantPast
-        let descriptor = FetchDescriptor<CachedEvent>(
+        var descriptor = FetchDescriptor<CachedEvent>(
             predicate: #Predicate {
                 $0.categoryRaw == userCategory &&
                 !$0.isCompleted &&
@@ -138,6 +125,8 @@ final class StatusBarIconManager {
             },
             sortBy: [SortDescriptor(\.startDate)]
         )
+        // badge-realtime-countdown B5：徽标 1s 刷新，仅取最近一条降低 fetch 开销
+        descriptor.fetchLimit = 1
         guard let nearest = try? context.fetch(descriptor).first,
               let start = nearest.startDate else { return nil }
         return CountdownFormatter.formatCountdown(remaining: start.timeIntervalSince(now))
@@ -314,73 +303,7 @@ final class StatusBarIconManager {
     }
 
     private static func renderCustomFormatIcon(format: String, style: AppSettings.CustomFormatStyle, iconColor: NSColor) -> NSImage {
-        renderBadgeText(customFormatter(for: format).string(from: Date()), style: style, iconColor: iconColor)
-    }
-
-    /// D2：按给定文本渲染宽度自适应的菜单栏图标（自定义格式图标与倒计时徽标共用）
-    private static func renderBadgeText(_ text: String, style: AppSettings.CustomFormatStyle, iconColor: NSColor) -> NSImage {
-        // 使用系统菜单栏标准字体（13pt, regular）
-        let fontSize: CGFloat = 13
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
-        
-        // 计算文本实际宽度
-        let attributes: [NSAttributedString.Key: Any] = [.font: font]
-        let textSize = (text as NSString).size(withAttributes: attributes)
-        
-        // 宽度自适应：文本宽度 + 8pt 边距（左右各 4pt），最小 22pt
-        let width = max(22, textSize.width + 8)
-        let height: CGFloat = 22
-        
-        let size = NSSize(width: width, height: height)
-        let image = NSImage(size: size)
-        image.lockFocus()
-
-        // 根据样式绘制背景
-        let rect = NSRect(origin: .zero, size: size)
-        switch style {
-        case .none:
-            // 无背景，直接绘制文字
-            break
-        case .solid:
-            // 实心背景：使用主题色填充圆角矩形
-            let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
-            iconColor.setFill()
-            path.fill()
-        case .stroke:
-            // 描边背景：使用主题色绘制圆角矩形边框
-            let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
-            path.lineWidth = 1.5
-            iconColor.setStroke()
-            path.stroke()
-        }
-
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.alignment = .center
-
-        // 根据背景样式调整文字颜色
-        let textColor: NSColor
-        switch style {
-        case .none:
-            textColor = NSColor.labelColor
-        case .solid:
-            textColor = .white  // 实心背景用白色文字
-        case .stroke:
-            textColor = iconColor  // 描边样式用主题色文字
-        }
-
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: textColor,
-            .paragraphStyle: paragraphStyle,
-        ]
-
-        // 文字垂直居中
-        let textY = (height - textSize.height) / 2
-        let textRect = NSRect(x: 0, y: textY, width: width, height: textSize.height)
-        text.draw(in: textRect, withAttributes: attrs)
-        image.unlockFocus()
-        image.isTemplate = false  // 不再使用模板，保留颜色信息
-        return image
+        BadgeTextRenderer.render(customFormatter(for: format).string(from: Date()), style: style, iconColor: iconColor)
     }
 }
 

@@ -192,9 +192,9 @@ struct DataExportSettingsView: View {
                     isClearing = false
                     clearStatus = .success
                     
-                    // 5 秒后自动清除状态
+                    // 5 秒后自动清除状态（sleep 失败直接跳过，无需上抛）
                     Task {
-                        try await Task.sleep(nanoseconds: 5_000_000_000)  // 5 秒
+                        try? await Task.sleep(nanoseconds: 5_000_000_000)  // 5 秒
                         await MainActor.run {
                             clearStatus = nil
                         }
@@ -207,7 +207,7 @@ struct DataExportSettingsView: View {
                     
                     // 5 秒后自动清除状态
                     Task {
-                        try await Task.sleep(nanoseconds: 5_000_000_000)  // 5 秒
+                        try? await Task.sleep(nanoseconds: 5_000_000_000)  // 5 秒
                         await MainActor.run {
                             clearStatus = nil
                         }
@@ -217,7 +217,8 @@ struct DataExportSettingsView: View {
         }
     }
     
-    private static func generateICS(events: [CalendarEvent]) -> String {
+    /// nonisolated：纯 CPU 的 ICS 生成，供 Task.detached 后台调用（MainActor 隔离会导致 Swift 6 并发错误）
+    private nonisolated static func generateICS(events: [CalendarEvent]) -> String {
         var lines: [String] = [
             "BEGIN:VCALENDAR",
             "VERSION:2.0",
@@ -294,7 +295,7 @@ struct DataExportSettingsView: View {
             .replacingOccurrences(of: "\n", with: "\\n")
     }
     
-    private static func formatDate(_ date: Date) -> String {
+    private nonisolated static func formatDate(_ date: Date) -> String {
         return Self.fileNameDateFormatter.string(from: date)
     }
 }
