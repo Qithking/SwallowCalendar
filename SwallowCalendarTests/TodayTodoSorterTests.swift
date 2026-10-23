@@ -120,4 +120,43 @@ final class TodayTodoSorterTests: XCTestCase {
         let yesterday = calendar.date(byAdding: .day, value: -1, to: now)!
         XCTAssertFalse(TodayTodoSorter.isToday(yesterday, now: now, calendar: calendar))
     }
+
+    // MARK: - 超时判定（口径经用户确认：仅带时间且开始时间已过、未完成才算）
+
+    /// 带时间未完成且开始时间已过 → 超时
+    func testOverdueTimedPastStart() {
+        let past = makeEvent(id: "a", startDate: now.addingTimeInterval(-3600))
+        XCTAssertTrue(TodayTodoSorter.isOverdue(past, now: now))
+    }
+
+    /// 带时间未完成但开始时间未到 → 不超时
+    func testNotOverdueFutureStart() {
+        let future = makeEvent(id: "b", startDate: now.addingTimeInterval(3600))
+        XCTAssertFalse(TodayTodoSorter.isOverdue(future, now: now))
+    }
+
+    /// 开始时间恰好等于当前时刻 → 不算超时（与主面板严格小于口径一致）
+    func testNotOverdueExactlyNow() {
+        let exact = makeEvent(id: "c", startDate: now)
+        XCTAssertFalse(TodayTodoSorter.isOverdue(exact, now: now))
+    }
+
+    /// 已过期但已完成 → 不显示超时（完成态已置灰）
+    func testNotOverdueCompleted() {
+        let done = makeEvent(id: "d", startDate: now.addingTimeInterval(-3600), isCompleted: true)
+        XCTAssertFalse(TodayTodoSorter.isOverdue(done, now: now))
+    }
+
+    /// 全天任务当天不算超时（全天 startDate 为当天零点，若按时间已过判定会全天标红，违反口径）
+    func testNotOverdueAllDay() {
+        let dayStart = calendar.startOfDay(for: now)
+        let allDay = makeEvent(id: "e", startDate: dayStart, isAllDay: true)
+        XCTAssertFalse(TodayTodoSorter.isOverdue(allDay, now: now))
+    }
+
+    /// 无时间任务无期限 → 永不超时
+    func testNotOverdueNilStartDate() {
+        let noTime = makeEvent(id: "f", startDate: nil)
+        XCTAssertFalse(TodayTodoSorter.isOverdue(noTime, now: now))
+    }
 }

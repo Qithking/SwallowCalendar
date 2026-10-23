@@ -15,6 +15,8 @@ struct TodayTodoPopoverView: View {
     var onOpenMainPanel: () -> Void = {}
 
     @State private var todos: [CachedEvent] = []
+    /// 超时判定基准时刻（reload 时更新；弹层显示期间时间推移不自动刷新，弹层生命短暂可接受）
+    @State private var reloadAt: Date = Date()
 
     private let calendar = Calendar.current
 
@@ -65,6 +67,8 @@ struct TodayTodoPopoverView: View {
                     .foregroundStyle(event.isCompleted ? Color.accentColor : Color.secondary)
             }
             .buttonStyle(.plain)
+            // macOS 点击后按钮获得键盘焦点会画蓝色方形 focus ring（视觉像单选组件选中态），去掉
+            .focusable(false)
 
             Text(event.title)
                 .font(.body)
@@ -75,9 +79,17 @@ struct TodayTodoPopoverView: View {
             Spacer(minLength: 8)
 
             if let start = event.startDate {
-                Text(event.isAllDay ? "全天" : Self.timeFormatter.string(from: start))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text(event.isAllDay ? "全天" : Self.timeFormatter.string(from: start))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    // 超时标识：红色「已过期」，对齐主面板 EventItemRow 样式（口径见 TodayTodoSorter.isOverdue）
+                    if TodayTodoSorter.isOverdue(event, now: reloadAt) {
+                        Text("已过期")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.red)
+                    }
+                }
             }
         }
         .padding(.horizontal, 12)
@@ -102,6 +114,8 @@ struct TodayTodoPopoverView: View {
     // MARK: - 数据
 
     private func reload(now: Date = Date()) {
+        // 更新超时判定基准时刻
+        reloadAt = now
         guard let context = EventCacheService.shared.context else {
             todos = []
             return
