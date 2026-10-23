@@ -55,6 +55,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 启动待办事项到期提醒服务
         ReminderAlertService.shared.configure(with: Self.sharedModelContainer)
         ReminderAlertService.shared.startMonitoring()
+
+        // 桌面常驻待办面板：注入容器（didSet 时序早于装配场景的兜底见 syncVisibility）
+        DesktopTodoPanelManager.shared.configure(with: Self.sharedModelContainer)
         
         // 创建 FloatingPanel（使用共享容器）
         panel = FloatingPanel(
@@ -71,6 +74,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     .modelContainer(Self.sharedModelContainer)
             )
         }
+
+        // 启动补偿：开关已开则显示桌面面板（覆盖 AppSettings.didSet 早于 configure 的时序）
+        DesktopTodoPanelManager.shared.syncVisibility()
 
         // 装配 hover 弹层：条目点击 → 关弹层并打开主面板（主面板已开时 open 仅前置，不会被关掉）
         let hover = StatusItemHoverController()

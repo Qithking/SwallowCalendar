@@ -78,6 +78,17 @@ final class AppSettings {
         }
     }
 
+    /// 桌面常驻待办面板开关（默认关闭）
+    var desktopTodoPanelEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(desktopTodoPanelEnabled, forKey: "desktopTodoPanelEnabled")
+            // Manager 为 @MainActor，didSet 宏展开为 nonisolated 上下文，切主 actor 同步显隐（幂等）
+            Task { @MainActor in
+                DesktopTodoPanelManager.shared.syncVisibility()
+            }
+        }
+    }
+
     /// 系统日历分类颜色
     var systemCalendarColorHex: String {
         didSet {
@@ -240,6 +251,7 @@ final class AppSettings {
         self.sortOrder = SortOrder(rawValue: UserDefaults.standard.string(forKey: "sortOrder") ?? "") ?? .descending
         self.defaultFilterMode = UserDefaults.standard.string(forKey: "defaultFilterMode") ?? "本月"
         self.statusBarCountdownEnabled = UserDefaults.standard.object(forKey: "statusBarCountdownEnabled") as? Bool ?? false
+        self.desktopTodoPanelEnabled = UserDefaults.standard.object(forKey: "desktopTodoPanelEnabled") as? Bool ?? false
 
         // 初始化时同步一次开机启动状态（让 SMAppService 生效）
         updateLaunchAtLogin()

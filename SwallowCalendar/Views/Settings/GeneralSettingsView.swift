@@ -115,6 +115,10 @@ struct GeneralSettingsView: View {
                 // 显示农历
                 Toggle("显示农历", isOn: $settings.showLunarCalendar)
                     .toggleStyle(.switch)
+
+                // 桌面常驻待办面板
+                Toggle("桌面显示待办面板", isOn: $settings.desktopTodoPanelEnabled)
+                    .toggleStyle(.switch)
             }
         }
         .formStyle(.grouped)
