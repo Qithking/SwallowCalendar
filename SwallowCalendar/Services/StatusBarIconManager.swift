@@ -149,6 +149,9 @@ final class StatusBarIconManager {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.updateIcon()
         }
+        // 首次 fire 对齐到下一整秒边界（与列表倒计时定时器同相位，两侧数字同步跳动）；
+        // repeats 模式下后续 fire = 新 fireDate + n*interval，整秒序列不漂移
+        refreshTimer?.fireDate = Date().addingTimeInterval(CountdownPhaseSync.intervalToNextSecond())
         // V-19：加入 common mode，菜单展开/拖动等 tracking 期间定时器仍能触发，
         // 避免跨天后图标停留在旧日期直到交互结束
         if let timer = refreshTimer {

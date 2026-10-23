@@ -8,6 +8,18 @@
 import Foundation
 import Combine
 
+/// 倒计时定时器相位对齐工具（fix：菜单栏徽标与列表倒计时不同步跳动）
+/// 两侧独立 1s 定时器若从各自启动时刻起跳，节拍相位错开导致数字跳动时刻不一致；
+/// 启动时统一对齐到 wall-clock 整秒边界，无论何时启动都落在同一整秒序列
+enum CountdownPhaseSync {
+    /// 距下一整秒边界的间隔（秒），结果 ∈ (0, 1]
+    /// 输入恰为整秒边界时返回 1（对齐到下一整秒，避免 0 延迟调度无效）
+    static func intervalToNextSecond(from date: Date = Date()) -> TimeInterval {
+        let fraction = date.timeIntervalSince1970.truncatingRemainder(dividingBy: 1)
+        return 1 - fraction
+    }
+}
+
 /// 倒计时管理器：使用单一 GCD Timer + 最小堆实现高性能动态倒计时
 /// E-12：显式 MainActor 隔离——register/unregister/shouldRefresh 调用方均为
 /// 主线程视图，timer 回调已派回主线程；把"约定收敛在主线程"固化为类型系统保证
@@ -94,7 +106,10 @@ final class CountdownTimerManager: ObservableObject {
         stopTimer()
         
         let newTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .background))
-        newTimer.schedule(deadline: .now(), repeating: .seconds(1), leeway: .milliseconds(100))
+        // 首次 fire 对齐到下一整秒边界（与菜单栏徽标定时器同相位，两侧倒计时同步跳动）；
+        // leeway 收紧到 10ms，避免 fire 晚于整秒太多扩大两侧翻转窗口
+        let alignDelay = CountdownPhaseSync.intervalToNextSecond()
+        newTimer.schedule(deadline: .now() + alignDelay, repeating: .seconds(1), leeway: .milliseconds(10))
         newTimer.setEventHandler { [weak self] in
             // 后台 timer 触发后跳回主线程处理（Task 继承 MainActor 隔离）
             Task { @MainActor [weak self] in
