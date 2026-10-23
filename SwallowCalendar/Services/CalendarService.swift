@@ -103,6 +103,23 @@ final class CalendarService {
         return calendars.filter { enabledIDs.contains($0.calendarIdentifier) }
     }
 
+    /// 初始同步成功后默认勾选全部系统日历（幂等：已存在任一偏好记录则跳过，尊重用户已做选择）
+    /// - Note: 修复「设置页未勾选却显示系统日历内容」——原实现无偏好记录时
+    ///   enabledCalendars 兜底全量同步/显示，而设置页 Toggle 按"无记录=未勾"渲染，两侧语义不一致；
+    ///   首次同步成功后落库全勾记录，此后同步、设置页、日历网格三处均以记录为唯一口径
+    @MainActor
+    func seedDefaultCalendarPreferences(context: ModelContext, preferences: [CalendarPreference], calendars: [EKCalendar]) {
+        guard preferences.isEmpty, !calendars.isEmpty else { return }
+        for calendar in calendars {
+            context.insert(CalendarPreference(calendarID: calendar.calendarIdentifier, isEnabled: true))
+        }
+        do {
+            try context.save()
+        } catch {
+            AppLogger.sync.error("默认勾选系统日历写入失败: \(String(describing: error))")
+        }
+    }
+
     // MARK: - Events
 
     /// 获取指定日期范围的事件

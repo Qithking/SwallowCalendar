@@ -58,6 +58,14 @@ final class BackgroundSyncService {
             if !enabledCals.isEmpty {
                 if !(await CalendarService.shared.cacheService.syncEvents(from: CalendarService.shared, calendars: enabledCals)) {
                     failures.append("日历事件同步失败")
+                } else {
+                    // 初始同步成功后默认勾选全部系统日历（幂等：已有偏好记录则跳过），
+                    // 使设置页勾选状态与同步/显示口径一致
+                    CalendarService.shared.seedDefaultCalendarPreferences(
+                        context: context,
+                        preferences: preferences,
+                        calendars: CalendarService.shared.calendars
+                    )
                 }
             } else {
                 // clearSystemCalendarCache 为 @MainActor 同步方法，同类 @MainActor 上下文可直接调用

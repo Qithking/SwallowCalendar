@@ -5,6 +5,8 @@
 //  测试周期任务时间验证逻辑
 
 import XCTest
+import EventKit
+import SwiftData
 @testable import SwallowCalendar
 
 class CalendarServiceTests: XCTestCase {
@@ -315,5 +317,65 @@ class CalendarServiceTests: XCTestCase {
             // 注意：农历月份可能是负数（表示闰月），这里只验证有变化
             XCTAssertNotEqual(nextMonth, currentMonth, "农历月份应该变化")
         }
+    }
+
+    // MARK: - 初始同步后默认勾选全部系统日历（fix：设置页未勾选却显示系统日历内容）
+
+    /// 构建仅注册 CalendarPreference 的内存 SwiftData 上下文，测试互不污染
+    @MainActor
+    private func makeSeedTestContext() throws -> ModelContext {
+        let config = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: CalendarPreference.self, configurations: config)
+        return ModelContext(container)
+    }
+
+    /// 新用户初始同步成功后：全部系统日历各写一条 isEnabled=true 偏好记录
+    @MainActor
+    func testSeedAfterInitialSyncEnablesAllCalendars() throws {
+        let context = try makeSeedTestContext()
+        let store = EKEventStore()
+        let cal1 = EKCalendar(for: .event, eventStore: store)
+        cal1.title = "工作"
+        let cal2 = EKCalendar(for: .event, eventStore: store)
+        cal2.title = "个人"
+
+        calendarService.seedDefaultCalendarPreferences(
+            context: context, preferences: [], calendars: [cal1, cal2]
+        )
+
+        let prefs = try context.fetch(FetchDescriptor<CalendarPreference>())
+        XCTAssertEqual(prefs.count, 2, "应为每个系统日历各写一条偏好记录")
+        XCTAssertTrue(prefs.allSatisfy(\.isEnabled), "初始同步成功后应全部默认勾选")
+    }
+
+    /// 幂等：已存在偏好记录（用户手动关闭过）时不得重复 seed，尊重用户已做选择
+    @MainActor
+    func testSeedIsIdempotentWhenPreferencesExist() throws {
+        let context = try makeSeedTestContext()
+        let store = EKEventStore()
+        let cal = EKCalendar(for: .event, eventStore: store)
+        let existing = CalendarPreference(calendarID: cal.calendarIdentifier, isEnabled: false)
+        context.insert(existing)
+
+        calendarService.seedDefaultCalendarPreferences(
+            context: context, preferences: [existing], calendars: [cal]
+        )
+
+        let prefs = try context.fetch(FetchDescriptor<CalendarPreference>())
+        XCTAssertEqual(prefs.count, 1, "已有偏好记录时不应追加")
+        XCTAssertFalse(prefs[0].isEnabled, "不应覆盖用户手动关闭的选择")
+    }
+
+    /// 无系统日历（未授权等）时不得 seed 任何记录
+    @MainActor
+    func testSeedSkipsWhenNoCalendars() throws {
+        let context = try makeSeedTestContext()
+
+        calendarService.seedDefaultCalendarPreferences(
+            context: context, preferences: [], calendars: []
+        )
+
+        let prefs = try context.fetch(FetchDescriptor<CalendarPreference>())
+        XCTAssertTrue(prefs.isEmpty, "无系统日历时不应写任何偏好记录")
     }
 }
