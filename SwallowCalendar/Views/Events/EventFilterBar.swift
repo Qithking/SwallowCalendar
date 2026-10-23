@@ -69,6 +69,8 @@ struct EventFilterBar: View {
                     .font(.system(size: 14))
                     .foregroundColor(.secondary)
             }
+            // plain 按钮样式：去掉 Menu 默认的底框/选中外观，仅呈现纯图标
+            .buttonStyle(.plain)
             .menuIndicator(.hidden)
             .fixedSize()
         }
