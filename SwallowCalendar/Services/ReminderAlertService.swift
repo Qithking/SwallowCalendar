@@ -122,11 +122,12 @@ final class ReminderAlertService {
         }
         let now = Date()
         let calendar = Calendar.current
-        
+
         // 先获取所有未完成的用户事件，然后在内存中过滤日期
         // 这种方式可以避免 SwiftData Predicate 的复杂语法问题
         // EventCategory.user.rawValue 的值是 "用户"（中文字符串）
         let userCategory = "用户"
+
         // B-27：把提醒时间窗口换算为 startDate 窗口下沉到谓词粗筛，避免每分钟全表拉取。
         // alertTime = startDate - reminderMinutes*60（reminderMinutes ≥ 0，UI 上限 1440 分钟），
         // 因此 alertTime ∈ [windowLower, now] 的必要条件是
@@ -152,7 +153,7 @@ final class ReminderAlertService {
             },
             sortBy: [SortDescriptor(\.startDate)]
         )
-        
+
         do {
             let allUserEvents = try context.fetch(baseDescriptor)
 
@@ -160,6 +161,8 @@ final class ReminderAlertService {
             // 产出 (事件, 本次应触发的各级 alertTime) 对；同一事件多级同时到期合并为一条
             var duePairs: [(event: CachedEvent, alertTimes: [Date])] = []
             for event in allUserEvents {
+                // 智能跳过节假日（语义 v3）：勾选任务 startDate 落休日/周末当天静默跳过，不提醒
+                guard !HolidaySkipResolver.isSkipped(of: event, context: context) else { continue }
                 guard let startDate = event.startDate else { continue }
                 let offsets = event.reminderOffsets
                 var alertTimes: [Date] = []

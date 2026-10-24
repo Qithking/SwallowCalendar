@@ -17,6 +17,8 @@ struct BatchAddView: View {
     @State private var text = ""
     @State private var isProcessing = false
     @State private var result: BatchAddResult?
+    // 智能跳过节假日（AC-7）：开关作用于全部行，逐行生效
+    @State private var skipHolidays = false
 
     private var validLineCount: Int {
         text.split(separator: "\n")
@@ -78,6 +80,16 @@ struct BatchAddView: View {
                 .foregroundColor(.secondary)
 
             Spacer()
+
+            // 智能跳过节假日（AC-7）：作用于本次批量全部行
+            HStack(spacing: 4) {
+                Text("跳过节假日")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Toggle("", isOn: $skipHolidays)
+                    .toggleStyle(.switch)
+                    .scaleEffect(0.65)
+            }
 
             Button("取消") { onClose() }
                 .keyboardShortcut(.cancelAction)
@@ -166,7 +178,8 @@ struct BatchAddView: View {
                         category: .user,
                         asReminder: false,
                         isLunar: line.parsed.isLunar,
-                        color: line.parsed.color
+                        color: line.parsed.color,
+                        skipHolidays: skipHolidays
                     )
                     successCount += 1
                 } catch {

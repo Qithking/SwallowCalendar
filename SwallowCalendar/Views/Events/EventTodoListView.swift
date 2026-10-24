@@ -55,15 +55,20 @@ struct EventTodoListView: View {
             calendars: enabledCals,
             includeNoDateReminders: true
         )
+
         for event in cached {
             guard event.category == .user && !event.isCompleted else { continue }
-            
+
             if event.startDate == nil {
                 noDateEvents.append(event)
-            } else if event.hasTime {
-                timedEvents.append(event)
             } else {
-                allDayEvents.append(event)
+                // 智能跳过节假日（语义 v3）：勾选任务 startDate 落休日/周末当天静默跳过，不进列表
+                if HolidaySkipResolver.isSkipped(of: event, context: EventCacheService.shared.context) { continue }
+                if event.hasTime {
+                    timedEvents.append(event)
+                } else {
+                    allDayEvents.append(event)
+                }
             }
         }
 

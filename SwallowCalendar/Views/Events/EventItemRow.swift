@@ -242,6 +242,12 @@ private struct EventRowPopoverContent: View {
 
             timeRows
 
+            // 智能跳过节假日状态行（语义 v3 静默跳过）：勾选任务 startDate 落休日/周末当天
+            // 不显示不提醒，任务保留原日期可自行改期；落班日/工作日照常执行不显示该行
+            if HolidaySkipResolver.isSkipped(of: event, context: EventCacheService.shared.context) {
+                infoRow(label: "跳过", value: "已智能跳过（休日/周末不提醒，可修改日期）")
+            }
+
             // 优先级（0=无，不显示）
             if let priority = EventPriority(rawValue: event.priority), priority != .none {
                 infoRow(label: "优先级", value: priority.displayName)

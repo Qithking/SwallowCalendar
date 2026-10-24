@@ -403,6 +403,7 @@ struct CalendarGridView: View {
 /// 避免父视图全表加载后在每个日期格内重复过滤。
 private struct MonthEventGrid: View {
     @Environment(AppSettings.self) private var appSettings
+    @Environment(\.modelContext) private var modelContext
     let month: Date
     @Binding var selectedDate: Date
     let days: [Date]
@@ -445,6 +446,14 @@ private struct MonthEventGrid: View {
     var body: some View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
         let events = cachedEvents
+        // 智能跳过节假日（语义 v3）：预计算「被静默跳过」的事件 id 集合（42 格共享，
+        // 避免每格重复扫描节假日数据）；无顺延，月历始终按原日期显示
+        let skippedEventIDs: Set<String> = Set(
+            events.filter(\.skipHolidays).compactMap { event in
+                guard let start = event.startDate else { return nil }
+                return HolidaySkipResolver.isRestDay(start, context: modelContext) ? event.eventID : nil
+            }
+        )
 
         LazyVGrid(columns: columns, spacing: 2) {
             ForEach(days, id: \.self) { date in
@@ -457,7 +466,22 @@ private struct MonthEventGrid: View {
                     isToday: calendar.isDateInToday(date),
                     isCurrentMonth: calendar.isDate(date, equalTo: month, toGranularity: .month),
                     lunarText: LunarCalendarHelper.lunarString(for: date),
-                    eventItems: dayEvents.map { CalendarEventItem(title: $0.title, colorHex: $0.eventColorHex ?? $0.calendarColorHex, category: $0.category.rawValue, timeText: Self.popoverTimeText(for: $0)) },
+                    eventItems: dayEvents.map { event in
+                        CalendarEventItem(
+                            title: event.title,
+                            colorHex: event.eventColorHex ?? event.calendarColorHex,
+                            category: event.category.rawValue,
+                            timeText: Self.popoverTimeText(for: event),
+                            // 智能跳过节假日：原休日格行「已智能跳过」标识
+                            holidayMark: CalendarPopoverHolidayMark.mark(
+                                skipHolidays: event.skipHolidays,
+                                isSkippedDay: skippedEventIDs.contains(event.eventID),
+                                startDate: event.startDate,
+                                on: date,
+                                calendar: calendar
+                            )
+                        )
+                    },
                     systemCalendarColor: Color(hex: appSettings.systemCalendarColorHex),
                     subscriptionCalendarColor: Color(hex: appSettings.subscriptionCalendarColorHex),
                     isImportant: isImportant

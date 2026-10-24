@@ -340,10 +340,14 @@ struct DesktopTodoPanelView: View {
             }
         )
         let fetched = (try? context.fetch(descriptor)) ?? []
+        // 智能跳过节假日（语义 v3）：勾选任务 startDate 落休日/周末当天静默跳过，不进列表
         // 纯函数精判 + 状态筛选 + 面板排序（DesktopTodoPanelFilterTests 覆盖）
         todos = DesktopTodoPanelSort.sort(
             fetched
-                .filter { DesktopTodoPanelFilter.included($0, mode: mode, now: now) }
+                .filter { event in
+                    !HolidaySkipResolver.isSkipped(of: event, context: context)
+                        && DesktopTodoPanelFilter.included(event, mode: mode, now: now)
+                }
                 .filter { statusFilter.includes(isCompleted: $0.isCompleted) }
         )
     }

@@ -6,13 +6,38 @@
 import SwiftUI
 import EventKit
 
-/// 日历单元格中事件条目的统一数据结构，确保标题、颜色、分类三者始终对齐
+/// 智能跳过节假日：弹窗行标识判定（纯函数，入仓测试）
+/// 解释「原休日为什么当天列表不出现该任务」（已智能跳过，语义 v3 静默跳过）
+enum CalendarPopoverHolidayMark: Equatable {
+    case none       // 正常显示，无标识
+    case skipped    // 该行位于原休日，任务当天静默跳过（显示「已智能跳过」）
+
+    /// 行标识判定（语义 v3，无顺延）：
+    /// - 未勾选 / startDate 非休日（班日照常、数据缺失 fail-open）→ none
+    /// - date 落原日期且该任务被跳过 → skipped；其他日 → none
+    /// - isSkippedDay：该事件 startDate 是否落休日（调用方预计算传入，
+    ///   避免 42 格月历每格重复扫描节假日数据）
+    static func mark(
+        skipHolidays: Bool,
+        isSkippedDay: Bool,
+        startDate: Date?,
+        on date: Date,
+        calendar: Calendar
+    ) -> CalendarPopoverHolidayMark {
+        guard skipHolidays, isSkippedDay, let start = startDate,
+              calendar.isDate(start, inSameDayAs: date) else { return .none }
+        return .skipped
+    }
+}
+
 struct CalendarEventItem: Identifiable {
+    /// 日历单元格中事件条目的统一数据结构，确保标题、颜色、分类三者始终对齐
     let id = UUID()
     let title: String
     let colorHex: String
     let category: String  // "系统" | "订阅" | "用户"
     let timeText: String? // 弹窗时间列："全天" / "HH:mm" / nil（无时间信息）
+    var holidayMark: CalendarPopoverHolidayMark = .none  // 弹窗行节假日标识
 }
 
 struct CalendarDayCell: View {
@@ -50,15 +75,15 @@ struct CalendarDayCell: View {
     }
 
     // MARK: - Holiday/Work Marks
-    
-    /// V-35：兼容全角/半角括号的"休"标记（标题含"假期"或"(休)"）
+
+    /// V-35：休/班标记判定改用 HolidaySkipResolver 公共匹配器（关键词单一真源，
+    /// 与智能跳过节假日共用口径，防两处漂移）
     private var showRestMark: Bool {
-        eventItems.contains { $0.title.contains("假期") || $0.title.contains("（休）") || $0.title.contains("(休)") }
+        eventItems.contains { HolidaySkipResolver.isRestTitle($0.title) }
     }
 
-    /// V-35：兼容全角/半角括号的"班"标记（标题含"补班"或"(班)"）
     private var showWorkMark: Bool {
-        eventItems.contains { $0.title.contains("补班") || $0.title.contains("（班）") || $0.title.contains("(班)") }
+        eventItems.contains { HolidaySkipResolver.isWorkTitle($0.title) }
     }
 
     var body: some View {
@@ -169,6 +194,15 @@ struct CalendarDayCell: View {
                     Text(item.title)
                         .font(.system(size: 11))
                         .lineLimit(2)
+                    // 智能跳过节假日标识：原休日任务当天静默跳过（语义 v3 无顺延）
+                    if item.holidayMark == .skipped {
+                        Text("已智能跳过")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.12), in: Capsule())
+                    }
                 }
             }
         }

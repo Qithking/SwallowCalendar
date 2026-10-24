@@ -4,6 +4,7 @@
 //
 //  hover 弹层内容：今天待办列表（plan step 2）
 //  数据 = 用户分类 + 无时间或今天内（含已完成，置灰置底）；
+//  智能跳过节假日（语义 v3）：勾选任务 startDate 落休日/周末当天静默跳过，不显示
 //  谓词粗筛 + TodayTodoSorter 精确判定与排序（排序行为单测覆盖）
 //
 
@@ -133,9 +134,13 @@ struct TodayTodoPopoverView: View {
             }
         )
         let fetched = (try? context.fetch(descriptor)) ?? []
+        // 智能跳过节假日（语义 v3）：勾选任务 startDate 落休日/周末当天静默跳过，不进列表
         // 精确今天判定 + 排序交给纯函数（TodayTodoSorterTests 覆盖）
         todos = TodayTodoSorter.sort(
-            fetched.filter { TodayTodoSorter.isToday($0.startDate, now: now, calendar: calendar) },
+            fetched.filter { event in
+                !HolidaySkipResolver.isSkipped(of: event, context: context)
+                    && TodayTodoSorter.isToday(event.startDate, now: now, calendar: calendar)
+            },
             now: now,
             calendar: calendar
         )

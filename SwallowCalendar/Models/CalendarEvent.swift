@@ -105,6 +105,8 @@ struct CalendarEvent: Identifiable {
     /// B-25：EK 事件备注（仅系统日历同步拉取时填充，供 syncEvents 判分类/完成标记，
     /// 避免循环内逐条 eventStore.event(withIdentifier:) 跨进程查询；其余路径为 nil）
     var notes: String? = nil
+    /// 智能跳过节假日标记（plan 步骤①，cachedToCalendarEvent 从缓存透传）
+    var skipHolidays: Bool = false
 
     /// 是否有明确的开始时间（非全天事件）
     var hasTime: Bool {

@@ -34,6 +34,8 @@ struct TaskInputView: View {
     @State private var createAsReminder = false  // 是否创建为系统提醒
     // V-16：全天由用户显式控制，NLP"明天"解析为 00:00 不再被隐式误判为全天
     @State private var taskIsAllDay = false
+    // 智能跳过节假日（AC-7）：勾选后 startDate 落休日顺延至下一个班日显示与提醒
+    @State private var taskSkipHolidays = false
     @State private var nlpTask: Task<Void, Never>?
 
     // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
@@ -274,6 +276,19 @@ struct TaskInputView: View {
                         .scaleEffect(0.65)
                 }
             }
+
+            // 第五行：智能跳过节假日开关（AC-7；勾选后按日历休/班标识顺延显示与提醒）
+            HStack {
+                HStack(spacing: 4) {
+                    Text("跳过节假日")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    Toggle("", isOn: $taskSkipHolidays)
+                        .toggleStyle(.switch)
+                        .scaleEffect(0.65)
+                }
+                Spacer()
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -320,7 +335,8 @@ struct TaskInputView: View {
                     category: .user,
                     asReminder: createAsReminder,
                     isLunar: taskIsLunar,
-                    color: taskColor
+                    color: taskColor,
+                    skipHolidays: taskSkipHolidays
                 )
                 inputText = ""
                 resetTaskAttributes()
@@ -342,6 +358,7 @@ struct TaskInputView: View {
         taskIsLunar = false
         taskIsAllDay = false
         createAsReminder = false
+        taskSkipHolidays = false
         showAttributeEditor = false
         // V-7：重置手动修改标记，下一条任务的 NLP 解析恢复全字段覆盖
         manuallyEditedDate = false

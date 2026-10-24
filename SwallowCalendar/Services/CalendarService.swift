@@ -307,7 +307,8 @@ final class CalendarService {
         category: EventCategory = .system,
         asReminder: Bool = false,
         isLunar: Bool = false,
-        color: EventColor? = nil
+        color: EventColor? = nil,
+        skipHolidays: Bool = false
     ) throws {
         let recurrenceType = recurrence ?? .none
         
@@ -347,7 +348,8 @@ final class CalendarService {
                 category: category,
                 asReminder: asReminder,
                 isLunar: isLunar,
-                color: color
+                color: color,
+                skipHolidays: skipHolidays
             )
         } else {
             // 非周期任务，创建一个（允许过去时间）
@@ -359,7 +361,8 @@ final class CalendarService {
                     priority: priority,
                     recurrence: nil,
                     reminderMinutes: reminderMinutes,
-                    color: color
+                    color: color,
+                    skipHolidays: skipHolidays
                 )
             } else {
                 try createCalendarEvent(
@@ -372,7 +375,8 @@ final class CalendarService {
                     recurrence: nil,
                     reminderMinutes: reminderMinutes,
                     category: category,
-                    color: color
+                    color: color,
+                    skipHolidays: skipHolidays
                 )
             }
         }
@@ -393,7 +397,8 @@ final class CalendarService {
         category: EventCategory,
         asReminder: Bool,
         isLunar: Bool,
-        color: EventColor? = nil
+        color: EventColor? = nil,
+        skipHolidays: Bool = false
     ) throws {
         // 生成5个日期
         let dates = generateRecurringDates(
@@ -429,7 +434,8 @@ final class CalendarService {
                     recurrenceType: recurrenceType,
                     isLunar: isLunar,
                     reminderMinutes: reminderMinutes,
-                    color: color
+                    color: color,
+                    skipHolidays: skipHolidays
                 )
             } else {
                 try createCalendarEventWithGroupInfo(
@@ -445,7 +451,8 @@ final class CalendarService {
                     groupIndex: index,
                     recurrenceType: recurrenceType,
                     isLunar: isLunar,
-                    color: color
+                    color: color,
+                    skipHolidays: skipHolidays
                 )
             }
         }
@@ -464,7 +471,8 @@ final class CalendarService {
         reminderMinutes: Int? = nil,
         reminderOffsets: [Int]? = nil,
         category: EventCategory = .system,
-        color: EventColor? = nil
+        color: EventColor? = nil,
+        skipHolidays: Bool = false
     ) throws {
         let event = EKEvent(eventStore: eventStore)
         event.title = title
@@ -529,7 +537,8 @@ final class CalendarService {
                 category: category,
                 priority: priority?.rawValue ?? 0,
                 reminderMinutes: reminderMinutes ?? 0,
-                eventColorHex: color?.rawValue
+                eventColorHex: color?.rawValue,
+                skipHolidays: skipHolidays
             )
             // 多级提醒：经 setter 写入以维护硬不变量 reminderMinutes == offsets.max()
             if let offsets = reminderOffsets, !offsets.isEmpty {
@@ -543,7 +552,7 @@ final class CalendarService {
             }
         }
     }
-    
+
     /// B-33：EventPriority（9=最高）→ EKReminder.priority（1=最高、9=最低、0=无）语义映射
     private static func ekPriority(from priority: EventPriority?) -> Int {
         // 先解包再 switch：EventPriority 自带 .none case，对 Optional 直接 switch 时
@@ -568,7 +577,8 @@ final class CalendarService {
         recurrence: RecurrenceType? = nil,
         reminderMinutes: Int? = nil,
         reminderOffsets: [Int]? = nil,
-        color: EventColor? = nil
+        color: EventColor? = nil,
+        skipHolidays: Bool = false
     ) throws {
         guard reminderAuthorizationStatus == .fullAccess else {
             throw EventError.noReminderAccess
@@ -614,7 +624,8 @@ final class CalendarService {
                 isCompleted: false,
                 priority: priority?.rawValue ?? 0,
                 reminderMinutes: reminderMinutes ?? 0,
-                eventColorHex: color?.rawValue
+                eventColorHex: color?.rawValue,
+                skipHolidays: skipHolidays
             )
             // 多级提醒：经 setter 写入以维护硬不变量 reminderMinutes == offsets.max()
             if let offsets = reminderOffsets, !offsets.isEmpty {
@@ -628,7 +639,7 @@ final class CalendarService {
             }
         }
     }
-    
+
     /// 创建带组信息的系统日历事件（用于周期任务）
     @MainActor
     private func createCalendarEventWithGroupInfo(
@@ -645,7 +656,8 @@ final class CalendarService {
         groupIndex: Int,
         recurrenceType: RecurrenceType,
         isLunar: Bool,
-        color: EventColor? = nil
+        color: EventColor? = nil,
+        skipHolidays: Bool = false
     ) throws {
         let event = EKEvent(eventStore: eventStore)
         event.title = title
@@ -699,7 +711,8 @@ final class CalendarService {
                 recurrenceType: recurrenceType,
                 isLunar: isLunar,
                 reminderMinutes: reminderMinutes ?? 0,
-                eventColorHex: color?.rawValue
+                eventColorHex: color?.rawValue,
+                skipHolidays: skipHolidays
             )
             // 多级提醒：经 setter 写入以维护硬不变量 reminderMinutes == offsets.max()
             if let offsets = reminderOffsets, !offsets.isEmpty {
@@ -713,7 +726,7 @@ final class CalendarService {
             }
         }
     }
-    
+
     /// 创建带组信息的系统提醒（用于周期任务）
     @MainActor
     private func createReminderWithGroupInfo(
@@ -727,19 +740,20 @@ final class CalendarService {
         isLunar: Bool,
         reminderMinutes: Int? = nil,
         reminderOffsets: [Int]? = nil,
-        color: EventColor? = nil
+        color: EventColor? = nil,
+        skipHolidays: Bool = false
     ) throws {
         guard reminderAuthorizationStatus == .fullAccess else {
             throw EventError.noReminderAccess
         }
-        
+
         let reminder = EKReminder(eventStore: eventStore)
         reminder.title = title
         reminder.calendar = eventStore.defaultCalendarForNewReminders() ?? eventStore.calendars(for: .reminder).first
         guard reminder.calendar != nil else {
             throw EventError.noReminderCalendarAvailable
         }
-        
+
         // 设置到期时间
         var components = Calendar.current.dateComponents([.year, .month, .day], from: dueDate)
         if !isAllDay {
@@ -747,12 +761,12 @@ final class CalendarService {
             components.minute = Calendar.current.component(.minute, from: dueDate)
         }
         reminder.dueDateComponents = components
-        
+
         // 设置提醒闹钟：多级 offsets 优先，单级 minutes 兼容
         reminder.alarms = Self.makeAlarms(offsets: reminderOffsets, minutes: reminderMinutes)
-        
+
         try eventStore.save(reminder, commit: true)
-        
+
         // 保存到本地缓存（带组信息）
         if let context = cacheService.context {
             let cached = CachedEvent(
@@ -773,7 +787,8 @@ final class CalendarService {
                 recurrenceType: recurrenceType,
                 isLunar: isLunar,
                 reminderMinutes: reminderMinutes ?? 0,
-                eventColorHex: color?.rawValue
+                eventColorHex: color?.rawValue,
+                skipHolidays: skipHolidays
             )
             // 多级提醒：经 setter 写入以维护硬不变量 reminderMinutes == offsets.max()
             if let offsets = reminderOffsets, !offsets.isEmpty {
@@ -962,8 +977,9 @@ final class CalendarService {
 
     /// 更新事件（日历事件或提醒）
     /// - Parameter reminderOffsets: 多级提醒偏移数组；nil = 不改提醒，空数组 = 清除全部提醒
+    /// - Parameter skipHolidays: nil = 不改跳过节假日标记（编辑面板未触碰该开关时保持原值）
     @MainActor
-    func updateEvent(eventID: String, title: String?, startDate: Date?, endDate: Date?, isAllDay: Bool? = nil, isReminder: Bool = false, priority: EventPriority? = nil, reminderMinutes: Int? = nil, reminderOffsets: [Int]? = nil, color: EventColor? = nil) throws {
+    func updateEvent(eventID: String, title: String?, startDate: Date?, endDate: Date?, isAllDay: Bool? = nil, isReminder: Bool = false, priority: EventPriority? = nil, reminderMinutes: Int? = nil, reminderOffsets: [Int]? = nil, color: EventColor? = nil, skipHolidays: Bool? = nil) throws {
         if isReminder {
             guard let reminder = eventStore.calendarItem(withIdentifier: eventID) as? EKReminder else { return }
             if let title { reminder.title = title }
@@ -1048,6 +1064,8 @@ final class CalendarService {
                 cached.setReminderMinutesRewritingMax(reminderMinutes)
             }
             if let color { cached.eventColorHex = color.rawValue }
+            // 跳过节假日标记：仅显式传入时写回（nil = 保持原值）
+            if let skipHolidays { cached.skipHolidays = skipHolidays }
             cached.lastUpdated = Date()
             do {
                 try cacheService.context?.save()
@@ -1406,7 +1424,8 @@ final class CalendarService {
             groupId: cached.groupId,
             recurrenceType: cached.recurrenceType,
             reminderMinutes: cached.reminderMinutes,
-            eventColorHex: cached.eventColorHex
+            eventColorHex: cached.eventColorHex,
+            skipHolidays: cached.skipHolidays
         )
     }
     

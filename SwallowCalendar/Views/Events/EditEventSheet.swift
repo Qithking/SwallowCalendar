@@ -17,6 +17,8 @@ struct EditEventSheet: View {
     @State private var title: String
     @State private var startDate: Date
     @State private var isAllDay: Bool
+    // 智能跳过节假日（AC-7）：初始值从缓存读取，保存时写回
+    @State private var skipHolidays = false
     @State private var taskColor: EventColor?
     @State private var taskPriority: EventPriority = .none
     @State private var taskRecurrence: RecurrenceType = .none
@@ -55,6 +57,8 @@ struct EditEventSheet: View {
                 if let hex = cached.eventColorHex {
                     _taskColor = State(initialValue: EventColor(rawValue: hex))
                 }
+                // 智能跳过节假日初始值（AC-7：编辑面板可修改并保存）
+                _skipHolidays = State(initialValue: cached.skipHolidays)
             }
         }
         self.originalRecurrence = originalRec
@@ -108,6 +112,13 @@ struct EditEventSheet: View {
 
                 FormRow(label: "日期") {
                     DatePicker("", selection: $startDate, displayedComponents: isAllDay ? [.date] : [.date, .hourAndMinute])
+                        .labelsHidden()
+                }
+
+                // 智能跳过节假日（AC-7）：勾选后 startDate 落休日顺延至下一个班日显示与提醒
+                FormRow(label: "跳过节假日") {
+                    Toggle("", isOn: $skipHolidays)
+                        .toggleStyle(.switch)
                         .labelsHidden()
                 }
             }
@@ -351,7 +362,8 @@ struct EditEventSheet: View {
                     priority: taskPriority,
                     // 多级提醒：始终传 offsets（空数组 = 清除全部提醒），单级 minutes 不再单独维护
                     reminderOffsets: taskReminderOffsets.sorted(),
-                    color: taskColor
+                    color: taskColor,
+                    skipHolidays: skipHolidays
                 )
                 // D2/G7v2：编辑保存成功，广播缓存变更（徽标即时刷新）
                 NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)

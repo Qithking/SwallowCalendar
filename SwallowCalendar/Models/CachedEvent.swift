@@ -92,7 +92,11 @@ final class CachedEvent {
     
     /// 用户选择的事件颜色（十六进制，nil 时使用日历颜色）
     var eventColorHex: String?
-    
+
+    /// 智能跳过节假日：勾选后生效日按节假日休/班标识顺延（plan 步骤①；
+    /// 带默认值新增属性走 SwiftData 轻量迁移，存量行自动补 false）
+    var skipHolidays: Bool = false
+
     /// 缓存更新时间
     var lastUpdated: Date
     
@@ -161,7 +165,8 @@ final class CachedEvent {
         isLunar: Bool = false,
         reminderMinutes: Int = 0,
         reminderOffsetsJSON: String? = nil,
-        eventColorHex: String? = nil
+        eventColorHex: String? = nil,
+        skipHolidays: Bool = false
     ) {
         self.eventID = eventID
         self.title = title
@@ -182,6 +187,7 @@ final class CachedEvent {
         self.reminderMinutes = reminderMinutes
         self.reminderOffsetsJSON = reminderOffsetsJSON
         self.eventColorHex = eventColorHex
+        self.skipHolidays = skipHolidays
         self.lastUpdated = Date()
     }
 }
