@@ -25,6 +25,10 @@ final class StatusItemHoverController: NSResponder {
     /// 点击弹层条目时的回调（关弹层 + 打开主面板）
     private var onOpenMainPanel: (() -> Void)?
 
+    /// 弹出抑制器（由装配方注入）：返回 true 时挂起弹出——
+    /// 主面板与弹层互斥（用户需求：打开主界面时不显示 pop 弹出框）
+    var isSuppressed: (() -> Bool)?
+
     private let popover = NSPopover()
     private weak var button: NSButton?
     private var openTimer: Timer?
@@ -88,6 +92,8 @@ final class StatusItemHoverController: NSResponder {
     @objc private func openTimerFired() {
         openTimer = nil
         guard let contentProvider, let button, !popover.isShown else { return }
+        // 互斥抑制：主面板可见时不弹（弹层与主界面不能同时显示）
+        guard isSuppressed?() != true else { return }
         // 跟踪失效兜底：fire 时二次校验鼠标仍在 button 的屏幕 frame 内
         guard let window = button.window else { return }
         let frameInScreen = window.convertToScreen(button.convert(button.bounds, to: nil))

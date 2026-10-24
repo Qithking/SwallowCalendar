@@ -90,6 +90,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.panel?.open()
             }
         }
+        // 弹层与主面板互斥：主面板可见时 hover 不弹（挂起而非关闭，面板关闭后可再悬停弹出）
+        hover.isSuppressed = { [weak self] in self?.panel?.isPresented ?? false }
         hoverController = hover
     }
     
@@ -137,7 +139,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     /// 点击菜单栏图标但窗口未显示时调用
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        panel?.toggle()
+        MainActor.assumeIsolated {
+            // 弹层与主面板互斥：dock 打开主面板前关 hover 弹层
+            hoverController?.closePopover()
+            panel?.toggle()
+        }
         return true
     }
     
