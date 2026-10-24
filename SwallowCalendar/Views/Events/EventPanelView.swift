@@ -21,6 +21,8 @@ struct EventPanelView: View {
     private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
     @State private var todoExpanded = true
     @State private var completedExpanded = false
+    // 编辑属性态：新建属性表单显示期间隐藏筛选条与待办/已办列表模块
+    @State private var isEditingAttributes = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,6 +31,7 @@ struct EventPanelView: View {
                 calendarService: calendarService,
                 calendarPreferences: calendarPreferences,
                 refreshTrigger: $refreshTrigger,
+                isEditingAttributes: $isEditingAttributes,
                 onTaskAdded: {
                     refreshTrigger.toggle()
                     onEventsChanged?()
@@ -37,15 +40,19 @@ struct EventPanelView: View {
             .padding(.horizontal, 8)
             .padding(.top, 6)
 
-            Divider()
-                .padding(.vertical, 4)
+            if isEditingAttributes {
+                // 编辑属性态：下方区域整个让给属性表单，避免表单与列表层级混杂
+                Spacer(minLength: 0)
+            } else {
+                Divider()
+                    .padding(.vertical, 4)
 
-            // 快捷过滤条
-            EventFilterBar(selectedFilter: $filterMode)
-                .padding(.horizontal, 8)
+                // 快捷过滤条
+                EventFilterBar(selectedFilter: $filterMode)
+                    .padding(.horizontal, 8)
 
-            // 待办和已办列表（手风琴效果）
-            VStack(spacing: 0) {
+                // 待办和已办列表（手风琴效果）
+                VStack(spacing: 0) {
                 EventTodoListView(
                     selectedDate: selectedDate,
                     calendarService: calendarService,
@@ -125,12 +132,14 @@ struct EventPanelView: View {
                     },
                     refreshTrigger: $refreshTrigger
                 )
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+                .padding(.bottom, 4)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            .padding(.horizontal, 8)
-            .padding(.top, 4)
-            .padding(.bottom, 4)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
+        .animation(.easeInOut(duration: 0.15), value: isEditingAttributes)
         // V-36：通知/设置监听从 EmptyView hacky 写法迁移到根视图修饰符（语义等价、写法正规）
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SystemCalendarPreferencesChanged"))) { _ in
             refreshTrigger.toggle()
