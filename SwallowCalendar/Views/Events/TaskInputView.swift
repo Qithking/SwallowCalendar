@@ -38,6 +38,12 @@ struct TaskInputView: View {
     @State private var taskIsAllDay = false
     // 智能跳过节假日（AC-7）：勾选后 startDate 落休日顺延至下一个班日显示与提醒
     @State private var taskSkipHolidays = false
+    // 任务有效期（spec/task-validity-period）：总开关默认关；开启后开始端默认勾选=任务日期、结束端不勾选
+    @State private var taskValidityEnabled = false
+    @State private var taskValidityHasStart = true
+    @State private var taskValidityHasEnd = false
+    @State private var taskValidityStart = Date()
+    @State private var taskValidityEnd = Date()
     @State private var nlpTask: Task<Void, Never>?
 
     // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
@@ -136,6 +142,13 @@ struct TaskInputView: View {
     // 栅格化三分组（时间/属性/提醒）：标签列对齐、控件原生尺寸（不再 scaleEffect 缩放）
 
     private var attributeEditor: some View {
+        // 表单内滚动：布局锁定后仅当表单超出剩余空间时滚动，日历/工具栏不被挤压
+        ScrollView(.vertical) {
+            attributeEditorContent
+        }
+    }
+
+    private var attributeEditorContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             Divider()
 
@@ -177,12 +190,73 @@ struct TaskInputView: View {
                             .toggleStyle(.switch)
                             .labelsHidden()
                     }
+                }
+            }
+
+            Divider()
+
+            // 循环语义集中一处：周期/跳过节假日/限制有效期同属「重复」组（spec 定案）
+            AttributeGroup("重复") {
+                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+                    GridRow {
+                        GridLabel("周期")
+                        Picker("", selection: Binding(
+                            get: { taskRecurrence },
+                            set: { taskRecurrence = $0; manuallyEditedRecurrence = true }  // V-7：手选周期不被 NLP 覆盖
+                        )) {
+                            Text("1次").tag(RecurrenceType.none)
+                            Text("不限").tag(RecurrenceType.unlimited)
+                            Text("每天").tag(RecurrenceType.daily)
+                            Text("每周").tag(RecurrenceType.weekly)
+                            Text("每月").tag(RecurrenceType.monthly)
+                            Text("每年").tag(RecurrenceType.yearly)
+                        }
+                        .labelsHidden()
+                        .frame(width: 70)
+                    }
                     GridRow {
                         GridLabel("跳过节假日")
                         // AC-7：勾选后 startDate 落休日顺延至下一个班日显示与提醒
                         Toggle("", isOn: $taskSkipHolidays)
                             .toggleStyle(.switch)
                             .labelsHidden()
+                    }
+                    GridRow {
+                        GridLabel("限制有效期")
+                        // spec/task-validity-period：开启时开始端默认勾选且日期=当前任务日期、结束端不勾选
+                        Toggle("", isOn: Binding(
+                            get: { taskValidityEnabled },
+                            set: {
+                                taskValidityEnabled = $0
+                                if $0 {
+                                    taskValidityHasStart = true
+                                    taskValidityStart = taskDate
+                                    taskValidityHasEnd = false
+                                }
+                            }
+                        ))
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                    }
+                    if taskValidityEnabled {
+                        GridRow {
+                            GridLabel("开始")
+                            Toggle("", isOn: $taskValidityHasStart)
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                            DatePicker("", selection: $taskValidityStart, displayedComponents: [.date])
+                                .labelsHidden()
+                                .disabled(!taskValidityHasStart)
+                        }
+                        GridRow {
+                            GridLabel("结束")
+                            Toggle("", isOn: $taskValidityHasEnd)
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                            DatePicker("", selection: $taskValidityEnd, displayedComponents: [.date])
+                                .labelsHidden()
+                                .disabled(!taskValidityHasEnd)
+                        }
                     }
                 }
             }
@@ -218,20 +292,6 @@ struct TaskInputView: View {
                             ForEach(EventPriority.allCases, id: \.self) { p in
                                 Text(p.displayName).tag(p)
                             }
-                        }
-                        .labelsHidden()
-                        .frame(width: 70)
-                        GridLabel("周期")
-                        Picker("", selection: Binding(
-                            get: { taskRecurrence },
-                            set: { taskRecurrence = $0; manuallyEditedRecurrence = true }  // V-7：手选周期不被 NLP 覆盖
-                        )) {
-                            Text("1次").tag(RecurrenceType.none)
-                            Text("不限").tag(RecurrenceType.unlimited)
-                            Text("每天").tag(RecurrenceType.daily)
-                            Text("每周").tag(RecurrenceType.weekly)
-                            Text("每月").tag(RecurrenceType.monthly)
-                            Text("每年").tag(RecurrenceType.yearly)
                         }
                         .labelsHidden()
                         .frame(width: 70)
@@ -297,6 +357,13 @@ struct TaskInputView: View {
         // "明天"（00:00）误判为全天事件，用户无感知
         let isAllDay = taskIsAllDay
 
+        // 有效期组装（spec AC-6，plan step 11）：开关关 = nil 不限制；开 = 按两端勾选组装
+        // （归一化落库由 createEvent 内完成）
+        let validity: ValidityPeriod? = taskValidityEnabled ? ValidityPeriod(
+            start: taskValidityHasStart ? taskValidityStart : nil,
+            end: taskValidityHasEnd ? taskValidityEnd : nil
+        ) : nil
+
         Task { @MainActor in
             do {
                 try calendarService.createEvent(
@@ -312,7 +379,8 @@ struct TaskInputView: View {
                     asReminder: createAsReminder,
                     isLunar: taskIsLunar,
                     color: taskColor,
-                    skipHolidays: taskSkipHolidays
+                    skipHolidays: taskSkipHolidays,
+                    validity: validity
                 )
                 inputText = ""
                 resetTaskAttributes()
@@ -335,6 +403,12 @@ struct TaskInputView: View {
         taskIsAllDay = false
         createAsReminder = false
         taskSkipHolidays = false
+        // 有效期复位：总开关关 + 默认两端勾选态（spec Assumption：开=开始勾选/结束不勾选）
+        taskValidityEnabled = false
+        taskValidityHasStart = true
+        taskValidityHasEnd = false
+        taskValidityStart = Date()
+        taskValidityEnd = Date()
         showAttributeEditor = false
         // 同步父视图编辑态：提交/重置后恢复下方模块显示
         isEditingAttributes = false

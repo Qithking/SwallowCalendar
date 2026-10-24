@@ -70,6 +70,25 @@ enum EventCategory: String, CaseIterable {
     case user = "用户"         // 用户创建的事件
 }
 
+// MARK: - ValidityPeriod（spec/task-validity-period AC-1~AC-6）
+
+/// 任务有效期区间（仅服务/UI 层载体，SwiftData 落库走 CachedEvent 双 Date? 字段）
+/// 双端可独立缺省：nil = 该端不限制；闭区间，天粒度归一化
+struct ValidityPeriod: Equatable {
+    var start: Date?
+    var end: Date?
+
+    /// 开始端归一化为当天 00:00:00
+    var normalizedStartDate: Date? {
+        start.map { Calendar.current.startOfDay(for: $0) }
+    }
+
+    /// 结束端归一化为当天 23:59:59
+    var normalizedEndDate: Date? {
+        end.map { Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: $0) ?? $0 }
+    }
+}
+
 // MARK: - CalendarEvent
 
 /// 统一事件展示模型，用于 UI 展示
@@ -105,6 +124,9 @@ struct CalendarEvent: Identifiable {
     var notes: String? = nil
     /// 智能跳过节假日标记（plan 步骤①，cachedToCalendarEvent 从缓存透传）
     var skipHolidays: Bool = false
+    /// 任务有效期区间（spec/task-validity-period AC-6，cachedToCalendarEvent 透传；
+    /// 仅循环任务有周期语义，两端可独立缺省，nil = 该端不限制）
+    var validity: ValidityPeriod? = nil
 
     /// 是否有明确的开始时间（非全天事件）
     var hasTime: Bool {

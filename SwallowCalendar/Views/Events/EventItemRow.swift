@@ -258,6 +258,11 @@ private struct EventRowPopoverContent: View {
                 infoRow(label: "重复", value: event.recurrenceType.rawValue)
             }
 
+            // 有效期区间（spec/task-validity-period）：仅循环任务且已设置时显示，缺省端显示「不限」
+            if event.recurrenceType != .none, let validity = event.validity {
+                infoRow(label: "有效期", value: Self.validityText(validity))
+            }
+
             // 日历来源：色点 + 日历名（与行内色条同色）
             HStack(spacing: 6) {
                 Circle()
@@ -322,6 +327,16 @@ private struct EventRowPopoverContent: View {
             return dateTimeFormatter.string(from: date)
         }
         return dateTimeWithYearFormatter.string(from: date)
+    }
+
+    /// 有效期展示文本（spec AC-6）：「yyyy/M/d ~ yyyy/M/d」，缺省端显示「不限」
+    private static func validityText(_ validity: ValidityPeriod) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy/M/d"
+        let start = validity.start.map { f.string(from: $0) } ?? "不限"
+        let end = validity.end.map { f.string(from: $0) } ?? "不限"
+        return "\(start) ~ \(end)"
     }
 
     private static let dateTimeFormatter: DateFormatter = {

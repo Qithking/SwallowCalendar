@@ -49,6 +49,7 @@ struct ContentView: View {
                     customSources: customSources,
                     calendarPreferences: calendarPreferences
                 )
+                .layoutPriority(1)  // 布局锁定：VStack 空间不足时日历保持固有尺寸不被压缩
 
                 Divider()
 
@@ -74,6 +75,7 @@ struct ContentView: View {
 
                 // 工具栏
                 toolbar
+                    .layoutPriority(1)  // 布局锁定：表单展开时不被挤出可见区域
             }
         }
         .cornerRadius(Popup.totalCornerRadius)

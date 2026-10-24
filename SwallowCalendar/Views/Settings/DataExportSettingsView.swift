@@ -257,34 +257,36 @@ struct DataExportSettingsView: View {
         return lines.joined(separator: "\r\n")
     }
     
-    private static let icsDateFormatter: DateFormatter = {
+    // 以下 formatter 与纯工具方法均 nonisolated：DateFormatter 配置后只读使用（线程安全），
+    // 供 nonisolated generateICS / formatDate 后台调用
+    private nonisolated static let icsDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
         formatter.timeZone = TimeZone(identifier: "UTC")
         return formatter
     }()
-    
-    private static let icsDateOnlyFormatter: DateFormatter = {
+
+    private nonisolated static let icsDateOnlyFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd"
         return formatter
     }()
-    
-    private static let fileNameDateFormatter: DateFormatter = {
+
+    private nonisolated static let fileNameDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmmss"
         return formatter
     }()
-    
-    private static func formatICSDate(_ date: Date) -> String {
+
+    private nonisolated static func formatICSDate(_ date: Date) -> String {
         return Self.icsDateFormatter.string(from: date)
     }
 
-    private static func formatICSDateOnly(_ date: Date) -> String {
+    private nonisolated static func formatICSDateOnly(_ date: Date) -> String {
         return Self.icsDateOnlyFormatter.string(from: date)
     }
 
-    private static func escapeICSText(_ text: String) -> String {
+    private nonisolated static func escapeICSText(_ text: String) -> String {
         text
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: ",", with: "\\,")

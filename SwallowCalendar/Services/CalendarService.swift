@@ -308,7 +308,8 @@ final class CalendarService {
         asReminder: Bool = false,
         isLunar: Bool = false,
         color: EventColor? = nil,
-        skipHolidays: Bool = false
+        skipHolidays: Bool = false,
+        validity: ValidityPeriod? = nil
     ) throws {
         let recurrenceType = recurrence ?? .none
         
@@ -355,7 +356,9 @@ final class CalendarService {
                     isLunar: isLunar,
                     reminderMinutes: reminderMinutes,
                     color: color,
-                    skipHolidays: skipHolidays
+                    skipHolidays: skipHolidays,
+                    // 有效期透传（spec AC-6，plan step 6）：仅循环分支携带
+                    validity: validity
                 )
             } else {
                 try createCalendarEventWithGroupInfo(
@@ -370,7 +373,8 @@ final class CalendarService {
                     recurrenceType: recurrenceType,
                     isLunar: isLunar,
                     color: color,
-                    skipHolidays: skipHolidays
+                    skipHolidays: skipHolidays,
+                    validity: validity
                 )
             }
         } else {
@@ -601,7 +605,8 @@ final class CalendarService {
         recurrenceType: RecurrenceType,
         isLunar: Bool,
         color: EventColor? = nil,
-        skipHolidays: Bool = false
+        skipHolidays: Bool = false,
+        validity: ValidityPeriod? = nil
     ) throws {
         let event = EKEvent(eventStore: eventStore)
         event.title = title
@@ -654,7 +659,10 @@ final class CalendarService {
                 isLunar: isLunar,
                 reminderMinutes: reminderMinutes ?? 0,
                 eventColorHex: color?.rawValue,
-                skipHolidays: skipHolidays
+                skipHolidays: skipHolidays,
+                // 有效期归一化落库（spec AC-6，plan step 6）：nil = 该端不限制
+                validStartDate: validity?.normalizedStartDate,
+                validEndDate: validity?.normalizedEndDate
             )
             // 多级提醒：经 setter 写入以维护硬不变量 reminderMinutes == offsets.max()
             if let offsets = reminderOffsets, !offsets.isEmpty {
@@ -681,7 +689,8 @@ final class CalendarService {
         reminderMinutes: Int? = nil,
         reminderOffsets: [Int]? = nil,
         color: EventColor? = nil,
-        skipHolidays: Bool = false
+        skipHolidays: Bool = false,
+        validity: ValidityPeriod? = nil
     ) throws {
         guard reminderAuthorizationStatus == .fullAccess else {
             throw EventError.noReminderAccess
@@ -726,7 +735,10 @@ final class CalendarService {
                 isLunar: isLunar,
                 reminderMinutes: reminderMinutes ?? 0,
                 eventColorHex: color?.rawValue,
-                skipHolidays: skipHolidays
+                skipHolidays: skipHolidays,
+                // 有效期归一化落库（spec AC-6，plan step 6）：nil = 该端不限制
+                validStartDate: validity?.normalizedStartDate,
+                validEndDate: validity?.normalizedEndDate
             )
             // 多级提醒：经 setter 写入以维护硬不变量 reminderMinutes == offsets.max()
             if let offsets = reminderOffsets, !offsets.isEmpty {
@@ -966,12 +978,35 @@ final class CalendarService {
         }
 
         if isCompleted {
-            // 推进判定：next 为 nil 表示序列终止；occurrence 早于 startDate 属历史补完成，只记历史不推进
-            let next = CalendarService.nextOccurrence(
+            // 推进判定：next 为 nil 表示序列终止或冻结；occurrence 早于 startDate 属历史补完成，只记历史不推进
+            var next = CalendarService.nextOccurrence(
                 after: occurrence,
                 recurrenceType: cached.recurrenceType,
                 isLunar: cached.isLunar
             )
+            // 有效期补齐（spec/task-validity-period AC-5，plan step 5b）：startDate 落后于
+            // 有效期开始端（编辑把开始端改到未来产生空档）时，逐周期推进到首个 ≥ validStart
+            if let validStart = cached.validStartDate {
+                var catchup = 0
+                while let t = next, t < validStart, catchup < 4000 {
+                    next = CalendarService.nextOccurrence(
+                        after: t,
+                        recurrenceType: cached.recurrenceType,
+                        isLunar: cached.isLunar
+                    )
+                    catchup += 1
+                }
+                if catchup >= 4000 {
+                    AppLogger.sync.error("有效期补齐达迭代上限，中止推进 base=\(baseID)")
+                    next = nil
+                }
+            }
+            // 有效期冻结（spec/task-validity-period AC-4，plan step 5c）：下一次 occurrence 越过
+            // 结束端 → 停止出现，next 置 nil：不写 EK 不动 startDate，仅记完成历史
+            if let validEnd = cached.validEndDate, let t = next, t > validEnd {
+                AppLogger.sync.debug("occurrence 越过有效期结束端，冻结推进 base=\(baseID)")
+                next = nil
+            }
             let shouldAdvance = next != nil && occurrence >= (cached.startDate ?? occurrence)
 
             var ekSaveFailed = false
@@ -1056,8 +1091,10 @@ final class CalendarService {
     /// 更新事件（日历事件或提醒）
     /// - Parameter reminderOffsets: 多级提醒偏移数组；nil = 不改提醒，空数组 = 清除全部提醒
     /// - Parameter skipHolidays: nil = 不改跳过节假日标记（编辑面板未触碰该开关时保持原值）
+    /// - Parameter validity: 有效期三态（spec/task-validity-period AC-6，plan step 7）：
+    ///   外层 nil = 未触碰保持原值；内层 nil = 清除区间；.some(period) = 归一化落库
     @MainActor
-    func updateEvent(eventID: String, title: String?, startDate: Date?, endDate: Date?, isAllDay: Bool? = nil, isReminder: Bool = false, priority: EventPriority? = nil, reminderMinutes: Int? = nil, reminderOffsets: [Int]? = nil, color: EventColor? = nil, skipHolidays: Bool? = nil) throws {
+    func updateEvent(eventID: String, title: String?, startDate: Date?, endDate: Date?, isAllDay: Bool? = nil, isReminder: Bool = false, priority: EventPriority? = nil, reminderMinutes: Int? = nil, reminderOffsets: [Int]? = nil, color: EventColor? = nil, skipHolidays: Bool? = nil, validity: ValidityPeriod?? = nil) throws {
         // 单条化 plan step 7：列表行可能是 occurrence 虚拟展开行（复合 ID），
         // 编辑即改整条，回查本体 ID（Risks 表 Mitigation：编辑入口先 parseOccurrenceID 分流）
         let baseID = CachedEvent.parseOccurrenceID(eventID)?.baseID ?? eventID
@@ -1147,6 +1184,12 @@ final class CalendarService {
             if let color { cached.eventColorHex = color.rawValue }
             // 跳过节假日标记：仅显式传入时写回（nil = 保持原值）
             if let skipHolidays { cached.skipHolidays = skipHolidays }
+            // 有效期三态写入（spec AC-6，plan step 7）：validity 为 ValidityPeriod??，
+            // 一层解包后内层 nil = 清除区间（链式取归一化得 nil），.some = 归一化落库
+            if let validity {
+                cached.validStartDate = validity?.normalizedStartDate
+                cached.validEndDate = validity?.normalizedEndDate
+            }
             cached.lastUpdated = Date()
             do {
                 try cacheService.context?.save()
@@ -1174,6 +1217,9 @@ final class CalendarService {
         cached.recurrenceType = newRecurrenceType
         if newRecurrenceType == .none {
             cached.completedOccurrenceDatesJSON = nil
+            // 切单次对称清除有效期（spec AC-6，plan step 8）：单次任务无周期语义，区间随之失效
+            cached.validStartDate = nil
+            cached.validEndDate = nil
         }
 
         do {
@@ -1288,7 +1334,11 @@ final class CalendarService {
             recurrenceType: cached.recurrenceType,
             reminderMinutes: cached.reminderMinutes,
             eventColorHex: cached.eventColorHex,
-            skipHolidays: cached.skipHolidays
+            skipHolidays: cached.skipHolidays,
+            // 有效期透传（spec AC-6，plan step 9）：双字段已归一化，组装区间载体供 UI/服务层
+            validity: (cached.validStartDate != nil || cached.validEndDate != nil)
+                ? ValidityPeriod(start: cached.validStartDate, end: cached.validEndDate)
+                : nil
         )
     }
     

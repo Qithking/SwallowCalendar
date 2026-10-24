@@ -97,6 +97,11 @@ final class CachedEvent {
     /// 带默认值新增属性走 SwiftData 轻量迁移，存量行自动补 false）
     var skipHolidays: Bool = false
 
+    /// 任务有效期区间（spec/task-validity-period AC-1~AC-6；带默认值走 SwiftData 轻量迁移）
+    /// 落库时已归一化：start=当天 00:00:00 / end=当天 23:59:59；nil = 该端不限制
+    var validStartDate: Date?
+    var validEndDate: Date?
+
     /// 循环任务完成历史（JSON 持久化，单条化 plan step 1；nil = 无完成历史）
     var completedOccurrenceDatesJSON: String?
 
@@ -172,6 +177,16 @@ final class CachedEvent {
         }
     }
 
+    // MARK: - 有效期判定（spec/task-validity-period AC-1；plan step 3）
+
+    /// occurrence 是否落在有效期区间内（闭区间；双端 nil = 不限制）
+    /// 前置约定：validStartDate/validEndDate 落库时已归一化（00:00:00 / 23:59:59）
+    func isWithinValidity(_ occurrence: Date) -> Bool {
+        if let validStart = validStartDate, occurrence < validStart { return false }
+        if let validEnd = validEndDate, occurrence > validEnd { return false }
+        return true
+    }
+
     // MARK: - 复合 occurrence ID（单条化 plan step 2）
 
     /// 复合 occurrence eventID 格式前缀（`|` 分隔符安全：UUID 恒不含 `|`）
@@ -213,7 +228,9 @@ final class CachedEvent {
         reminderMinutes: Int = 0,
         reminderOffsetsJSON: String? = nil,
         eventColorHex: String? = nil,
-        skipHolidays: Bool = false
+        skipHolidays: Bool = false,
+        validStartDate: Date? = nil,
+        validEndDate: Date? = nil
     ) {
         self.eventID = eventID
         self.title = title
@@ -235,6 +252,8 @@ final class CachedEvent {
         self.reminderOffsetsJSON = reminderOffsetsJSON
         self.eventColorHex = eventColorHex
         self.skipHolidays = skipHolidays
+        self.validStartDate = validStartDate
+        self.validEndDate = validEndDate
         self.lastUpdated = Date()
     }
 }
@@ -350,29 +369,37 @@ final class EventCacheService {
     /// 循环任务单条展开为窗口内 occurrence 实例（未落库，单条化 plan step 6）：
     /// ① 完成历史窗口内日期 → isCompleted=true 历史行（历史事实不过 skipHolidays）；
     /// ② 从 startDate 链式 nextOccurrence 推进（与完成推进链共用，保持自洽），
-    ///    未完成 occurrence 落休日按 v3 语义静默跳过；迭代上限 4000 防失控
+    ///    未完成 occurrence 落休日按 v3 语义静默跳过；迭代上限 4000 防失控。
+    /// 有效期过滤（spec/task-validity-period AC-2 AC-3，plan step 4）：①② 均只产出
+    /// 有效期内的 occurrence；② 对已完成 occurrence 不再追加（历史行由 ① 独家产出，
+    /// 避免冻结场景 startDate 停在已完成 X 时产出重复行），并按结束端越界早退
     private func expandOccurrences(of base: CachedEvent, windowStart: Date, windowEnd: Date, context: ModelContext) -> [CachedEvent] {
         guard let baseStart = base.startDate else { return [base] }
         let duration = (base.endDate ?? baseStart).timeIntervalSince(baseStart)
         let completedSet = Set(base.completedOccurrenceDates.map { $0.timeIntervalSince1970 })
         var result: [CachedEvent] = []
-        // ① 完成历史行
-        for occ in base.completedOccurrenceDates where occ >= windowStart && occ < windowEnd {
+        // ① 完成历史行（有效期外不产出）
+        for occ in base.completedOccurrenceDates where occ >= windowStart && occ < windowEnd && base.isWithinValidity(occ) {
             result.append(makeOccurrenceInstance(of: base, occurrence: occ, duration: duration, isCompleted: true))
         }
         // ② 未完成序列展开
         var occ = baseStart
         var iterations = 0
         while occ < windowEnd {
+            // 有效期结束端之外（闭区间端点之后）全部越界，提前退出
+            if let validEnd = base.validEndDate, occ > validEnd { break }
             let done = completedSet.contains(occ.timeIntervalSince1970)
-            let instanceEnd = occ.addingTimeInterval(duration)
-            // 与窗口重叠才产出（零长按 B-1 覆盖开始日语义）
-            if occ >= windowStart || instanceEnd > windowStart {
-                // 休日静默跳过（仅未完成 occurrence；序列本身不改写）
-                if !done, base.skipHolidays, HolidaySkipResolver.isRestDay(occ, context: context) {
-                    // 静默跳过：不产出
-                } else {
-                    result.append(makeOccurrenceInstance(of: base, occurrence: occ, duration: duration, isCompleted: done))
+            // 已完成 occurrence 的展示行由 ① 独家产出，② 不追加，避免冻结场景重复行
+            if !done, base.isWithinValidity(occ) {
+                let instanceEnd = occ.addingTimeInterval(duration)
+                // 与窗口重叠才产出（零长按 B-1 覆盖开始日语义）
+                if occ >= windowStart || instanceEnd > windowStart {
+                    // 休日静默跳过（仅未完成 occurrence；序列本身不改写）
+                    if base.skipHolidays, HolidaySkipResolver.isRestDay(occ, context: context) {
+                        // 静默跳过：不产出
+                    } else {
+                        result.append(makeOccurrenceInstance(of: base, occurrence: occ, duration: duration, isCompleted: false))
+                    }
                 }
             }
             guard let next = CalendarService.nextOccurrence(after: occ, recurrenceType: base.recurrenceType, isLunar: base.isLunar) else { break }
@@ -407,7 +434,9 @@ final class EventCacheService {
             reminderMinutes: base.reminderMinutes,
             reminderOffsetsJSON: base.reminderOffsetsJSON,
             eventColorHex: base.eventColorHex,
-            skipHolidays: base.skipHolidays
+            skipHolidays: base.skipHolidays,
+            validStartDate: base.validStartDate,
+            validEndDate: base.validEndDate
         )
     }
     

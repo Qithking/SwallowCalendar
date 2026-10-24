@@ -15,8 +15,8 @@ import os
 final class DesktopTodoPanelManager {
     static let shared = DesktopTodoPanelManager()
 
-    /// frame 持久化 key（CGRect JSON，含位置与尺寸）
-    private static let frameKey = "desktopPanelFrame"
+    /// frame 持久化 key（CGRect JSON，含位置与尺寸）；nonisolated：String 常量，供 nonisolated persist 访问
+    private nonisolated static let frameKey = "desktopPanelFrame"
 
     /// 置顶状态（会话内记忆：面板对象不销毁即保留；不持久化，重启后回落未置顶）
     private(set) var isPinned = false

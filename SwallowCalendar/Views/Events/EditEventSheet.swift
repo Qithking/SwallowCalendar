@@ -19,6 +19,13 @@ struct EditEventSheet: View {
     @State private var isAllDay: Bool
     // 智能跳过节假日（AC-7）：初始值从缓存读取，保存时写回
     @State private var skipHolidays = false
+    // 任务有效期（spec/task-validity-period）：控件态从缓存读初值；
+    // originalValidity 保存 init 快照，saveEvent 比较判定三态触碰（Equatable 精确相等）
+    @State private var validityEnabled = false
+    @State private var validityHasStart = false
+    @State private var validityHasEnd = false
+    @State private var validityStart = Date()
+    @State private var validityEnd = Date()
     @State private var taskColor: EventColor?
     @State private var taskPriority: EventPriority = .none
     @State private var taskRecurrence: RecurrenceType = .none
@@ -29,6 +36,8 @@ struct EditEventSheet: View {
     
     // 保存原始周期类型，用于检测变更
     private let originalRecurrence: RecurrenceType
+    // 有效期初值快照（spec AC-6，plan step 12）：saveEvent 与当前控件态比较判定触碰
+    private let originalValidity: ValidityPeriod?
 
     init(event: CalendarEvent, calendarService: CalendarService, onDismiss: (() -> Void)? = nil, onSave: (() -> Void)? = nil) {
         self.event = event
@@ -38,10 +47,11 @@ struct EditEventSheet: View {
         _title = State(initialValue: event.title)
         _startDate = State(initialValue: event.startDate ?? Date())
         _isAllDay = State(initialValue: event.isAllDay)
-        
+
         // 获取原始周期类型（需要从缓存中读取）
         let context = EventCacheService.shared.context
         var originalRec = RecurrenceType.none
+        var snapshotValidity: ValidityPeriod? = nil
         if let context = context {
             let targetID = event.id
             var descriptor = FetchDescriptor<CachedEvent>(
@@ -59,9 +69,21 @@ struct EditEventSheet: View {
                 }
                 // 智能跳过节假日初始值（AC-7：编辑面板可修改并保存）
                 _skipHolidays = State(initialValue: cached.skipHolidays)
+                // 有效期初值（spec AC-6，plan step 12）：任一端存在即视为已设置，控件态按端读取
+                if cached.validStartDate != nil || cached.validEndDate != nil {
+                    let period = ValidityPeriod(start: cached.validStartDate, end: cached.validEndDate)
+                    snapshotValidity = period
+                    // init 内须经 State(initialValue:) 赋初值（直接赋值 wrappedValue 需 self 完全初始化）
+                    _validityEnabled = State(initialValue: true)
+                    _validityHasStart = State(initialValue: cached.validStartDate != nil)
+                    _validityHasEnd = State(initialValue: cached.validEndDate != nil)
+                    if let s = cached.validStartDate { _validityStart = State(initialValue: s) }
+                    if let e = cached.validEndDate { _validityEnd = State(initialValue: e) }
+                }
             }
         }
         self.originalRecurrence = originalRec
+        self.originalValidity = snapshotValidity
     }
 
     var body: some View {
@@ -114,12 +136,69 @@ struct EditEventSheet: View {
                     DatePicker("", selection: $startDate, displayedComponents: isAllDay ? [.date] : [.date, .hourAndMinute])
                         .labelsHidden()
                 }
+            }
+
+            // 分组卡片：重复（循环语义集中一处：周期/跳过节假日/限制有效期，spec 定案）
+            FormCard(title: "重复") {
+                FormRow(label: "周期") {
+                    Picker("", selection: $taskRecurrence) {
+                        Text("1次").tag(RecurrenceType.none)
+                        Text("每天").tag(RecurrenceType.daily)
+                        Text("每周").tag(RecurrenceType.weekly)
+                        Text("每月").tag(RecurrenceType.monthly)
+                        Text("每年").tag(RecurrenceType.yearly)
+                    }
+                    .labelsHidden()
+                    .frame(width: 110)
+                }
 
                 // 智能跳过节假日（AC-7）：勾选后 startDate 落休日顺延至下一个班日显示与提醒
                 FormRow(label: "跳过节假日") {
                     Toggle("", isOn: $skipHolidays)
                         .toggleStyle(.switch)
                         .labelsHidden()
+                }
+
+                // 任务有效期（spec/task-validity-period）：仅循环任务显示
+                if taskRecurrence != .none {
+                    FormRow(label: "限制有效期") {
+                        // 开启时与新增任务同款默认：开始端勾选=事件开始日期、结束端不勾选
+                        Toggle("", isOn: Binding(
+                            get: { validityEnabled },
+                            set: {
+                                validityEnabled = $0
+                                if $0 {
+                                    validityHasStart = true
+                                    validityStart = startDate
+                                    validityHasEnd = false
+                                }
+                            }
+                        ))
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                    }
+                    if validityEnabled {
+                        FormRow(label: "有效期起") {
+                            HStack(spacing: 6) {
+                                Toggle("", isOn: $validityHasStart)
+                                    .toggleStyle(.switch)
+                                    .labelsHidden()
+                                DatePicker("", selection: $validityStart, displayedComponents: [.date])
+                                    .labelsHidden()
+                                    .disabled(!validityHasStart)
+                            }
+                        }
+                        FormRow(label: "有效期止") {
+                            HStack(spacing: 6) {
+                                Toggle("", isOn: $validityHasEnd)
+                                    .toggleStyle(.switch)
+                                    .labelsHidden()
+                                DatePicker("", selection: $validityEnd, displayedComponents: [.date])
+                                    .labelsHidden()
+                                    .disabled(!validityHasEnd)
+                            }
+                        }
+                    }
                 }
             }
 
@@ -156,19 +235,10 @@ struct EditEventSheet: View {
                     .labelsHidden()
                     .frame(width: 110)
                 }
+            }
 
-                FormRow(label: "周期") {
-                    Picker("", selection: $taskRecurrence) {
-                        Text("1次").tag(RecurrenceType.none)
-                        Text("每天").tag(RecurrenceType.daily)
-                        Text("每周").tag(RecurrenceType.weekly)
-                        Text("每月").tag(RecurrenceType.monthly)
-                        Text("每年").tag(RecurrenceType.yearly)
-                    }
-                    .labelsHidden()
-                    .frame(width: 110)
-                }
-
+            // 分组卡片：提醒（多级 chips）
+            FormCard(title: "提醒") {
                 // 多级提醒 chips（G5 档位上限 1440 分钟；全部取消 = 不提醒）
                 FormRow(label: "提醒") {
                     VStack(alignment: .trailing, spacing: 5) {
@@ -351,6 +421,14 @@ struct EditEventSheet: View {
                 } else {
                     newEndDate = startDate.addingTimeInterval(3600)
                 }
+                // 有效期三态（spec AC-6，plan step 12）：与 init 快照比较——
+                // 相等 = 未触碰传 nil 保持原值；不等 = .some(currentValidity)
+                // （开关关 = 内层 nil 清除；开关开 = 按两端勾选组装，归一化落库由服务层完成）
+                let currentValidity: ValidityPeriod? = validityEnabled ? ValidityPeriod(
+                    start: validityHasStart ? validityStart : nil,
+                    end: validityHasEnd ? validityEnd : nil
+                ) : nil
+                let validityParam: ValidityPeriod?? = currentValidity == originalValidity ? nil : .some(currentValidity)
                 try calendarService.updateEvent(
                     eventID: event.id,
                     title: title,
@@ -363,7 +441,8 @@ struct EditEventSheet: View {
                     // 多级提醒：始终传 offsets（空数组 = 清除全部提醒），单级 minutes 不再单独维护
                     reminderOffsets: taskReminderOffsets.sorted(),
                     color: taskColor,
-                    skipHolidays: skipHolidays
+                    skipHolidays: skipHolidays,
+                    validity: validityParam
                 )
                 // D2/G7v2：编辑保存成功，广播缓存变更（徽标即时刷新）
                 NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
