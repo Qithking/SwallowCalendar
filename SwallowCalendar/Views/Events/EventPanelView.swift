@@ -167,55 +167,32 @@ struct EventPanelView: View {
 
     @MainActor
     private func showDeleteConfirmation(event: CalendarEvent) {
-        let isRecurring = event.groupId != nil && event.recurrenceType != .none
-        
+        // 单条化 plan step 8：循环任务只存一条，不再依赖 groupId 判定
+        let isRecurring = event.recurrenceType != .none
+
         let alert = NSAlert()
         alert.messageText = "确认删除"
-        
+
         if isRecurring {
-            alert.informativeText = "确定要删除事件「\(event.title)」吗？\n此操作无法撤销。\n\n这是周期任务，您可以选择只删除此项，或删除所有未完成的实例。"
+            // 单条化：删循环任务 = 删整条（应用 + EK 各 1 条），不再区分「删除此项/删除全部」
+            alert.informativeText = "确定要删除循环任务「\(event.title)」吗？\n将删除该任务的全部安排，此操作无法撤销。"
         } else {
             alert.informativeText = "确定要删除事件「\(event.title)」吗？\n此操作无法撤销。"
         }
-        
+
         alert.alertStyle = .warning
-        
-        if isRecurring {
-            // 周期任务：三个按钮（从右到左：取消、删除此项、删除全部）
-            alert.addButton(withTitle: "取消")  // 第一个按钮 = .alertFirstButton
-            alert.addButton(withTitle: "删除此项")  // 第二个按钮 = .alertSecondButton
-            let deleteAllButton = alert.addButton(withTitle: "删除全部")  // 第三个按钮 = .alertThirdButton
-            deleteAllButton.hasDestructiveAction = true  // 红色警示
-            
-            // 显示对话框
-            let response = alert.runModal()
-            
-            // NSAlert 按钮索引从 1000 开始：1000=第一个, 1001=第二个, 1002=第三个
-            switch response.rawValue {
-            case 1001:  // 删除此项
-                deleteEvent(event)
-            case 1002:  // 删除全部
-                if let groupId = event.groupId {
-                    calendarService.deleteUncompletedInGroup(groupId: groupId)
-                    refreshTrigger.toggle()
-                    onEventsChanged?()
-                }
-            default:  // 1000 = 取消
-                break
-            }
-        } else {
-            // 非周期任务：两个按钮
-            alert.addButton(withTitle: "取消")  // 第一个按钮
-            let deleteButton = alert.addButton(withTitle: "删除")  // 第二个按钮
-            deleteButton.hasDestructiveAction = true
-            
-            // 显示对话框
-            let response = alert.runModal()
-            
-            // 1001 = 第二个按钮（删除）
-            if response.rawValue == 1001 {
-                deleteEvent(event)
-            }
+
+        // 非周期任务与循环任务统一两按钮（循环任务删除即删整条）
+        alert.addButton(withTitle: "取消")  // 第一个按钮
+        let deleteButton = alert.addButton(withTitle: "删除")  // 第二个按钮
+        deleteButton.hasDestructiveAction = true
+
+        // 显示对话框
+        let response = alert.runModal()
+
+        // NSAlert 按钮索引从 1000 开始：1001 = 第二个按钮（删除）
+        if response.rawValue == 1001 {
+            deleteEvent(event)
         }
     }
 

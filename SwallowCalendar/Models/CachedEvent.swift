@@ -97,6 +97,9 @@ final class CachedEvent {
     /// 带默认值新增属性走 SwiftData 轻量迁移，存量行自动补 false）
     var skipHolidays: Bool = false
 
+    /// 循环任务完成历史（JSON 持久化，单条化 plan step 1；nil = 无完成历史）
+    var completedOccurrenceDatesJSON: String?
+
     /// 缓存更新时间
     var lastUpdated: Date
     
@@ -144,6 +147,50 @@ final class CachedEvent {
         guard let offsets, !offsets.isEmpty else { return nil }
         guard let data = try? JSONEncoder().encode(offsets) else { return nil }
         return String(data: data, encoding: .utf8)
+    }
+
+    /// 循环任务完成历史（计算属性，真源为 completedOccurrenceDatesJSON，单条化 plan step 1）
+    /// 读取：解码 JSON，未设置/坏数据回退空数组；写入：去重升序编码，空数组清除 JSON
+    var completedOccurrenceDates: [Date] {
+        get {
+            guard let json = completedOccurrenceDatesJSON,
+                  let data = json.data(using: .utf8),
+                  let dates = try? JSONDecoder().decode([Date].self, from: data) else {
+                return []
+            }
+            return dates
+        }
+        set {
+            let normalized = Array(Set(newValue)).sorted()
+            guard !normalized.isEmpty else {
+                completedOccurrenceDatesJSON = nil
+                return
+            }
+            if let data = try? JSONEncoder().encode(normalized) {
+                completedOccurrenceDatesJSON = String(data: data, encoding: .utf8)
+            }
+        }
+    }
+
+    // MARK: - 复合 occurrence ID（单条化 plan step 2）
+
+    /// 复合 occurrence eventID 格式前缀（`|` 分隔符安全：UUID 恒不含 `|`）
+    private static let occurrenceMarker = "|occ:"
+
+    /// 构造复合 occurrence eventID："<baseID>|occ:<epoch>"
+    /// 全项目复合 ID 构造唯一入口，禁止调用方手写拼接
+    static func makeOccurrenceID(baseID: String, occurrence: Date) -> String {
+        baseID + occurrenceMarker + String(Int(occurrence.timeIntervalSince1970))
+    }
+
+    /// 解析复合 occurrence eventID；普通 eventID（不含标记）返回 nil
+    /// 全项目复合 ID 解析唯一入口
+    static func parseOccurrenceID(_ eventID: String) -> (baseID: String, occurrence: Date)? {
+        guard let markerRange = eventID.range(of: occurrenceMarker) else { return nil }
+        let baseID = String(eventID[..<markerRange.lowerBound])
+        let epochString = String(eventID[markerRange.upperBound...])
+        guard !baseID.isEmpty, let epoch = TimeInterval(epochString) else { return nil }
+        return (baseID, Date(timeIntervalSince1970: epoch))
     }
 
     init(
@@ -266,23 +313,102 @@ final class EventCacheService {
         // 局部常量被捕获后转为 Value 表达式即合法
         let distantPast = Date.distantPast
         let distantFuture = Date.distantFuture
+        // 循环任务单条化：本体行 startDate 只代表「下一次 occurrence」，
+        // 窗口内 occurrence 序列可能超出本体行自身时间范围，粗筛放宽为
+        // 「recurrenceType != none 且 startDate < 窗口右界」即命中（展开后再精确过滤）
+        let noneRaw = RecurrenceType.none.rawValue
         let predicate = #Predicate<CachedEvent> { event in
-            (event.startDate ?? distantPast) < endDate
-                && (event.endDate ?? distantFuture) > widenedStart
+            ((event.startDate ?? distantPast) < endDate
+                && (event.endDate ?? distantFuture) > widenedStart)
+                || (event.recurrenceTypeRaw != nil
+                    && event.recurrenceTypeRaw != noneRaw
+                    && (event.startDate ?? distantPast) < endDate)
         }
-        
+
         let descriptor = FetchDescriptor<CachedEvent>(
             predicate: predicate,
             sortBy: [SortDescriptor(\.startDate)]
         )
-        
+
         do {
             let events = try context.fetch(descriptor)
-            // 谓词仅粗筛（零长事件边界/无日期事件/日历过滤仍需精确判定），内存过滤保留
-            return filterEvents(events, from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
+            // 循环任务行分离展开为 occurrence 实例（未落库），其余走原有精确过滤
+            let recurring = events.filter { $0.recurrenceType != .none }
+            let normal = events.filter { $0.recurrenceType == .none }
+            let expanded = recurring.flatMap {
+                expandOccurrences(of: $0, windowStart: startDate, windowEnd: endDate, context: context)
+            }
+            // 展开实例与普通行共用同一精确过滤（零长/重叠边界 + 日历过滤），并按开始时间归位排序
+            return (filterEvents(normal, from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
+                + filterEvents(expanded, from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: false))
+                .sorted { ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) }
         } catch {
             return []
         }
+    }
+
+    /// 循环任务单条展开为窗口内 occurrence 实例（未落库，单条化 plan step 6）：
+    /// ① 完成历史窗口内日期 → isCompleted=true 历史行（历史事实不过 skipHolidays）；
+    /// ② 从 startDate 链式 nextOccurrence 推进（与完成推进链共用，保持自洽），
+    ///    未完成 occurrence 落休日按 v3 语义静默跳过；迭代上限 4000 防失控
+    private func expandOccurrences(of base: CachedEvent, windowStart: Date, windowEnd: Date, context: ModelContext) -> [CachedEvent] {
+        guard let baseStart = base.startDate else { return [base] }
+        let duration = (base.endDate ?? baseStart).timeIntervalSince(baseStart)
+        let completedSet = Set(base.completedOccurrenceDates.map { $0.timeIntervalSince1970 })
+        var result: [CachedEvent] = []
+        // ① 完成历史行
+        for occ in base.completedOccurrenceDates where occ >= windowStart && occ < windowEnd {
+            result.append(makeOccurrenceInstance(of: base, occurrence: occ, duration: duration, isCompleted: true))
+        }
+        // ② 未完成序列展开
+        var occ = baseStart
+        var iterations = 0
+        while occ < windowEnd {
+            let done = completedSet.contains(occ.timeIntervalSince1970)
+            let instanceEnd = occ.addingTimeInterval(duration)
+            // 与窗口重叠才产出（零长按 B-1 覆盖开始日语义）
+            if occ >= windowStart || instanceEnd > windowStart {
+                // 休日静默跳过（仅未完成 occurrence；序列本身不改写）
+                if !done, base.skipHolidays, HolidaySkipResolver.isRestDay(occ, context: context) {
+                    // 静默跳过：不产出
+                } else {
+                    result.append(makeOccurrenceInstance(of: base, occurrence: occ, duration: duration, isCompleted: done))
+                }
+            }
+            guard let next = CalendarService.nextOccurrence(after: occ, recurrenceType: base.recurrenceType, isLunar: base.isLunar) else { break }
+            occ = next
+            iterations += 1
+            if iterations >= 4000 {
+                AppLogger.cache.error("循环任务展开达迭代上限，中止展开：\(base.eventID, privacy: .public)")
+                break
+            }
+        }
+        return result
+    }
+
+    /// 构造 occurrence 实例（未落库）：拷贝展示相关字段，eventID 用复合格式，
+    /// groupId/groupIndex 置空（单条化后停用）
+    private func makeOccurrenceInstance(of base: CachedEvent, occurrence: Date, duration: TimeInterval, isCompleted: Bool) -> CachedEvent {
+        CachedEvent(
+            eventID: CachedEvent.makeOccurrenceID(baseID: base.eventID, occurrence: occurrence),
+            title: base.title,
+            startDate: occurrence,
+            endDate: occurrence.addingTimeInterval(duration),
+            isAllDay: base.isAllDay,
+            calendarID: base.calendarID,
+            calendarTitle: base.calendarTitle,
+            calendarColorHex: base.calendarColorHex,
+            category: base.category,
+            isReminder: base.isReminder,
+            isCompleted: isCompleted,
+            priority: base.priority,
+            recurrenceType: base.recurrenceType,
+            isLunar: base.isLunar,
+            reminderMinutes: base.reminderMinutes,
+            reminderOffsetsJSON: base.reminderOffsetsJSON,
+            eventColorHex: base.eventColorHex,
+            skipHolidays: base.skipHolidays
+        )
     }
     
     private func filterEvents(_ events: [CachedEvent], from startDate: Date, to endDate: Date, calendars: [EKCalendar]?, includeNoDateReminders: Bool) -> [CachedEvent] {
@@ -326,7 +452,11 @@ final class EventCacheService {
         defer {
             isSyncingEvents = false
         }
-        
+
+        // 单条化 plan step 9：存量循环任务组一次性迁移（幂等，UserDefaults 门控保护，
+        // 全表扫描覆盖 EKEvent/EKReminder 两类旧组）
+        migrateRecurringGroups(context: context, calendarService: calendarService)
+
         // 同步过去1年和未来2年的事件
         let now = Date()
         let startDate = Calendar.current.date(byAdding: .year, value: -1, to: now)!
@@ -511,6 +641,72 @@ final class EventCacheService {
         } else {
             // 无数据需要迁移，直接标记完成
             UserDefaults.standard.set(true, forKey: migrationKey)
+        }
+    }
+
+    /// 一次性迁移：旧版多实例循环任务组（groupId != nil）合并为单条推进式记录（单条化 plan step 9）
+    /// - 每组保留「最早未完成实例」行作单条（全完成组保留最晚一条已完成实例），
+    ///   已完成实例日期升序并入完成历史，groupId/groupIndex 置空（幂等标记，重查自然 no-op）
+    /// - 先删其余行的 EK 记录（任一失败该组整体放弃，缓存不动下次重试），后改缓存并统一 save
+    /// - 全部组成功后才写 UserDefaults 门控；无组数据直接标记，避免每次启动全表扫描
+    @MainActor
+    func migrateRecurringGroups(context: ModelContext, calendarService: CalendarService) {
+        let migrationKey = "EventCacheService.recurringGroupsMigrationDone"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+
+        let descriptor = FetchDescriptor<CachedEvent>()
+        guard let all = try? context.fetch(descriptor) else { return }
+        let groupRows = all.filter { $0.groupId != nil }
+        guard !groupRows.isEmpty else {
+            // 无组数据（新库/已迁移库）：直接标记完成
+            UserDefaults.standard.set(true, forKey: migrationKey)
+            return
+        }
+
+        let groups = Dictionary(grouping: groupRows, by: { $0.groupId! })
+        var failedGroups = 0
+        for (groupID, rows) in groups {
+            // 开始时间升序：有未完成实例取最早一条，全完成组取最晚一条
+            let sorted = rows.sorted { ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) }
+            guard let keeper = sorted.first(where: { !$0.isCompleted }) ?? sorted.last else { continue }
+            let others = rows.filter { $0 !== keeper }
+
+            // 先删 EK 侧其余记录：任一失败该组整体放弃（缓存不动，下次启动重试）
+            var ekAllRemoved = true
+            for row in others {
+                if !calendarService.deleteEKRecordIfExists(eventID: row.eventID, isReminder: row.isReminder) {
+                    ekAllRemoved = false
+                    break
+                }
+            }
+            guard ekAllRemoved else {
+                failedGroups += 1
+                AppLogger.cache.error("循环任务组迁移 EK 删除失败，整组保留待重试 groupId=\(groupID, privacy: .public)")
+                continue
+            }
+
+            // 已完成实例日期升序并入完成历史（含 keeper 自身已完成场景）；
+            // keeper 的 isCompleted/recurrenceType/startDate 自带旧值即为单条语义，无需改写
+            keeper.completedOccurrenceDates = sorted.filter { $0.isCompleted }.compactMap { $0.startDate }
+            keeper.groupId = nil
+            keeper.groupIndex = -1
+            keeper.lastUpdated = Date()
+            for row in others {
+                context.delete(row)
+            }
+        }
+
+        do {
+            try context.save()
+            if failedGroups == 0 {
+                UserDefaults.standard.set(true, forKey: migrationKey)
+                AppLogger.cache.info("循环任务组迁移完成，共 \(groups.count) 组")
+            } else {
+                AppLogger.cache.warning("循环任务组迁移部分失败（\(failedGroups)/\(groups.count) 组），门控未写下次重试")
+            }
+        } catch {
+            // 保存失败：门控不写，已改组下次按 groupId 缺失幂等收敛
+            AppLogger.cache.error("循环任务组迁移保存失败: \(String(describing: error))")
         }
     }
 

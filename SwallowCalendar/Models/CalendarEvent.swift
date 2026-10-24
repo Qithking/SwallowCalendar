@@ -92,8 +92,6 @@ struct CalendarEvent: Identifiable {
     let priority: Int
     /// 是否来自系统提醒
     let isReminder: Bool
-    /// 周期任务组ID（仅周期任务有值）
-    let groupId: String?
     /// 周期类型
     let recurrenceType: RecurrenceType
     /// 提醒提前分钟数（0=不提醒）
