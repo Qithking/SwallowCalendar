@@ -107,29 +107,18 @@ final class StatusBarIconManager {
     }
 
     /// D2：取最近未完成用户事项的倒计时文案（nil = 无可显示事项）
-    /// 复用 B-27 谓词粗筛模式：粗筛限定用户分类 + 未完成 + startDate ∈ (now, now+365 天]，
-    /// 升序取第一个即最近事项；精确判定由谓词完成
+    /// 复用列表同款展开链路（bug: badge-recurring-task-invisible）：
+    /// 循环任务 base.startDate 为过去首实例，直接查主表会被 startDate > now 排除，
+    /// 而未来 occurrence 实例未落库——getEvents 在窗口内展开循环任务后统一返回
     @MainActor
-    private static func latestCountdownText(now: Date = Date()) -> String? {
-        guard let context = EventCacheService.shared.context else { return nil }
+    static func latestCountdownText(now: Date = Date()) -> String? {
         let upperBound = now.addingTimeInterval(365 * 86400)
-        let userCategory = "用户"
-        let distantPast = Date.distantPast
-        var descriptor = FetchDescriptor<CachedEvent>(
-            predicate: #Predicate {
-                $0.categoryRaw == userCategory &&
-                !$0.isCompleted &&
-                $0.startDate != nil &&
-                ($0.startDate ?? distantPast) > now &&
-                ($0.startDate ?? distantPast) <= upperBound
-            },
-            sortBy: [SortDescriptor(\.startDate)]
-        )
-        // badge-realtime-countdown B5：徽标 1s 刷新，仅取最近一条降低 fetch 开销
-        descriptor.fetchLimit = 1
-        guard let nearest = try? context.fetch(descriptor).first,
-              let start = nearest.startDate else { return nil }
-        return CountdownFormatter.formatCountdown(remaining: start.timeIntervalSince(now))
+        let events = EventCacheService.shared.getEvents(from: now, to: upperBound)
+        // getEvents 已按 startDate 升序返回；跳过节假日/有效期过滤由展开链路与列表保持一致
+        guard let nearest = events.first(where: {
+            $0.category == .user && !$0.isCompleted && ($0.startDate ?? .distantPast) > now
+        }) else { return nil }
+        return CountdownFormatter.formatCountdown(remaining: nearest.startDate!.timeIntervalSince(now))
     }
 
     func updateIconAndRestartTimer() {
