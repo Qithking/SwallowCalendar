@@ -416,6 +416,25 @@ final class EventCacheService {
         return result
     }
 
+    /// 菜单弹层/桌面面板的任务候选（bug: status-popover-panel-recurring-invisible）：
+    /// 两视图原 reload 直查主表（B-27 谓词窗口）漏循环任务未来实例——本方法统一走
+    /// getEvents 展开链路（休日实例静默跳过、有效期过滤与列表一致），
+    /// 限定用户分类（排除系统/订阅内容）；无日期行由下方补查保留（原谓词语义）
+    func userTodoCandidates(from windowStart: Date, to windowEnd: Date) -> [CachedEvent] {
+        var result = getEvents(from: windowStart, to: windowEnd).filter { $0.category == .user }
+        // 无日期任务行（startDate 为空）不落入窗口重叠判定，单独补查（原弹层谓词语义）
+        if let context = context {
+            let userCategory = EventCategory.user.rawValue
+            let undated = try? context.fetch(FetchDescriptor<CachedEvent>(
+                predicate: #Predicate {
+                    $0.categoryRaw == userCategory && $0.startDate == nil
+                }
+            ))
+            result.append(contentsOf: undated ?? [])
+        }
+        return result
+    }
+
     /// 月历视图合并入口（bug: calendar-grid-recurring-invisible）：
     /// @Query 直查主表只能看到循环任务 base 行（过去首实例），看不到未落库的未来
     /// occurrence——本方法把传入行拆为普通行 + 循环展开实例（休日实例保留供标识），

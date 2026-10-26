@@ -321,31 +321,21 @@ struct DesktopTodoPanelView: View {
 
     private func reload(now: Date = Date()) {
         reloadAt = now
-        guard let context = EventCacheService.shared.context else {
+        guard EventCacheService.shared.context != nil else {
             todos = []
             return
         }
-        // B-27 谓词粗筛模式（弹层同款）：仅用户分类 + 无日期或当前档位区间内
-        // （八轮需求：排除系统/订阅日历内容，如霜降等节气/节假日）
-        let userCategory = EventCategory.user.rawValue
+        // bug: status-popover-panel-recurring-invisible：改走展开链路候选（循环任务
+        // 档位区间实例可见），替代原 B-27 直查主表谓词；无日期行由候选方法补查保留
+        // （八轮需求：排除系统/订阅日历内容，如霜降等节气/节假日——候选方法已限定用户分类）
         let range = mode.dateRange(from: now)
-        let rangeStart = range.start
-        let rangeEnd = range.end
-        let distantPast = Date.distantPast
-        let descriptor = FetchDescriptor<CachedEvent>(
-            predicate: #Predicate {
-                $0.categoryRaw == userCategory &&
-                ($0.startDate == nil ||
-                 (($0.startDate ?? distantPast) >= rangeStart && ($0.startDate ?? distantPast) < rangeEnd))
-            }
-        )
-        let fetched = (try? context.fetch(descriptor)) ?? []
+        let fetched = EventCacheService.shared.userTodoCandidates(from: range.start, to: range.end)
         // 智能跳过节假日（语义 v3）：勾选任务 startDate 落休日/周末当天静默跳过，不进列表
         // 纯函数精判 + 状态筛选 + 面板排序（DesktopTodoPanelFilterTests 覆盖）
         todos = DesktopTodoPanelSort.sort(
             fetched
                 .filter { event in
-                    !HolidaySkipResolver.isSkipped(of: event, context: context)
+                    !HolidaySkipResolver.isSkipped(of: event, context: EventCacheService.shared.context!)
                         && DesktopTodoPanelFilter.included(event, mode: mode, now: now)
                 }
                 .filter { statusFilter.includes(isCompleted: $0.isCompleted) }

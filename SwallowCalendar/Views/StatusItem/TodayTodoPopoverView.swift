@@ -117,28 +117,20 @@ struct TodayTodoPopoverView: View {
     private func reload(now: Date = Date()) {
         // 更新超时判定基准时刻
         reloadAt = now
-        guard let context = EventCacheService.shared.context else {
+        guard EventCacheService.shared.context != nil else {
             todos = []
             return
         }
-        // B-27 谓词粗筛模式（StatusBarIconManager 同款）：用户分类 + 无时间或今天内
-        let userCategory = EventCategory.user.rawValue
+        // bug: status-popover-panel-recurring-invisible：改走展开链路候选（循环任务
+        // 今日实例可见），替代原 B-27 直查主表谓词；无日期行由候选方法补查保留
         let dayStart = calendar.startOfDay(for: now)
         let nextDayStart = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
-        let distantPast = Date.distantPast
-        let descriptor = FetchDescriptor<CachedEvent>(
-            predicate: #Predicate {
-                $0.categoryRaw == userCategory &&
-                ($0.startDate == nil ||
-                 (($0.startDate ?? distantPast) >= dayStart && ($0.startDate ?? distantPast) < nextDayStart))
-            }
-        )
-        let fetched = (try? context.fetch(descriptor)) ?? []
+        let fetched = EventCacheService.shared.userTodoCandidates(from: dayStart, to: nextDayStart)
         // 智能跳过节假日（语义 v3）：勾选任务 startDate 落休日/周末当天静默跳过，不进列表
         // 精确今天判定 + 排序交给纯函数（TodayTodoSorterTests 覆盖）
         todos = TodayTodoSorter.sort(
             fetched.filter { event in
-                !HolidaySkipResolver.isSkipped(of: event, context: context)
+                !HolidaySkipResolver.isSkipped(of: event, context: EventCacheService.shared.context!)
                     && TodayTodoSorter.isToday(event.startDate, now: now, calendar: calendar)
             },
             now: now,
