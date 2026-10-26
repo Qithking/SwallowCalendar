@@ -272,6 +272,13 @@ struct CellPopoverPresenter<Content: View>: NSViewRepresentable {
             context.coordinator.close()
         }
     }
+
+    /// 主界面收起（close → contentViewController=nil）销毁 SwiftUI 树时，
+    /// SwiftUI 拆除 representable 调用本钩子；关闭 coordinator 持有的独立弹窗，
+    /// 否则主界面收起后弹窗残留屏幕（日历格子与事项行弹窗共用本组件）
+    static func dismantleUIView(_ uiView: NSView, coordinator: CellPopoverWindowController) {
+        coordinator.close()
+    }
 }
 
 struct CalendarGridView: View {
