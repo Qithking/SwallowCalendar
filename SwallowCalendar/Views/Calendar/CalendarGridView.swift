@@ -421,6 +421,9 @@ private struct MonthEventGrid: View {
     @Query private var cachedEvents: [CachedEvent]
 
     private let calendar = Calendar.current
+    /// 月窗口（init 计算一次，body 合并展开实例时复用）
+    private let queryWindowStart: Date
+    private let queryWindowEnd: Date
 
     init(month: Date, selectedDate: Binding<Date>, days: [Date], enabledCalendarIDs: Set<String>, importantCalendarID: String?, hasImportantSource: Bool) {
         self.month = month
@@ -435,6 +438,8 @@ private struct MonthEventGrid: View {
         let firstDay = calendar.date(from: calendar.dateComponents([.year, .month], from: month))!
         let windowStart = calendar.date(byAdding: .day, value: -7, to: firstDay)!
         let windowEnd = calendar.date(byAdding: .day, value: 38, to: firstDay)!
+        queryWindowStart = windowStart
+        queryWindowEnd = windowEnd
         // 哨兵日期用局部常量捕获：#Predicate 宏内不支持隐式成员访问（.distantPast），
         // 会展开成静态成员 keypath 导致类型推断失败
         let distantPast = Date.distantPast
@@ -452,7 +457,15 @@ private struct MonthEventGrid: View {
 
     var body: some View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
-        let events = cachedEvents
+        // 循环任务展开合并（bug: calendar-grid-recurring-invisible）：@Query 直查主表
+        // 只能看到 base 行（过去首实例），未来 occurrence 未落库——按月窗口展开合并，
+        // 休日实例保留（includeHolidaySkipped）供「已智能跳过」标识机制识别
+        let events = EventCacheService.shared.mergedDisplayEvents(
+            from: cachedEvents,
+            windowStart: queryWindowStart,
+            windowEnd: queryWindowEnd,
+            context: modelContext
+        )
         // 智能跳过节假日（语义 v3）：预计算「被静默跳过」的事件 id 集合（42 格共享，
         // 避免每格重复扫描节假日数据）；无顺延，月历始终按原日期显示
         let skippedEventIDs: Set<String> = Set(

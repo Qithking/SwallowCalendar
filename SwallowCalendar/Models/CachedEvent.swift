@@ -373,7 +373,9 @@ final class EventCacheService {
     /// 有效期过滤（spec/task-validity-period AC-2 AC-3，plan step 4）：①② 均只产出
     /// 有效期内的 occurrence；② 对已完成 occurrence 不再追加（历史行由 ① 独家产出，
     /// 避免冻结场景 startDate 停在已完成 X 时产出重复行），并按结束端越界早退
-    private func expandOccurrences(of base: CachedEvent, windowStart: Date, windowEnd: Date, context: ModelContext) -> [CachedEvent] {
+    /// - Parameter includeHolidaySkipped: true 时休日实例仍产出（月历语义：无顺延，
+    ///   原休日格显示并保留「已智能跳过」标识）；列表路径默认 false 静默跳过不变
+    func expandOccurrences(of base: CachedEvent, windowStart: Date, windowEnd: Date, context: ModelContext, includeHolidaySkipped: Bool = false) -> [CachedEvent] {
         guard let baseStart = base.startDate else { return [base] }
         let duration = (base.endDate ?? baseStart).timeIntervalSince(baseStart)
         let completedSet = Set(base.completedOccurrenceDates.map { $0.timeIntervalSince1970 })
@@ -394,8 +396,9 @@ final class EventCacheService {
                 let instanceEnd = occ.addingTimeInterval(duration)
                 // 与窗口重叠才产出（零长按 B-1 覆盖开始日语义）
                 if occ >= windowStart || instanceEnd > windowStart {
-                    // 休日静默跳过（仅未完成 occurrence；序列本身不改写）
-                    if base.skipHolidays, HolidaySkipResolver.isRestDay(occ, context: context) {
+                    // 休日处理（仅未完成 occurrence；序列本身不改写）：
+                    // 默认静默跳过（列表语义）；月历传 includeHolidaySkipped=true 保留休日实例
+                    if base.skipHolidays, !includeHolidaySkipped, HolidaySkipResolver.isRestDay(occ, context: context) {
                         // 静默跳过：不产出
                     } else {
                         result.append(makeOccurrenceInstance(of: base, occurrence: occ, duration: duration, isCompleted: false))
@@ -411,6 +414,19 @@ final class EventCacheService {
             }
         }
         return result
+    }
+
+    /// 月历视图合并入口（bug: calendar-grid-recurring-invisible）：
+    /// @Query 直查主表只能看到循环任务 base 行（过去首实例），看不到未落库的未来
+    /// occurrence——本方法把传入行拆为普通行 + 循环展开实例（休日实例保留供标识），
+    /// 本体行被替换，语义与 getEvents 一致；调用方负责按月窗口传入 @Query 结果
+    func mergedDisplayEvents(from rows: [CachedEvent], windowStart: Date, windowEnd: Date, context: ModelContext) -> [CachedEvent] {
+        let recurring = rows.filter { $0.recurrenceType != .none }
+        let normal = rows.filter { $0.recurrenceType == .none }
+        let expanded = recurring.flatMap {
+            expandOccurrences(of: $0, windowStart: windowStart, windowEnd: windowEnd, context: context, includeHolidaySkipped: true)
+        }
+        return (normal + expanded).sorted { ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) }
     }
 
     /// 构造 occurrence 实例（未落库）：拷贝展示相关字段，eventID 用复合格式，
