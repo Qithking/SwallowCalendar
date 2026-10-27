@@ -440,17 +440,11 @@ private struct MonthEventGrid: View {
         let windowEnd = calendar.date(byAdding: .day, value: 38, to: firstDay)!
         queryWindowStart = windowStart
         queryWindowEnd = windowEnd
-        // 哨兵日期用局部常量捕获：#Predicate 宏内不支持隐式成员访问（.distantPast），
-        // 会展开成静态成员 keypath 导致类型推断失败
-        let distantPast = Date.distantPast
-        let distantFuture = Date.distantFuture
-        // Query 初始化器参数标签是 filter/sort（predicate 是 FetchDescriptor 的标签）
-        let predicate = #Predicate<CachedEvent> { event in
-            (event.startDate ?? distantPast) < windowEnd
-                && (event.endDate ?? distantFuture) > windowStart
-        }
+        // Query 初始化器参数标签是 filter/sort（predicate 是 FetchDescriptor 的标签）；
+        // 谓词用共享构造器：循环 base 行豁免窗口过滤（否则切月后 base 被排除，
+        // mergedDisplayEvents 无行可展开，新月份循环任务消失）
         _cachedEvents = Query(
-            filter: predicate,
+            filter: CachedEvent.monthWindowPredicate(windowStart: windowStart, windowEnd: windowEnd),
             sort: [SortDescriptor(\.startDate)]
         )
     }

@@ -258,6 +258,26 @@ final class CachedEvent {
     }
 }
 
+// MARK: - 月历窗口谓词
+
+extension CachedEvent {
+    /// 月历窗口谓词（bug: month-switch-recurring-invisible）：
+    /// 循环 base 行（startDate=过去首实例）与未来月窗口不重叠，纯窗口重叠谓词会在
+    /// 切月后把 base 行排除，mergedDisplayEvents 无行可展开——循环行豁免窗口过滤
+    /// （始终包含，数量有限展开窗口自行裁剪）；普通行仍按窗口重叠过滤。
+    /// @Query 与单测（FetchDescriptor）共用本构造器，保证单一事实源
+    static func monthWindowPredicate(windowStart: Date, windowEnd: Date) -> Predicate<CachedEvent> {
+        let noneRaw = RecurrenceType.none.rawValue
+        let distantPast = Date.distantPast
+        let distantFuture = Date.distantFuture
+        return #Predicate<CachedEvent> { event in
+            (event.recurrenceTypeRaw != nil && event.recurrenceTypeRaw != noneRaw)
+                || ((event.startDate ?? distantPast) < windowEnd
+                    && (event.endDate ?? distantFuture) > windowStart)
+        }
+    }
+}
+
 // MARK: - 缓存变更通知
 
 /// D2/G7v2：缓存事件变更通知（字符串名风格，同项目既有通知）。
