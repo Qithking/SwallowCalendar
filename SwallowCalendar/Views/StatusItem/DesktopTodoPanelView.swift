@@ -20,6 +20,13 @@ enum DesktopTodoPanelFilter {
     /// 面板固定四档（复用 EventFilterMode 但不含 .all——spec 明确不设「全部」档）
     static let modes: [EventFilterMode] = [.today, .thisWeek, .thisMonth, .thisYear]
 
+    /// 设置「默认显示待办」映射到面板/弹层四档（bug: status-views-filter-default）：
+    /// 主界面独有「全部」档 → 回退本月（与 AppSettings defaultFilterModeEnum fallback 一致）；
+    /// 四档原样保留。面板/弹层初始档与设置联动共用本函数（PanelFilterModeClampTests 覆盖）
+    static func defaultMode(from settingsMode: EventFilterMode) -> EventFilterMode {
+        modes.contains(settingsMode) ? settingsMode : .thisMonth
+    }
+
     static func included(
         _ event: CachedEvent,
         mode: EventFilterMode,
@@ -231,7 +238,12 @@ struct DesktopTodoPanelView: View {
                 .onEnded { _ in dragStart = nil }
         )
         .tint(Color(hex: appSettings.accentColorHex))
-        .onAppear { reload() }
+        .onAppear {
+            // 初始档 = 应用设置「默认显示待办」（映射四档，「全部」回退本月）
+            // ——原硬编码 .today（bug: status-views-filter-default）
+            mode = DesktopTodoPanelFilter.defaultMode(from: appSettings.defaultFilterModeEnum)
+            reload()
+        }
         // 勾选完成走 .cachedEventsChanged 广播（主面板同款链路），面板即时刷新
         .onReceive(NotificationCenter.default.publisher(for: .cachedEventsChanged)) { _ in
             reload()
@@ -239,6 +251,10 @@ struct DesktopTodoPanelView: View {
         // 跨天重查当前档位（如「今天」档跨天后刷新）
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             reload()
+        }
+        // 设置「默认显示待办」变更联动（主界面 EventPanelView 同款）
+        .onChange(of: appSettings.defaultFilterModeEnum) { _, newMode in
+            mode = DesktopTodoPanelFilter.defaultMode(from: newMode)
         }
         .onChange(of: mode) { _, _ in
             reload()

@@ -18,6 +18,9 @@ struct TodayTodoPopoverView: View {
     @State private var todos: [CachedEvent] = []
     /// 超时判定基准时刻（reload 时更新；弹层显示期间时间推移不自动刷新，弹层生命短暂可接受）
     @State private var reloadAt: Date = Date()
+    /// 过滤档位（bug: status-views-filter-default：今天/本周/本月/本年，面板同款四档；
+    /// 初始档为应用设置「默认显示待办」，onAppear 时赋值——@State 默认值不能引用环境）
+    @State private var mode: EventFilterMode = .thisMonth
     /// 主题色（倒计时胶囊用）；环境由 AppDelegate 弹层挂载处注入（主面板同款）
     @Environment(AppSettings.self) private var appSettings
 
@@ -30,15 +33,36 @@ struct TodayTodoPopoverView: View {
     }()
 
     var body: some View {
-        Group {
-            if todos.isEmpty {
-                emptyState
-            } else {
-                list
+        VStack(spacing: 0) {
+            // 档位筛选行（status-views-filter-default：今天/本周/本月/本年；
+            // 用户需求：下拉换 tab——segmented 分段样式占满弹层宽度）
+            Picker("时段", selection: $mode) {
+                ForEach(DesktopTodoPanelFilter.modes, id: \.self) { m in
+                    Text(m.rawValue).tag(m)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .onChange(of: mode) { _, _ in reload() }
+
+            Divider()
+
+            Group {
+                if todos.isEmpty {
+                    emptyState
+                } else {
+                    list
+                }
             }
         }
         .frame(width: 300)
-        .onAppear { reload() }
+        .onAppear {
+            // 初始档 = 应用设置「默认显示待办」（映射四档，「全部」回退本月）
+            mode = DesktopTodoPanelFilter.defaultMode(from: appSettings.defaultFilterModeEnum)
+            reload()
+        }
         // 勾选完成走 .cachedEventsChanged 广播（主面板同款链路），弹层即时刷新
         .onReceive(NotificationCenter.default.publisher(for: .cachedEventsChanged)) { _ in
             reload()
@@ -114,7 +138,7 @@ struct TodayTodoPopoverView: View {
             Image(systemName: "checkmark.circle")
                 .font(.system(size: 28))
                 .foregroundStyle(.secondary)
-            Text("今天没有待办")
+            Text("\(mode.rawValue)没有待办")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -131,16 +155,15 @@ struct TodayTodoPopoverView: View {
             return
         }
         // bug: status-popover-panel-recurring-invisible：改走展开链路候选（循环任务
-        // 今日实例可见），替代原 B-27 直查主表谓词；无日期行由候选方法补查保留
-        let dayStart = calendar.startOfDay(for: now)
-        let nextDayStart = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
-        let fetched = EventCacheService.shared.userTodoCandidates(from: dayStart, to: nextDayStart)
-        // 智能跳过节假日（语义 v3）：勾选任务 startDate 落休日/周末当天静默跳过，不进列表
-        // 精确今天判定 + 排序交给纯函数（TodayTodoSorterTests 覆盖）
+        // 实例可见），无日期行由候选方法补查保留；窗口按当前档位（mode.dateRange）
+        let range = mode.dateRange(from: now)
+        let fetched = EventCacheService.shared.userTodoCandidates(from: range.start, to: range.end)
+        // 智能跳过节假日（语义 v3）：勾选任务 startDate 落休日/周末当天静默跳过，不进列表；
+        // 档位精判复用面板纯函数（无日期行恒显示、跨天行按 startDate 归档，同面板语义）
         todos = TodayTodoSorter.sort(
             fetched.filter { event in
                 !HolidaySkipResolver.isSkipped(of: event, context: EventCacheService.shared.context!)
-                    && TodayTodoSorter.isToday(event.startDate, now: now, calendar: calendar)
+                    && DesktopTodoPanelFilter.included(event, mode: mode, now: now)
             },
             now: now,
             calendar: calendar
