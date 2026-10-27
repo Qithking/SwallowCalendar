@@ -50,7 +50,7 @@ final class DesktopTodoPanelManager {
 
     /// 开关驱动的显隐同步（幂等；AppSettings.didSet 与 AppDelegate 启动补偿共用）
     func syncVisibility() {
-        if AppSettings.shared.desktopTodoPanelEnabled {
+        if AppSettings.shared.todoPanelDisplayMode.desktopPanelEnabled {
             guard ensurePanel() else { return }
             // orderFrontRegardless 不 makeKey：显示但不抢焦点
             panel?.orderFrontRegardless()

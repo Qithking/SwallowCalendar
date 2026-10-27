@@ -78,11 +78,47 @@ final class AppSettings {
         }
     }
 
-    /// 桌面常驻待办面板开关（默认关闭）
-    var desktopTodoPanelEnabled: Bool {
+    /// 「显示待办面板」四态（需求：无/菜单栏图标/桌面面板/两者）——
+    /// 菜单栏图标档控制 hover 弹层，桌面面板档控制常驻面板，两者=现有逻辑
+    enum TodoPanelDisplayMode: String {
+        case none
+        case menuBarIcon
+        case desktopPanel
+        case both
+
+        /// 设置下拉展示名
+        var displayTitle: String {
+            switch self {
+            case .none: return "无"
+            case .menuBarIcon: return "菜单栏图标"
+            case .desktopPanel: return "桌面面板"
+            case .both: return "两者"
+            }
+        }
+
+        /// 旧 Bool 开关迁移（PanelDisplayModeTests 覆盖）：
+        /// true（面板开）→ 两者；false（面板关）→ 菜单栏图标——
+        /// hover 弹层历史上不受开关控制，迁移后保持可见，升级用户行为零回归
+        static func fromLegacy(enabled: Bool) -> TodoPanelDisplayMode {
+            enabled ? .both : .menuBarIcon
+        }
+
+        /// 菜单栏图标 hover 弹层是否显示
+        var menuBarHoverEnabled: Bool {
+            self == .menuBarIcon || self == .both
+        }
+
+        /// 桌面常驻面板是否显示
+        var desktopPanelEnabled: Bool {
+            self == .desktopPanel || self == .both
+        }
+    }
+
+    /// 「显示待办面板」模式（默认菜单栏图标：旧默认 hover 弹层可见、面板关）
+    var todoPanelDisplayMode: TodoPanelDisplayMode {
         didSet {
-            UserDefaults.standard.set(desktopTodoPanelEnabled, forKey: "desktopTodoPanelEnabled")
-            // Manager 为 @MainActor，didSet 宏展开为 nonisolated 上下文，切主 actor 同步显隐（幂等）
+            UserDefaults.standard.set(todoPanelDisplayMode.rawValue, forKey: "todoPanelDisplayMode")
+            // 桌面面板档联动显隐；弹层抑制器为闭包动态读取，无需额外联动
             Task { @MainActor in
                 DesktopTodoPanelManager.shared.syncVisibility()
             }
@@ -251,7 +287,19 @@ final class AppSettings {
         self.sortOrder = SortOrder(rawValue: UserDefaults.standard.string(forKey: "sortOrder") ?? "") ?? .descending
         self.defaultFilterMode = UserDefaults.standard.string(forKey: "defaultFilterMode") ?? "本月"
         self.statusBarCountdownEnabled = UserDefaults.standard.object(forKey: "statusBarCountdownEnabled") as? Bool ?? false
-        self.desktopTodoPanelEnabled = UserDefaults.standard.object(forKey: "desktopTodoPanelEnabled") as? Bool ?? false
+        // 「显示待办面板」：新键直读（默认菜单栏图标）；旧 Bool 开关键存在则迁移
+        //（true→两者/false→菜单栏图标）并删除旧键，升级用户行为零回归；
+        // init 内赋值不触发 didSet，迁移分支需手动持久化新键
+        if UserDefaults.standard.object(forKey: "desktopTodoPanelEnabled") is Bool {
+            let legacy = UserDefaults.standard.bool(forKey: "desktopTodoPanelEnabled")
+            self.todoPanelDisplayMode = .fromLegacy(enabled: legacy)
+            UserDefaults.standard.set(self.todoPanelDisplayMode.rawValue, forKey: "todoPanelDisplayMode")
+            UserDefaults.standard.removeObject(forKey: "desktopTodoPanelEnabled")
+        } else {
+            self.todoPanelDisplayMode = TodoPanelDisplayMode(
+                rawValue: UserDefaults.standard.string(forKey: "todoPanelDisplayMode") ?? ""
+            ) ?? .menuBarIcon
+        }
 
         // 初始化时同步一次开机启动状态（让 SMAppService 生效）
         updateLaunchAtLogin()

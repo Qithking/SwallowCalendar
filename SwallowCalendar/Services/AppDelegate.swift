@@ -92,8 +92,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.panel?.open()
             }
         }
-        // 弹层与主面板互斥：主面板可见时 hover 不弹（挂起而非关闭，面板关闭后可再悬停弹出）
-        hover.isSuppressed = { [weak self] in self?.panel?.isPresented ?? false }
+        // 弹层显示控制：主面板可见时互斥不弹（挂起而非关闭，面板关闭后可再悬停弹出）；
+        // 「显示待办面板」不含菜单栏图标档时同样挂起（无/桌面面板档，动态读取）
+        hover.isSuppressed = { [weak self] in
+            self?.panel?.isPresented ?? false
+                || !AppSettings.shared.todoPanelDisplayMode.menuBarHoverEnabled
+        }
         hoverController = hover
     }
     

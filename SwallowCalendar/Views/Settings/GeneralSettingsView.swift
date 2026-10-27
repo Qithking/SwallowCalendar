@@ -116,9 +116,16 @@ struct GeneralSettingsView: View {
                 Toggle("显示农历", isOn: $settings.showLunarCalendar)
                     .toggleStyle(.switch)
 
-                // 桌面常驻待办面板
-                Toggle("桌面显示待办面板", isOn: $settings.desktopTodoPanelEnabled)
-                    .toggleStyle(.switch)
+                // 显示待办面板（需求：四态下拉，顺序按需求原话——菜单栏图标控制
+                // hover 弹层，桌面面板控制常驻面板，两者=现有逻辑）
+                Picker("显示待办面板", selection: $settings.todoPanelDisplayMode) {
+                    ForEach([AppSettings.TodoPanelDisplayMode.none,
+                             .menuBarIcon,
+                             .desktopPanel,
+                             .both], id: \.self) { mode in
+                        Text(mode.displayTitle).tag(mode)
+                    }
+                }
             }
         }
         .formStyle(.grouped)
