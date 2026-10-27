@@ -79,10 +79,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DesktopTodoPanelManager.shared.syncVisibility()
 
         // 装配 hover 弹层：条目点击 → 关弹层并打开主面板（主面板已开时 open 仅前置，不会被关掉）
+        // 注入 AppSettings 环境（主面板同款）：行内倒计时胶囊需要主题色
         let hover = StatusItemHoverController()
         hover.contentProvider = { [weak hover] in
             NSHostingController(
                 rootView: TodayTodoPopoverView(onOpenMainPanel: { hover?.openMainPanel() })
+                    .environment(AppSettings.shared)
             )
         }
         if let button = statusItem.button {

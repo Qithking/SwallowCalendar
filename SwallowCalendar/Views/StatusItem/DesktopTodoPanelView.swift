@@ -297,6 +297,19 @@ struct DesktopTodoPanelView: View {
                 ))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+                // 过期红字 + 未过期倒计时胶囊，对齐主界面 EventItemRow（bug: status-views-countdown-missing）
+                if TodayTodoSorter.isOverdue(event, now: reloadAt) {
+                    Text("已过期")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.red)
+                } else if !event.isCompleted {
+                    CountdownTextView(
+                        startDate: event.startDate,
+                        accentColorHex: appSettings.accentColorHex,
+                        eventID: event.eventID
+                    )
+                }
             }
         }
         .padding(.horizontal, 12)

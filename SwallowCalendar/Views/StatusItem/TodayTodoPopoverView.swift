@@ -18,6 +18,8 @@ struct TodayTodoPopoverView: View {
     @State private var todos: [CachedEvent] = []
     /// 超时判定基准时刻（reload 时更新；弹层显示期间时间推移不自动刷新，弹层生命短暂可接受）
     @State private var reloadAt: Date = Date()
+    /// 主题色（倒计时胶囊用）；环境由 AppDelegate 弹层挂载处注入（主面板同款）
+    @Environment(AppSettings.self) private var appSettings
 
     private let calendar = Calendar.current
 
@@ -89,6 +91,13 @@ struct TodayTodoPopoverView: View {
                         Text("已过期")
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.red)
+                    } else if !event.isCompleted {
+                        // 未过期倒计时胶囊，对齐主界面 EventItemRow（bug: status-views-countdown-missing）
+                        CountdownTextView(
+                            startDate: event.startDate,
+                            accentColorHex: appSettings.accentColorHex,
+                            eventID: event.eventID
+                        )
                     }
                 }
             }

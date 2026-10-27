@@ -355,7 +355,8 @@ private struct EventRowPopoverContent: View {
 }
 
 /// 倒计时文本视图，使用 CountdownTimerManager 统一刷新
-private struct CountdownTextView: View {
+/// （internal：主界面/菜单弹层/桌面面板三处复用，样式与刷新机制单一事实源）
+struct CountdownTextView: View {
     let startDate: Date?
     let accentColorHex: String
     let eventID: String
