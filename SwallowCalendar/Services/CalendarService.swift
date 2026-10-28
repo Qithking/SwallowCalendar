@@ -668,6 +668,9 @@ final class CalendarService {
             if let offsets = reminderOffsets, !offsets.isEmpty {
                 cached.reminderOffsets = offsets
             }
+            // 历史锚点 = 创建时刻的序列首实例（bug: recurring-past-occurrence-invisible）：
+            // 已过时刻被推进时本值即下一期，与「每天跑步从明天起」语义一致
+            cached.originStartDate = cached.startDate
             context.insert(cached)
             do {
                 try context.save()
@@ -744,6 +747,8 @@ final class CalendarService {
             if let offsets = reminderOffsets, !offsets.isEmpty {
                 cached.reminderOffsets = offsets
             }
+            // 历史锚点 = 创建时刻的序列首实例（同 createCalendarEventWithGroupInfo）
+            cached.originStartDate = cached.startDate
             context.insert(cached)
             do {
                 try context.save()
@@ -1419,6 +1424,69 @@ extension CalendarService {
         case .none, .custom:
             return nil
         }
+    }
+
+    /// nextOccurrence 的逆运算（反向单步，bug: recurring-past-occurrence-invisible）：
+    /// 供存量循环行回填历史锚点时从游标反向回退；monthly 与正向同走 Calendar.date(byAdding:)
+    /// 系统取整，正反共用取整语义保持序列自洽
+    static func previousOccurrence(before date: Date, recurrenceType: RecurrenceType, isLunar: Bool) -> Date? {
+        if isLunar {
+            let chineseCalendar = Calendar(identifier: .chinese)
+            switch recurrenceType {
+            case .unlimited, .daily:
+                return chineseCalendar.date(byAdding: .day, value: -1, to: date)
+            case .weekly:
+                return chineseCalendar.date(byAdding: .day, value: -7, to: date)
+            case .monthly:
+                return chineseCalendar.date(byAdding: .month, value: -1, to: date)
+            case .yearly:
+                return chineseCalendar.date(byAdding: .year, value: -1, to: date)
+            case .none, .custom:
+                return nil
+            }
+        }
+        switch recurrenceType {
+        case .unlimited, .daily:
+            return Calendar.current.date(byAdding: .day, value: -1, to: date)
+        case .weekly:
+            return Calendar.current.date(byAdding: .weekOfYear, value: -1, to: date)
+        case .monthly:
+            return Calendar.current.date(byAdding: .month, value: -1, to: date)
+        case .yearly:
+            return Calendar.current.date(byAdding: .year, value: -1, to: date)
+        case .none, .custom:
+            return nil
+        }
+    }
+
+    /// 存量循环行回填历史锚点 originStartDate（bug: recurring-past-occurrence-invisible）
+    /// 算法：从游标反向单步回退，取不早于创建时刻的第一个序列点——游标即创建时
+    /// 推进/落定的序列首实例，反向链上每点均为合法周期点，时刻模式自动对齐；
+    /// 下界用创建时刻（而非创建日零点），保留「创建时已过时刻推进到下一期」的
+    /// 首实例语义（不补出创建日已过实例）。EK 无创建时间或游标早于创建时刻（异常）
+    /// 返回 nil，保持游标展开回退
+    static func resolveOriginStartDate(cursor: Date, creationDate: Date?, recurrenceType: RecurrenceType, isLunar: Bool) -> Date? {
+        guard let creation = creationDate, cursor >= creation else { return nil }
+        var occ = cursor
+        var iterations = 0
+        while let prev = previousOccurrence(before: occ, recurrenceType: recurrenceType, isLunar: isLunar), prev >= creation {
+            occ = prev
+            iterations += 1
+            if iterations >= 4000 {
+                AppLogger.sync.error("历史锚点回填达迭代上限，中止 base cursor=\(cursor, privacy: .public)")
+                break
+            }
+        }
+        return occ
+    }
+
+    /// EK 侧创建时间（存量循环行回填 originStartDate 用，bug: recurring-past-occurrence-invisible）
+    /// EventCacheService 同步路径无 eventStore，经本访问器读取；查不到返回 nil
+    func ekCreationDate(eventID: String, isReminder: Bool) -> Date? {
+        if isReminder {
+            return (eventStore.calendarItem(withIdentifier: eventID) as? EKReminder)?.creationDate
+        }
+        return eventStore.event(withIdentifier: eventID)?.creationDate
     }
 
     /// 将日期推进到下一个周期，确保结果 > 当前时间

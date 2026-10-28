@@ -40,7 +40,8 @@ final class EventExpansionTests: XCTestCase {
         startDate: Date,
         recurrenceType: RecurrenceType = .daily,
         skipHolidays: Bool = false,
-        completed: [Date] = []
+        completed: [Date] = [],
+        originStartDate: Date? = nil
     ) throws -> CachedEvent {
         let event = CachedEvent(
             eventID: eventID,
@@ -55,6 +56,7 @@ final class EventExpansionTests: XCTestCase {
         )
         event.skipHolidays = skipHolidays
         event.completedOccurrenceDates = completed
+        event.originStartDate = originStartDate
         context.insert(event)
         try context.save()
         return event
@@ -239,5 +241,130 @@ final class EventExpansionTests: XCTestCase {
         let results = EventCacheService.shared.getEvents(from: start, to: end)
         // 上限护栏：产出实例数受控，不因历史跨度爆炸
         XCTAssertLessThanOrEqual(results.count, 4001)
+    }
+
+    // MARK: - 历史锚点 originStartDate（bug: recurring-past-occurrence-invisible）
+
+    /// 完成推进把游标（startDate）前移后，被越过的历史未完成实例应保持可见
+    /// 场景：每天 09:00 任务创建于 10/25（originStart），10/28 实例完成后游标
+    /// 推进到 10/29；回看 10/26 窗口，10/26 未完成实例应展开（现状无行 → RED）
+    func testAdvancedCursorKeepsPastUncompletedOccurrences() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-anchor",
+            startDate: date(2026, 10, 29, 9, 0),
+            completed: [date(2026, 10, 28, 9, 0)],
+            originStartDate: date(2026, 10, 25, 9, 0)
+        )
+        let (start, end) = dayWindow(2026, 10, 26)
+        let results = EventCacheService.shared.getEvents(from: start, to: end)
+
+        XCTAssertEqual(results.count, 1, "游标越过的历史未完成实例应保持可见")
+        XCTAssertEqual(
+            CachedEvent.parseOccurrenceID(results.first?.eventID ?? "")?.occurrence,
+            date(2026, 10, 26, 9, 0)
+        )
+        XCTAssertEqual(results.first?.isCompleted, false, "历史锚点展开的是未完成实例")
+    }
+
+    /// 完成历史行与历史锚点展开不重复：窗口含已完成日 + 未完成日
+    func testAnchorExpansionDoesNotDuplicateCompletedRows() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        // 10/26 已完成并推进（游标 10/29），10/27 未完成：锚点展开应补出 10/27，
+        // 10/26 仍由完成历史独家产出，且 10/28 等未来序列行正常
+        try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-anchor2",
+            startDate: date(2026, 10, 29, 9, 0),
+            completed: [date(2026, 10, 26, 9, 0)],
+            originStartDate: date(2026, 10, 25, 9, 0)
+        )
+        let (start, end) = dayWindow(2026, 10, 26, days: 3)
+        let results = EventCacheService.shared.getEvents(from: start, to: end)
+
+        // 窗口 [10/26, 10/29)：10/26 历史行（完成）+ 10/27、10/28 未完成锚点展开行
+        XCTAssertEqual(results.count, 3, "历史行 + 锚点展开行不应重复或遗漏")
+        let completedRows = results.filter { $0.isCompleted }
+        let uncompletedRows = results.filter { !$0.isCompleted }
+        XCTAssertEqual(completedRows.count, 1)
+        XCTAssertEqual(
+            CachedEvent.parseOccurrenceID(completedRows.first?.eventID ?? "")?.occurrence,
+            date(2026, 10, 26, 9, 0)
+        )
+        XCTAssertEqual(Set(uncompletedRows.compactMap {
+            CachedEvent.parseOccurrenceID($0.eventID)?.occurrence
+        }), [date(2026, 10, 27, 9, 0), date(2026, 10, 28, 9, 0)])
+    }
+
+    /// 存量兼容：originStartDate 未回填（nil）时回退游标展开，行为零变化
+    func testNilOriginFallsBackToCursorExpansion() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-legacy",
+            startDate: date(2026, 10, 29, 9, 0),
+            completed: [date(2026, 10, 28, 9, 0)]
+        )
+        let (pastStart, pastEnd) = dayWindow(2026, 10, 26)
+        XCTAssertEqual(
+            EventCacheService.shared.getEvents(from: pastStart, to: pastEnd).count,
+            0,
+            "存量未回填时保持现状：游标之前不展开"
+        )
+        let (start, end) = dayWindow(2026, 10, 29)
+        XCTAssertEqual(
+            EventCacheService.shared.getEvents(from: start, to: end).count,
+            1,
+            "游标之后的序列行照常展开"
+        )
+    }
+
+    /// 历史锚点展开仍受有效期开始端过滤（validStartDate 之前不产出）
+    func testAnchorExpansionStillRespectsValidityStart() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        let event = try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-anchor-valid",
+            startDate: date(2026, 10, 29, 9, 0),
+            originStartDate: date(2026, 10, 25, 9, 0)
+        )
+        event.validStartDate = date(2026, 10, 27)
+        try container.mainContext.save()
+
+        let (beforeStart, beforeEnd) = dayWindow(2026, 10, 26)
+        XCTAssertEqual(
+            EventCacheService.shared.getEvents(from: beforeStart, to: beforeEnd).count,
+            0,
+            "有效期开始端之前的实例不产出"
+        )
+        let (start, end) = dayWindow(2026, 10, 27)
+        XCTAssertEqual(
+            EventCacheService.shared.getEvents(from: start, to: end).count,
+            1,
+            "有效期开始端当日实例正常产出"
+        )
+    }
+
+    /// 防御：异常数据 originStart 晚于游标时取两者较早者，不产生额外空档
+    func testOriginLaterThanCursorTakesEarliest() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-anchor-bad",
+            startDate: date(2026, 10, 29, 9, 0),
+            originStartDate: date(2026, 11, 2, 9, 0)
+        )
+        let (start, end) = dayWindow(2026, 10, 30)
+        XCTAssertEqual(
+            EventCacheService.shared.getEvents(from: start, to: end).count,
+            1,
+            "originStart 异常晚于游标时按游标展开"
+        )
     }
 }

@@ -102,6 +102,13 @@ final class CachedEvent {
     var validStartDate: Date?
     var validEndDate: Date?
 
+    /// 序列首实例锚点（bug: recurring-past-occurrence-invisible；带默认值走 SwiftData 轻量迁移）
+    /// 语义 = 创建时刻的 startDate（创建时未过时刻即当天，已过即推进后的下一期）；
+    /// 完成推进把 startDate 当游标前移，展开序列若跟随游标，被越过的历史未完成实例
+    /// 将永久不可见——展开起点固定用本字段。nil = 存量未回填，回退游标展开（行为零变化），
+    /// 存量由 sync 路径按 EK creationDate 幂等回填
+    var originStartDate: Date?
+
     /// 循环任务完成历史（JSON 持久化，单条化 plan step 1；nil = 无完成历史）
     var completedOccurrenceDatesJSON: String?
 
@@ -230,7 +237,8 @@ final class CachedEvent {
         eventColorHex: String? = nil,
         skipHolidays: Bool = false,
         validStartDate: Date? = nil,
-        validEndDate: Date? = nil
+        validEndDate: Date? = nil,
+        originStartDate: Date? = nil
     ) {
         self.eventID = eventID
         self.title = title
@@ -254,6 +262,7 @@ final class CachedEvent {
         self.skipHolidays = skipHolidays
         self.validStartDate = validStartDate
         self.validEndDate = validEndDate
+        self.originStartDate = originStartDate
         self.lastUpdated = Date()
     }
 }
@@ -354,14 +363,18 @@ final class EventCacheService {
         let distantFuture = Date.distantFuture
         // 循环任务单条化：本体行 startDate 只代表「下一次 occurrence」，
         // 窗口内 occurrence 序列可能超出本体行自身时间范围，粗筛放宽为
-        // 「recurrenceType != none 且 startDate < 窗口右界」即命中（展开后再精确过滤）
+        // 「recurrenceType != none 且 startDate < 窗口右界」即命中（展开后再精确过滤）；
+        // bug: recurring-past-occurrence-invisible——完成推进把游标移出窗口后，
+        // 原条件直接把本体行滤掉（展开无从发生），补历史锚点 originStartDate
+        // 命中分支：锚点在窗口右界之前即命中（历史序列从锚点展开）
         let noneRaw = RecurrenceType.none.rawValue
         let predicate = #Predicate<CachedEvent> { event in
             ((event.startDate ?? distantPast) < endDate
                 && (event.endDate ?? distantFuture) > widenedStart)
                 || (event.recurrenceTypeRaw != nil
                     && event.recurrenceTypeRaw != noneRaw
-                    && (event.startDate ?? distantPast) < endDate)
+                    && ((event.startDate ?? distantPast) < endDate
+                        || (event.originStartDate ?? distantFuture) < endDate))
         }
 
         let descriptor = FetchDescriptor<CachedEvent>(
@@ -405,7 +418,11 @@ final class EventCacheService {
             result.append(makeOccurrenceInstance(of: base, occurrence: occ, duration: duration, isCompleted: true))
         }
         // ② 未完成序列展开
-        var occ = baseStart
+        // 序列起点取历史锚点 originStartDate 与游标 startDate 的较早者（bug:
+        // recurring-past-occurrence-invisible）——完成推进把 startDate 当游标前移，
+        // 若序列跟随游标，被越过的历史未完成实例将永久不可见；min 兜底异常数据
+        // （originStart 晚于游标）不产生空档；nil（存量未回填）回退游标展开
+        var occ = min(base.originStartDate ?? baseStart, baseStart)
         var iterations = 0
         while occ < windowEnd {
             // 有效期结束端之外（闭区间端点之后）全部越界，提前退出
@@ -642,6 +659,17 @@ final class EventCacheService {
                     existing.category = newCategory
                     existing.lastUpdated = Date()
                 }
+                // 存量循环行幂等回填历史锚点（bug: recurring-past-occurrence-invisible）：
+                // 首轮同步按 EK creationDate 反推序列首实例，回填后 origin 非 nil 不再进入；
+                // 游标推进（完成/编辑）不擦除锚点，历史未完成实例得以持续展开
+                if existing.recurrenceType != .none, existing.originStartDate == nil {
+                    existing.originStartDate = CalendarService.resolveOriginStartDate(
+                        cursor: newStart,
+                        creationDate: calendarService.ekCreationDate(eventID: existing.eventID, isReminder: false),
+                        recurrenceType: existing.recurrenceType,
+                        isLunar: existing.isLunar
+                    )
+                }
             } else {
                 // B-9：优先按 calendar identifier 匹配日历（title 同名/本地化差异
                 // 会取错日历导致 calendarID 记录为空串后被过滤消失），
@@ -857,6 +885,15 @@ final class EventCacheService {
                     existing.reminderOffsetsJSON = newOffsetsJSON
                     existing.reminderMinutes = newReminderMinutes
                     existing.lastUpdated = Date()
+                }
+                // 存量循环提醒幂等回填历史锚点（同 syncEvents，bug: recurring-past-occurrence-invisible）
+                if existing.recurrenceType != .none, existing.originStartDate == nil, let newStart {
+                    existing.originStartDate = CalendarService.resolveOriginStartDate(
+                        cursor: newStart,
+                        creationDate: calendarService.ekCreationDate(eventID: existing.eventID, isReminder: true),
+                        recurrenceType: existing.recurrenceType,
+                        isLunar: existing.isLunar
+                    )
                 }
             } else {
                 // 插入新提醒（支持无到期时间的提醒）
