@@ -90,6 +90,9 @@ final class ReminderAlertWindowController {
         self.window = window
     }
 
+    /// 弹窗可见性（过期弹窗测试观测用）
+    var isWindowVisible: Bool { window?.isVisible ?? false }
+
     func close() {
         window?.close()
         window = nil

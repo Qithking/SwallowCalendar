@@ -63,6 +63,10 @@ final class ReminderAlertService {
     private static let lastCheckTimeKey = "ReminderAlertService.lastCheckTime"
     /// 上次检查时间（B-14：挂起/睡眠恢复后以"上次检查~now"为提醒窗口，避免漏提醒）
     private var lastCheckTime: Date?
+    /// 启动式过期检查已完成标志（bug: main-panel-reopen-expired-popup）：
+    /// 主面板每次重开都会重跑 ContentView.task → checkExpiredEvents()，
+    /// 该标志保证启动式过期检查在应用生命周期内仅首次真正执行
+    private var hasCompletedStartupExpiredCheck = false
     
     private init() {
         // 从 UserDefaults 恢复已提醒事件ID，避免应用重启后重复弹窗
@@ -79,6 +83,12 @@ final class ReminderAlertService {
     /// 配置服务
     func configure(with container: ModelContainer) {
         // modelContainer 已不再需要，保留方法以兼容调用方
+    }
+
+    /// 测试专用：复位启动检查标志与已提醒缓存（@testable 可见，产线不调用）
+    func resetForTesting() {
+        hasCompletedStartupExpiredCheck = false
+        lastAlertedEventIDs = []
     }
     
     /// 启动提醒检查
@@ -99,7 +109,16 @@ final class ReminderAlertService {
     
     /// 检查过期事项（供数据同步完成后调用）
     /// 启动时的检查会忽略 lastAlertedEventIDs 过滤，确保过期事项始终被提示
+    /// bug: main-panel-reopen-expired-popup：主面板重开会重建 ContentView 并重跑
+    /// .task → initializeServices → 本方法，原实现每次都以启动式语义弹窗。
+    /// 按需求「仅应用初始启动时弹」：应用生命周期内仅首次调用真正执行，
+    /// 后续（主面板重开触发）直接跳过
     func checkExpiredEvents() async {
+        guard !hasCompletedStartupExpiredCheck else {
+            AppLogger.reminder.info("启动过期检查已完成，跳过本次（主面板重开触发）")
+            return
+        }
+        hasCompletedStartupExpiredCheck = true
         await checkDueEvents(includeExpired: true, ignoreAlertedCache: true)
         AppLogger.reminder.info("数据同步后过期事项检查完成")
     }
