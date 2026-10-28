@@ -39,6 +39,20 @@ struct EditEventSheet: View {
     // 有效期初值快照（spec AC-6，plan step 12）：saveEvent 与当前控件态比较判定触碰
     private let originalValidity: ValidityPeriod?
 
+    /// 编辑面板回填快照：从缓存读取本体记录（bug: recurring-edit-sheet-mismatch——
+    /// 列表行可能是 occurrence 虚拟展开行（复合 ID），用复合 ID 查主表必落空导致
+    /// 周期/属性全部回填默认值，须按全项目唯一入口 parseOccurrenceID 回查本体）
+    @MainActor
+    static func backfillSnapshot(for eventID: String) -> CachedEvent? {
+        guard let context = EventCacheService.shared.context else { return nil }
+        let targetID = CachedEvent.parseOccurrenceID(eventID)?.baseID ?? eventID
+        var descriptor = FetchDescriptor<CachedEvent>(
+            predicate: #Predicate { $0.eventID == targetID }
+        )
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
+    }
+
     init(event: CalendarEvent, calendarService: CalendarService, onDismiss: (() -> Void)? = nil, onSave: (() -> Void)? = nil) {
         self.event = event
         self.calendarService = calendarService
@@ -48,38 +62,30 @@ struct EditEventSheet: View {
         _startDate = State(initialValue: event.startDate ?? Date())
         _isAllDay = State(initialValue: event.isAllDay)
 
-        // 获取原始周期类型（需要从缓存中读取）
-        let context = EventCacheService.shared.context
+        // 获取原始周期类型（从缓存读取本体记录，occurrence 虚拟行复合 ID 已在快照查询内解析）
         var originalRec = RecurrenceType.none
         var snapshotValidity: ValidityPeriod? = nil
-        if let context = context {
-            let targetID = event.id
-            var descriptor = FetchDescriptor<CachedEvent>(
-                predicate: #Predicate { $0.eventID == targetID }
-            )
-            descriptor.fetchLimit = 1
-            if let cached = try? context.fetch(descriptor).first {
-                originalRec = cached.recurrenceType
-                _taskRecurrence = State(initialValue: cached.recurrenceType)
-                _taskPriority = State(initialValue: EventPriority(rawValue: cached.priority) ?? .none)
-                // 多级提醒 chips 初始选中：过滤 0 档（0 = 不提醒，即无选中态）
-                _taskReminderOffsets = State(initialValue: cached.reminderOffsets.filter { $0 > 0 })
-                if let hex = cached.eventColorHex {
-                    _taskColor = State(initialValue: EventColor(rawValue: hex))
-                }
-                // 智能跳过节假日初始值（AC-7：编辑面板可修改并保存）
-                _skipHolidays = State(initialValue: cached.skipHolidays)
-                // 有效期初值（spec AC-6，plan step 12）：任一端存在即视为已设置，控件态按端读取
-                if cached.validStartDate != nil || cached.validEndDate != nil {
-                    let period = ValidityPeriod(start: cached.validStartDate, end: cached.validEndDate)
-                    snapshotValidity = period
-                    // init 内须经 State(initialValue:) 赋初值（直接赋值 wrappedValue 需 self 完全初始化）
-                    _validityEnabled = State(initialValue: true)
-                    _validityHasStart = State(initialValue: cached.validStartDate != nil)
-                    _validityHasEnd = State(initialValue: cached.validEndDate != nil)
-                    if let s = cached.validStartDate { _validityStart = State(initialValue: s) }
-                    if let e = cached.validEndDate { _validityEnd = State(initialValue: e) }
-                }
+        if let cached = Self.backfillSnapshot(for: event.id) {
+            originalRec = cached.recurrenceType
+            _taskRecurrence = State(initialValue: cached.recurrenceType)
+            _taskPriority = State(initialValue: EventPriority(rawValue: cached.priority) ?? .none)
+            // 多级提醒 chips 初始选中：过滤 0 档（0 = 不提醒，即无选中态）
+            _taskReminderOffsets = State(initialValue: cached.reminderOffsets.filter { $0 > 0 })
+            if let hex = cached.eventColorHex {
+                _taskColor = State(initialValue: EventColor(rawValue: hex))
+            }
+            // 智能跳过节假日初始值（AC-7：编辑面板可修改并保存）
+            _skipHolidays = State(initialValue: cached.skipHolidays)
+            // 有效期初值（spec AC-6，plan step 12）：任一端存在即视为已设置，控件态按端读取
+            if cached.validStartDate != nil || cached.validEndDate != nil {
+                let period = ValidityPeriod(start: cached.validStartDate, end: cached.validEndDate)
+                snapshotValidity = period
+                // init 内须经 State(initialValue:) 赋初值（直接赋值 wrappedValue 需 self 完全初始化）
+                _validityEnabled = State(initialValue: true)
+                _validityHasStart = State(initialValue: cached.validStartDate != nil)
+                _validityHasEnd = State(initialValue: cached.validEndDate != nil)
+                if let s = cached.validStartDate { _validityStart = State(initialValue: s) }
+                if let e = cached.validEndDate { _validityEnd = State(initialValue: e) }
             }
         }
         self.originalRecurrence = originalRec
@@ -143,6 +149,7 @@ struct EditEventSheet: View {
                 FormRow(label: "周期") {
                     Picker("", selection: $taskRecurrence) {
                         Text("1次").tag(RecurrenceType.none)
+                        Text("不限").tag(RecurrenceType.unlimited)
                         Text("每天").tag(RecurrenceType.daily)
                         Text("每周").tag(RecurrenceType.weekly)
                         Text("每月").tag(RecurrenceType.monthly)

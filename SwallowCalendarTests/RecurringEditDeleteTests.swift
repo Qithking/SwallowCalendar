@@ -160,4 +160,52 @@ final class RecurringEditDeleteTests: XCTestCase {
         let remaining = try container.mainContext.fetch(descriptor)
         XCTAssertTrue(remaining.isEmpty)
     }
+
+    // MARK: - 编辑面板回填（bug: recurring-edit-sheet-mismatch）
+    // 列表传入 occurrence 虚拟行（复合 ID），EditEventSheet 回填查询须回查本体
+
+    /// occurrence 虚拟行（复合 ID）打开编辑：周期回填本体真实值，不落「1次」默认值
+    func testEditSheetBackfillsRecurrenceFromOccurrenceID() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        let d0 = date(2026, 10, 26, 9, 0)
+        try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-base",
+            startDate: d0,
+            recurrenceType: .daily
+        )
+
+        XCTAssertEqual(EditEventSheet.backfillSnapshot(for: occID("rec-base", d0))?.recurrenceType, .daily)
+    }
+
+    /// 新建可选「不限」周期：occurrence 行打开编辑须回填 unlimited（编辑 Picker 同样提供该选项）
+    func testEditSheetBackfillsUnlimitedFromOccurrenceID() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        let d0 = date(2026, 10, 26, 9, 0)
+        try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-base",
+            startDate: d0,
+            recurrenceType: .unlimited
+        )
+
+        XCTAssertEqual(EditEventSheet.backfillSnapshot(for: occID("rec-base", d0))?.recurrenceType, .unlimited)
+    }
+
+    /// 防回归对照：本体行（普通 ID）打开编辑，周期回填保持正常
+    func testEditSheetBackfillsRecurrenceFromBaseID() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        let d0 = date(2026, 10, 26, 9, 0)
+        try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-base",
+            startDate: d0,
+            recurrenceType: .daily
+        )
+
+        XCTAssertEqual(EditEventSheet.backfillSnapshot(for: "rec-base")?.recurrenceType, .daily)
+    }
 }
