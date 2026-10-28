@@ -190,5 +190,10 @@ struct EventTodoListView: View {
         .onChange(of: selectedDate) { _, _ in
             debouncedRefresh()
         }
+        // 4 视图同步（bug: four-view-todo-sync）：别处（桌面面板/菜单弹层/过期弹窗）
+        // 完成或编辑后经 .cachedEventsChanged 广播触发重载，与 pop/桌面面板同款链路
+        .onReceive(NotificationCenter.default.publisher(for: .cachedEventsChanged)) { _ in
+            debouncedRefresh()
+        }
     }
 }

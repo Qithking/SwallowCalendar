@@ -329,4 +329,43 @@ final class ReminderExpiredCandidatesTests: XCTestCase {
         let undated = try insertEvent(into: context, eventID: "e-undated", title: "无日期", startDate: nil)
         XCTAssertNil(undated.expiryTime)
     }
+
+    // MARK: - 弹窗显示期间外部变更同步（4 视图同步）
+
+    /// 过期弹窗快照与外部变更同步：别处完成后重查，已完成/已删除行移除，
+    /// 未完成行刷新为最新字段（编辑后的标题/时间同步显示）
+    func testRefreshedDisplayRowsRemovesCompletedAndDeletedRows() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        let context = container.mainContext
+        // occurrence 展示实例（base 复刻「早上上班」）
+        try insertEvent(
+            into: context,
+            eventID: "base-r",
+            title: "早上上班",
+            startDate: date(2026, 10, 28, 9, 0),
+            recurrenceType: .daily,
+            originStartDate: date(2026, 10, 24, 9, 0)
+        )
+        let occID = CachedEvent.makeOccurrenceID(baseID: "base-r", occurrence: date(2026, 10, 28, 9, 0))
+        // 普通未完成行 / 普通已完成行 / 已删除行
+        try insertEvent(into: context, eventID: "e-fresh", title: "未完成", startDate: date(2026, 10, 28, 8, 0))
+        try insertEvent(into: context, eventID: "e-done", title: "已办", startDate: date(2026, 10, 28, 7, 0), isCompleted: true)
+
+        let snapshot = [occID, "e-fresh", "e-done", "e-deleted"].map { id in
+            CachedEvent(eventID: id, title: "旧快照", startDate: date(2026, 10, 28, 0, 0), endDate: nil,
+                        isAllDay: false, calendarID: "t", calendarTitle: "t", calendarColorHex: "#000")
+        }
+
+        let refreshed = ReminderAlertService.refreshedDisplayRows(events: snapshot, context: context)
+
+        let ids = refreshed.map(\.eventID)
+        XCTAssertTrue(ids.contains(occID), "未完成 occurrence 实例保留")
+        XCTAssertTrue(ids.contains("e-fresh"), "未完成普通行保留")
+        XCTAssertFalse(ids.contains("e-done"), "别处已完成的行移除")
+        XCTAssertFalse(ids.contains("e-deleted"), "已删除的行移除")
+        // 保留行刷新为最新数据（不再是旧快照字段）
+        XCTAssertEqual(refreshed.first { $0.eventID == "e-fresh" }?.title, "未完成")
+        XCTAssertEqual(refreshed.first { $0.eventID == occID }?.title, "早上上班")
+    }
 }

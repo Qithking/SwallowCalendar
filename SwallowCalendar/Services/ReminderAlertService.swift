@@ -264,6 +264,27 @@ final class ReminderAlertService {
         }
     }
     
+    /// 弹窗显示期间外部变更同步（bug: four-view-todo-sync）：
+    /// 重查快照每行的当前状态——已完成/已删除的行移除（等效单条 removeRow），
+    /// 未完成行重建为最新字段（别处编辑后的标题/时间同步显示）。
+    /// occurrence 复合 ID 经 displayOccurrence（已完成/失效返回 nil），
+    /// 普通行直查主表
+    static func refreshedDisplayRows(events: [CachedEvent], context: ModelContext) -> [CachedEvent] {
+        events.compactMap { event -> CachedEvent? in
+            if CachedEvent.parseOccurrenceID(event.eventID) != nil {
+                return EventCacheService.shared.displayOccurrence(withID: event.eventID, context: context)
+            }
+            // #Predicate 宏内直接引用闭包参数会被捕获成 keypath 表达式，
+            // 提取局部常量转为 Value 捕获（与 displayOccurrence 同款）
+            let rowID = event.eventID
+            let descriptor = FetchDescriptor<CachedEvent>(
+                predicate: #Predicate { $0.eventID == rowID }
+            )
+            guard let fresh = try? context.fetch(descriptor).first, !fresh.isCompleted else { return nil }
+            return fresh
+        }
+    }
+
     /// 启动过期检查候选集（bug: startup-expired-popup-recurring-miss）：
     /// 循环 base 行（用户分类、游标或锚点早于窗口右界）替换为
     /// expandOccurrences 同源展开实例（窗口 [distantPast, upperBound]），

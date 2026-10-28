@@ -157,6 +157,18 @@ struct ReminderAlertView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         // Esc 键关闭弹窗
         .onExitCommand(perform: onDismiss)
+        // 4 视图同步：显示期间别处完成/编辑后重查快照，已完成/已删除行移除，
+        // 全部移除后自动关闭（与 removeRow 同语义）
+        .onReceive(NotificationCenter.default.publisher(for: .cachedEventsChanged)) { _ in
+            guard let context = EventCacheService.shared.context else { return }
+            displayedEvents = ReminderAlertService.refreshedDisplayRows(
+                events: displayedEvents,
+                context: context
+            )
+            if displayedEvents.isEmpty {
+                onDismiss()
+            }
+        }
     }
 
     /// 头部：状态图标 + 标题
