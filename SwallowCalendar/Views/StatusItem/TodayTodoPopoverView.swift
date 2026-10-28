@@ -67,6 +67,10 @@ struct TodayTodoPopoverView: View {
         .onReceive(NotificationCenter.default.publisher(for: .cachedEventsChanged)) { _ in
             reload()
         }
+        // countdown-overdue-color-sync：倒计时胶囊归零后重建行，红字「已过期」即时生效
+        .onReceive(NotificationCenter.default.publisher(for: .countdownExpired)) { _ in
+            reload()
+        }
     }
 
     // MARK: - 子视图

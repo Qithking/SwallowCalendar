@@ -248,6 +248,10 @@ struct DesktopTodoPanelView: View {
         .onReceive(NotificationCenter.default.publisher(for: .cachedEventsChanged)) { _ in
             reload()
         }
+        // countdown-overdue-color-sync：倒计时胶囊归零后重建行，红字「已过期」即时生效
+        .onReceive(NotificationCenter.default.publisher(for: .countdownExpired)) { _ in
+            reload()
+        }
         // 跨天重查当前档位（如「今天」档跨天后刷新）
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             reload()

@@ -69,4 +69,19 @@ final class CountdownFormatterTests: XCTestCase {
         XCTAssertEqual(CountdownFormatter.tier(remaining: 86400), .normal)
         XCTAssertEqual(CountdownFormatter.tier(remaining: 86400 * 365), .normal)
     }
+
+    // MARK: - 跨零边沿判定（countdown-overdue-color-sync：倒计时归零切「已过期」红字）
+
+    func testCrossedDeadlineEdgeDetection() {
+        // 正在倒计时 → 归零：跨零边沿，应广播切红
+        XCTAssertTrue(CountdownFormatter.crossedDeadline(wasCountingDown: true, remaining: -1))
+        XCTAssertTrue(CountdownFormatter.crossedDeadline(wasCountingDown: true, remaining: 0))
+        // 仍在倒计时：非边沿
+        XCTAssertFalse(CountdownFormatter.crossedDeadline(wasCountingDown: true, remaining: 1))
+        // 首次显示即已过期（onAppear 快照）：不广播，交给外层 isOverdue 快照渲染
+        XCTAssertFalse(CountdownFormatter.crossedDeadline(wasCountingDown: false, remaining: -1))
+        XCTAssertFalse(CountdownFormatter.crossedDeadline(wasCountingDown: false, remaining: 0))
+        // 首次显示且未到期：非边沿
+        XCTAssertFalse(CountdownFormatter.crossedDeadline(wasCountingDown: false, remaining: 10))
+    }
 }

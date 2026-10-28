@@ -360,9 +360,13 @@ struct CountdownTextView: View {
     let startDate: Date?
     let accentColorHex: String
     let eventID: String
-    
+
     @State private var countdownText: String = ""
     @State private var tier: CountdownFormatter.Tier = .normal
+    /// countdown-overdue-color-sync：本胶囊是否处于倒计时中（remaining>0 后置 true）。
+    /// 归零瞬间经 crossedDeadline 判定边沿广播 .countdownExpired，外层列表重建行后
+    /// isOverdue 快照翻转 → 红字「已过期」（胶囊停留在内部 @State，外层不可见，必须广播）
+    @State private var wasCountingDown = false
     @ObservedObject private var timerManager = CountdownTimerManager.shared
 
     var body: some View {
@@ -397,6 +401,11 @@ struct CountdownTextView: View {
             return
         }
         let remaining = start.timeIntervalSince(Date())
+        // 跨零边沿广播（onAppear 首算即已过期时 wasCountingDown=false → 不广播，交给外层快照）
+        if CountdownFormatter.crossedDeadline(wasCountingDown: wasCountingDown, remaining: remaining) {
+            NotificationCenter.default.post(name: .countdownExpired, object: nil)
+        }
+        wasCountingDown = remaining > 0
         countdownText = CountdownFormatter.formatCountdown(remaining: remaining)
         tier = CountdownFormatter.tier(remaining: remaining)
     }

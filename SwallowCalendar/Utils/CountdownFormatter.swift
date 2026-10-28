@@ -54,4 +54,13 @@ enum CountdownFormatter {
         case .normal: return Color(hex: accentHex)
         }
     }
+
+    /// 跨零边沿判定（countdown-overdue-color-sync）：
+    /// wasCountingDown = 本胶囊此前是否处于倒计时中；remaining = 当前剩余秒数。
+    /// 仅「倒计时中 → 归零」返回 true（跨过截止线的瞬间），用于触发一次外层刷新：
+    /// - onAppear 首算即已过期（wasCountingDown=false 且 remaining<=0）不广播，
+    ///   交给外层 isOverdue 快照渲染，避免列表重建风暴
+    static func crossedDeadline(wasCountingDown: Bool, remaining: TimeInterval) -> Bool {
+        wasCountingDown && remaining <= 0
+    }
 }

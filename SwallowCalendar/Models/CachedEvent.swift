@@ -301,6 +301,10 @@ extension CachedEvent {
 /// 消费方（状态栏徽标）收到后即时刷新，30s 定时器仅作兜底
 extension Notification.Name {
     static let cachedEventsChanged = Notification.Name("CachedEventsChanged")
+    /// countdown-overdue-color-sync：倒计时胶囊归零跨零边沿广播。
+    /// 挂倒计时胶囊的三个视图（主面板/桌面面板/菜单弹层）收到后重建行，
+    /// 外层 isOverdue 快照重新判定 → 胶囊切换为红字「已过期」
+    static let countdownExpired = Notification.Name("CountdownExpired")
 }
 
 // MARK: - 缓存服务
