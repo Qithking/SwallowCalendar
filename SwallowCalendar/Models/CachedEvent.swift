@@ -153,6 +153,13 @@ final class CachedEvent {
         }
     }
     
+    /// 过期时刻（弹窗降序排序键）：最早触发的 alertTime = startDate − 最大提醒提前量；
+    /// 未设提醒（offsets=[0]）即 startDate 本身；startDate 缺失返回 nil（排序垫底）
+    var expiryTime: Date? {
+        guard let start = startDate else { return nil }
+        return start.addingTimeInterval(TimeInterval(-(reminderOffsets.max() ?? 0) * 60))
+    }
+
     /// 编码多级偏移数组为持久化 JSON（nil/空 → nil，未设置多级语义）
     /// 供同步/中转模型比较与落库使用；提取端已去重升序，此处原样编码
     static func encodeOffsetsJSON(_ offsets: [Int]?) -> String? {
@@ -511,7 +518,24 @@ final class EventCacheService {
             validEndDate: base.validEndDate
         )
     }
-    
+
+    /// 复合 occurrence ID 解析为展示实例（bug: startup-expired-popup-recurring-miss）：
+    /// occurrence 实例未落库，按 eventID 直查主表必 miss——回查本体后重建展示实例；
+    /// 普通 eventID（无复合标记）、本体缺失或 occurrence 已完成返回 nil（调用方按失效处理）
+    func displayOccurrence(withID eventID: String, context: ModelContext) -> CachedEvent? {
+        guard let parts = CachedEvent.parseOccurrenceID(eventID) else { return nil }
+        let baseID = parts.baseID
+        let descriptor = FetchDescriptor<CachedEvent>(
+            predicate: #Predicate { $0.eventID == baseID }
+        )
+        guard let base = try? context.fetch(descriptor).first else { return nil }
+        let isDone = base.completedOccurrenceDates.contains { $0 == parts.occurrence }
+        guard !isDone else { return nil }
+        let start = base.startDate ?? parts.occurrence
+        let duration = (base.endDate ?? start).timeIntervalSince(start)
+        return makeOccurrenceInstance(of: base, occurrence: parts.occurrence, duration: duration, isCompleted: false)
+    }
+
     private func filterEvents(_ events: [CachedEvent], from startDate: Date, to endDate: Date, calendars: [EKCalendar]?, includeNoDateReminders: Bool) -> [CachedEvent] {
         var filtered = events.filter { event in
             guard let start = event.startDate, let end = event.endDate else {

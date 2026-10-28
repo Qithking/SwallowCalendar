@@ -125,7 +125,11 @@ struct ReminderAlertView: View {
         self.onCompleteAll = onCompleteAll
         self.onEventComplete = onEventComplete
         self.onSnooze = onSnooze
-        _displayedEvents = State(initialValue: events)
+        // 过期待办按「过期时间」降序展示（最近过期的在最上面）：
+        // 过期时刻 = startDate − 最大提醒提前量（expiryTime），非 startDate 本身
+        _displayedEvents = State(initialValue: events.sorted {
+            ($0.expiryTime ?? .distantPast) > ($1.expiryTime ?? .distantPast)
+        })
     }
 
     // V-18：直接读共享设置的主题色（弹窗为独立窗口，无 appSettings 环境可注入）

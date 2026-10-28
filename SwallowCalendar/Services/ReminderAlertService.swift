@@ -155,7 +155,18 @@ final class ReminderAlertService {
         )
 
         do {
-            let allUserEvents = try context.fetch(baseDescriptor)
+            var allUserEvents = try context.fetch(baseDescriptor)
+            // bug: startup-expired-popup-recurring-miss：循环 base 行 startDate 只是「下一期」
+            // 游标，被越过的未完成历史实例直查漏报（主面板经锚点展开可见）——启动过期
+            // 检查把 base 行替换为同源展开实例，与主面板判定源对齐（仅启动路径，常规
+            // 60s 轮询窗口语义不变）
+            if includeExpired {
+                allUserEvents = Self.expiredCheckCandidates(
+                    rawEvents: allUserEvents,
+                    upperBound: fetchUpperBound,
+                    context: context
+                )
+            }
 
             // 步骤 8 多级扫描：按 offsets 各级生成 alertTime，逐级窗口判定，
             // 产出 (事件, 本次应触发的各级 alertTime) 对；同一事件多级同时到期合并为一条
@@ -253,6 +264,43 @@ final class ReminderAlertService {
         }
     }
     
+    /// 启动过期检查候选集（bug: startup-expired-popup-recurring-miss）：
+    /// 循环 base 行（用户分类、游标或锚点早于窗口右界）替换为
+    /// expandOccurrences 同源展开实例（窗口 [distantPast, upperBound]），
+    /// 普通行原样保留，已完成历史实例剔除不弹窗。
+    /// 注意不得按 base.isCompleted 过滤循环行（bug 第二轮）：旧版本完成操作
+    /// 会置位 base 行且不写完成历史，主面板 expandOccurrences 也不看该位——
+    /// 按它过滤会与主面板判定源不一致，实例级 isCompleted 才是判定标准
+    static func expiredCheckCandidates(rawEvents: [CachedEvent], upperBound: Date, context: ModelContext) -> [CachedEvent] {
+        let userCategory = EventCategory.user.rawValue
+        let noneRaw = RecurrenceType.none.rawValue
+        let distantFuture = Date.distantFuture
+        let descriptor = FetchDescriptor<CachedEvent>(
+            predicate: #Predicate {
+                $0.categoryRaw == userCategory &&
+                $0.recurrenceTypeRaw != nil &&
+                $0.recurrenceTypeRaw != noneRaw &&
+                (($0.startDate ?? distantFuture) < upperBound ||
+                 ($0.originStartDate ?? distantFuture) < upperBound)
+            }
+        )
+        guard let recurringBases = try? context.fetch(descriptor), !recurringBases.isEmpty else {
+            return rawEvents
+        }
+        let baseIDs = Set(recurringBases.map(\.eventID))
+        var result = rawEvents.filter { !baseIDs.contains($0.eventID) }
+        for base in recurringBases {
+            let instances = EventCacheService.shared.expandOccurrences(
+                of: base,
+                windowStart: .distantPast,
+                windowEnd: upperBound,
+                context: context
+            )
+            result.append(contentsOf: instances.filter { !$0.isCompleted })
+        }
+        return result
+    }
+
     /// 显示合并的过期事项提醒弹窗（自定义 SwiftUI 窗口，替代系统 NSAlert）
     /// G4：单条完成接 markAsCompleted、稍后提醒接 snooze
     private func showCombinedAlert(for events: [CachedEvent], isExpired: Bool) {
@@ -330,7 +378,10 @@ final class ReminderAlertService {
             let descriptor = FetchDescriptor<CachedEvent>(
                 predicate: #Predicate { $0.eventID == record.eventID }
             )
-            if let event = try? context.fetch(descriptor).first, !event.isCompleted {
+            // 复合 occurrence ID 实例未落库：回查本体重建展示实例（已完成实例被剔除）
+            let resolved = try? context.fetch(descriptor).first
+                ?? EventCacheService.shared.displayOccurrence(withID: record.eventID, context: context)
+            if let event = resolved, !event.isCompleted {
                 triggered.append(event)
                 // snooze 重提醒写入新 AlertKey（fireDate 时刻）；5 分钟重提醒机制照常运行，
                 // 两窗口重叠致同事项短时重复提醒由合并弹窗替换机制收敛为单窗（已定案行为）
@@ -358,7 +409,17 @@ final class ReminderAlertService {
         )
 
         do {
-            if let event = try context.fetch(descriptor).first {
+            // 直查主表；复合 occurrence ID 实例未落库必 miss——回查本体取 isReminder，
+            // 仍以复合 ID 走 toggleEventCompleted（内部路由 occurrence 级完成）
+            let resolved = try context.fetch(descriptor).first
+                ?? CachedEvent.parseOccurrenceID(eventID).flatMap { parts -> CachedEvent? in
+                    let baseID = parts.baseID
+                    let baseDescriptor = FetchDescriptor<CachedEvent>(
+                        predicate: #Predicate { $0.eventID == baseID }
+                    )
+                    return try? context.fetch(baseDescriptor).first
+                }
+            if let event = resolved {
                 // 使用 CalendarService 的双向同步方法（同时更新 EventKit 和 SwiftData）
                 await CalendarService.shared.toggleEventCompleted(
                     eventID: eventID,
