@@ -85,10 +85,13 @@ final class ReminderAlertService {
         // modelContainer 已不再需要，保留方法以兼容调用方
     }
 
-    /// 测试专用：复位启动检查标志与已提醒缓存（@testable 可见，产线不调用）
+    /// 测试专用：复位启动检查标志、已提醒缓存与检查窗口下界（@testable 可见，产线不调用）
     func resetForTesting() {
         hasCompletedStartupExpiredCheck = false
         lastAlertedEventIDs = []
+        // 测试隔离：连同内存中的 lastCheckTime 一并复位，
+        // 否则前一个用例遗留值会抬高下一个用例的窗口下界导致漏判
+        lastCheckTime = nil
     }
     
     /// 启动提醒检查
@@ -123,6 +126,11 @@ final class ReminderAlertService {
         AppLogger.reminder.info("数据同步后过期事项检查完成")
     }
     
+    /// 测试辅助：跑一次常规定时检查（bug: due-reminder-zero-offset-miss，@testable 可见）
+    func runDueCheckForTesting() async {
+        await checkDueEvents()
+    }
+
     /// 停止提醒检查
     func stopMonitoring() {
         timer?.invalidate()
@@ -210,12 +218,14 @@ final class ReminderAlertService {
                     }
                 } else {
                     // 常规定时检查：逐级窗口判定 [windowStart, now]；
-                    // 未设置提醒（无正档位）的事项不弹窗
+                    // 0 档（准点提醒/未设置提醒 fallback）视为准点档 alertTime=startDate
+                    // （bug: due-reminder-zero-offset-miss：与启动检查「未设置提醒过期弹 startDate」对齐，
+                    // 已弹过的键经 hasAlertedKey 去重不重复弹）
                     // B-14：窗口下界用持久化的上次检查时间——应用挂起/睡眠超 90 秒后，
                     // 固定 90 秒窗口会滤掉挂起期间到期的事项导致漏提醒；
                     // 无记录时回退 90 秒窗口（配合 60 秒定时器确保不遗漏）
                     alertTimes = offsets.compactMap { offset in
-                        guard offset > 0 else { return nil }
+                        guard offset >= 0 else { return nil }
                         let t = startDate.addingTimeInterval(TimeInterval(-offset * 60))
                         return (t <= now && t >= windowStart) ? t : nil
                     }

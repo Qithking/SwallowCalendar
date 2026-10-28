@@ -900,8 +900,8 @@ final class EventCacheService {
                 // 步骤7：变更检测同时比较 offsets（多级偏移随 EK alarm 数组带出）
                 let newOffsetsJSON = CachedEvent.encodeOffsetsJSON(reminder.reminderOffsets)
                 let offsetsChanged = existing.reminderOffsetsJSON != newOffsetsJSON
-                // 有变更才更新，避免不必要的写入
-                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes || offsetsChanged {
+                // 有变更才更新，避免不必要的写入（recurrenceType：档位可能随物化历史出现而推断变化）
+                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes || offsetsChanged || existing.recurrenceType != reminder.recurrenceType {
                     if existing.isCompleted != newIsCompleted {
                         AppLogger.cache.warning("syncReminders isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID)")
                     }
@@ -912,6 +912,8 @@ final class EventCacheService {
                     // 双写同源一致值（JSON 与 minutes 均来自 EK，本就满足 max 不变量）
                     existing.reminderOffsetsJSON = newOffsetsJSON
                     existing.reminderMinutes = newReminderMinutes
+                    // bug: ek-recurrence-materialization-mirror——系统循环提醒档位以 EK 映射为准
+                    existing.recurrenceType = reminder.recurrenceType
                     existing.lastUpdated = Date()
                 }
                 // 存量循环提醒幂等回填历史锚点（同 syncEvents，bug: recurring-past-occurrence-invisible）
@@ -938,6 +940,9 @@ final class EventCacheService {
                     isReminder: true,
                     isCompleted: reminder.isCompleted,
                     priority: 0,
+                    // bug: ek-recurrence-materialization-mirror——同步写入 EK 映射档位，
+                    // 系统侧「每小时」不再显示「1次」
+                    recurrenceType: reminder.recurrenceType,
                     reminderMinutes: reminder.reminderMinutes,
                     reminderOffsetsJSON: CachedEvent.encodeOffsetsJSON(reminder.reminderOffsets)
                 )

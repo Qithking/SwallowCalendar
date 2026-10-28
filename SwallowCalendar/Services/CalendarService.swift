@@ -182,12 +182,31 @@ final class CalendarService {
 
         return await withCheckedContinuation { continuation in
             eventStore.fetchReminders(matching: predicate) { reminders in
-                let mappedReminders = reminders?.compactMap { reminder -> CalendarEvent? in
+                let all = reminders ?? []
+                // bug: ek-recurrence-materialization-mirror——Apple 对循环提醒按「发生」物化为
+                // 独立 EKReminder，历史发生以已完成态落库。锚集合 = 带规则的未完成条目，
+                // 同 title 已完成条目即物化历史，不入库（syncReminders 按返回集差集自动删缓存）
+                let anchorTitles = Set(
+                    all.filter { !$0.isCompleted && !($0.recurrenceRules ?? []).isEmpty }
+                       .compactMap { $0.title }
+                )
+                // 同 title 已完成历史到期序列：EK 无 hourly 表达（每小时/每天均 daily），
+                // 借物化历史间隔推断真实档位
+                let historyDueDates = Self.completedDueDatesByTitle(from: all)
+                let mappedReminders = all.compactMap { reminder -> CalendarEvent? in
                     // 过滤已完成项（根据参数决定）
                     if !includeCompleted && reminder.isCompleted {
                         return nil
                     }
-                    
+                    // 物化历史不入库（锚条目法）
+                    if Self.isMaterializedHistory(
+                        isCompleted: reminder.isCompleted,
+                        title: reminder.title ?? "",
+                        anchorTitles: anchorTitles
+                    ) {
+                        return nil
+                    }
+
                     // 判断是否有到期时间
                     if let dueDate = reminder.dueDateComponents?.date {
                         // 有到期时间的提醒：按照日期范围过滤
@@ -197,12 +216,18 @@ final class CalendarService {
                         if let end = to, dueDate > end {
                             return nil
                         }
-                        return self.mapReminderToCalendarEvent(reminder, dueDate: dueDate)
+                        return self.mapReminderToCalendarEvent(
+                            reminder, dueDate: dueDate,
+                            historyDueDates: historyDueDates[reminder.title ?? ""] ?? []
+                        )
                     } else {
                         // 没有到期时间的提醒：不受日期范围限制，直接返回
-                        return self.mapReminderToCalendarEvent(reminder, dueDate: nil)
+                        return self.mapReminderToCalendarEvent(
+                            reminder, dueDate: nil,
+                            historyDueDates: historyDueDates[reminder.title ?? ""] ?? []
+                        )
                     }
-                } ?? []
+                }
 
                 continuation.resume(returning: mappedReminders)
             }
@@ -221,7 +246,13 @@ final class CalendarService {
     }
 
     /// 将 EKReminder 转换为 CalendarEvent
-    private func mapReminderToCalendarEvent(_ reminder: EKReminder, dueDate: Date?) -> CalendarEvent {
+    /// - Parameters:
+    ///   - historyDueDates: 同 title 已完成历史到期序列（daily 歧义档位推断上下文）
+    private func mapReminderToCalendarEvent(
+        _ reminder: EKReminder,
+        dueDate: Date?,
+        historyDueDates: [Date] = []
+    ) -> CalendarEvent {
         let isAllDay: Bool
         if dueDate != nil {
             isAllDay = reminder.dueDateComponents?.hour == nil && reminder.dueDateComponents?.minute == nil
@@ -241,11 +272,59 @@ final class CalendarService {
             isCompleted: reminder.isCompleted,
             priority: 0,
             isReminder: true,
-            recurrenceType: .none,
+            recurrenceType: Self.mapRecurrenceRule(
+                reminder.recurrenceRules?.first,
+                historyDueDates: historyDueDates
+            ),
             reminderMinutes: Self.extractReminderMinutes(from: reminder.alarms),
             reminderOffsets: Self.extractReminderOffsets(from: reminder.alarms),
             eventColorHex: nil
         )
+    }
+
+    /// EK 规则 → 应用档位（bug: ek-recurrence-materialization-mirror）
+    /// - EK 无 hourly 表达：每小时与每天同为 daily/interval=1，freqRaw=0 为歧义档，
+    ///   借同 title 物化历史到期间隔众数推断（1h → .hourly，否则 .daily；无历史 fallback .daily）
+    /// - weekly/monthly/yearly 直接映射；应用自建提醒不写规则，映射恒 .none 不受影响
+    static func mapRecurrenceRule(_ rule: EKRecurrenceRule?, historyDueDates: [Date]) -> RecurrenceType {
+        guard let rule else { return .none }
+        switch rule.frequency {
+        case .weekly: return .weekly
+        case .monthly: return .monthly
+        case .yearly: return .yearly
+        case .daily: return inferDailyGrade(historyDueDates: historyDueDates)
+        @unknown default: return .none
+        }
+    }
+
+    /// daily 歧义档推断：相邻到期间隔众数为 1 小时 → 每小时，否则每天
+    static func inferDailyGrade(historyDueDates: [Date]) -> RecurrenceType {
+        let sorted = historyDueDates.sorted()
+        guard sorted.count >= 2 else { return .daily }
+        var gapCounts: [TimeInterval: Int] = [:]
+        for i in 1..<sorted.count {
+            let gap = sorted[i].timeIntervalSince(sorted[i - 1])
+            gapCounts[gap, default: 0] += 1
+        }
+        let modeGap = gapCounts.max { $0.value < $1.value }?.key ?? 0
+        return modeGap == 3600 ? .hourly : .daily
+    }
+
+    /// 物化历史判定（锚条目法）：已完成 && title 属于某条带规则未完成锚条目
+    /// → Apple 物化的历史发生，不入库；应用自建提醒无 EK 规则，永不为锚
+    static func isMaterializedHistory(isCompleted: Bool, title: String, anchorTitles: Set<String>) -> Bool {
+        isCompleted && anchorTitles.contains(title)
+    }
+
+    /// 全量条目按 title 归组已完成到期序列（物化历史间隔推断数据源）
+    private static func completedDueDatesByTitle(from reminders: [EKReminder]) -> [String: [Date]] {
+        var result: [String: [Date]] = [:]
+        for reminder in reminders where reminder.isCompleted {
+            if let due = reminder.dueDateComponents?.date, let title = reminder.title {
+                result[title, default: []].append(due)
+            }
+        }
+        return result
     }
 
     /// 从 EKAlarm 数组中提取最早的提醒提前分钟数
@@ -451,7 +530,7 @@ final class CalendarService {
             case .weekly: freq = .weekly
             case .monthly: freq = .monthly
             case .yearly: freq = .yearly
-            case .none, .custom: freq = .daily
+            case .none, .custom, .hourly: freq = .daily
             }
             let rule = EKRecurrenceRule(recurrenceWith: freq, interval: 1, end: nil)
             event.addRecurrenceRule(rule)
@@ -1406,7 +1485,8 @@ extension CalendarService {
                 return chineseCalendar.date(byAdding: .month, value: 1, to: date)
             case .yearly:
                 return chineseCalendar.date(byAdding: .year, value: 1, to: date)
-            case .none, .custom:
+            case .none, .custom, .hourly:
+                // .hourly 不虚拟展开（bug: ek-recurrence-materialization-mirror 防双份）
                 return nil
             }
         }
@@ -1421,7 +1501,7 @@ extension CalendarService {
             return Calendar.current.date(byAdding: .month, value: 1, to: date)
         case .yearly:
             return Calendar.current.date(byAdding: .year, value: 1, to: date)
-        case .none, .custom:
+        case .none, .custom, .hourly:
             return nil
         }
     }
@@ -1441,7 +1521,7 @@ extension CalendarService {
                 return chineseCalendar.date(byAdding: .month, value: -1, to: date)
             case .yearly:
                 return chineseCalendar.date(byAdding: .year, value: -1, to: date)
-            case .none, .custom:
+            case .none, .custom, .hourly:
                 return nil
             }
         }
@@ -1454,7 +1534,7 @@ extension CalendarService {
             return Calendar.current.date(byAdding: .month, value: -1, to: date)
         case .yearly:
             return Calendar.current.date(byAdding: .year, value: -1, to: date)
-        case .none, .custom:
+        case .none, .custom, .hourly:
             return nil
         }
     }
@@ -1525,7 +1605,7 @@ extension CalendarService {
                 currentDate = nextAnchoredMonthlyDate(from: currentDate, anchorDay: anchorDay) ?? currentDate
             case .yearly:
                 currentDate = Calendar.current.date(byAdding: .year, value: 1, to: currentDate) ?? currentDate
-            case .none, .custom:
+            case .none, .custom, .hourly:
                 // B-32：无推进语义，直接返回避免 while 死循环（date <= now 时循环条件恒真）
                 return currentDate
             }

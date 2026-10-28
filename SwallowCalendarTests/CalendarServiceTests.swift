@@ -44,7 +44,7 @@ class CalendarServiceTests: XCTestCase {
                 tempDate = calendar.date(byAdding: .month, value: 1, to: tempDate) ?? tempDate
             case .yearly:
                 tempDate = calendar.date(byAdding: .year, value: 1, to: tempDate) ?? tempDate
-            case .none, .custom:
+            case .none, .custom, .hourly:
                 break
             }
         }
