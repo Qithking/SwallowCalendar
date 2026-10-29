@@ -243,6 +243,116 @@ final class EventExpansionTests: XCTestCase {
         XCTAssertLessThanOrEqual(results.count, 4001)
     }
 
+    // MARK: - 展开起点对齐（bug: reminder-starved-by-badge-expansion）
+
+    /// 古老锚点每天循环应展开到当前窗口（对齐起点消除锚点→窗口间无产出推进）：
+    /// 修复前从 1926 逐次推进 4000 次截断在 1936 年附近，窗口内 0 实例（RED）
+    func testAncientDailyAnchorExpandsToCurrentWindow() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-ancient-daily",
+            startDate: date(1926, 1, 1, 9, 0)
+        )
+        let (start, end) = dayWindow(2026, 10, 24)
+        let results = EventCacheService.shared.getEvents(from: start, to: end)
+
+        XCTAssertEqual(results.count, 1, "古老锚点每天循环应在窗口内展开当天实例")
+        XCTAssertEqual(
+            CachedEvent.parseOccurrenceID(results.first?.eventID ?? "")?.occurrence,
+            date(2026, 10, 24, 9, 0),
+            "对齐跳转后的相位必须与逐次推进序列完全一致"
+        )
+    }
+
+    /// 古老锚点每周循环同理（修复前 4000 周截断在 2002 年附近）
+    func testAncientWeeklyAnchorExpandsToCurrentWindow() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-ancient-weekly",
+            startDate: date(1926, 1, 1, 9, 0),
+            recurrenceType: .weekly
+        )
+        let (start, end) = dayWindow(2026, 10, 24, days: 7)
+        let results = EventCacheService.shared.getEvents(from: start, to: end)
+
+        XCTAssertEqual(results.count, 1, "古老锚点每周循环应在 7 天窗口内展开 1 个周实例")
+        // 相位时间保持锚点的 09:00（对齐不漂移）；具体周几由 1926-01-01 的 weekday 决定
+        let occurrence = CachedEvent.parseOccurrenceID(results.first?.eventID ?? "")?.occurrence
+        XCTAssertEqual(Calendar.current.component(.hour, from: occurrence ?? Date()), 9, "对齐跳转不得漂移相位时间")
+        if let occurrence {
+            XCTAssertTrue(occurrence >= start && occurrence < end, "周实例应落在窗口内")
+        }
+    }
+
+    /// 古老锚点 + 完成历史：窗口内完成行（① 独家）与未完成行（② 展开）共 3 行，
+    /// 修复前 ② 截断仅剩完成行（RED），修复后相位精确不重复
+    func testAncientAnchorKeepsCompletionHistoryAndPhases() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-ancient-completed",
+            startDate: date(1926, 1, 1, 9, 0),
+            completed: [date(2026, 10, 23, 9, 0)]
+        )
+        let (start, end) = dayWindow(2026, 10, 23, days: 3)
+        let results = EventCacheService.shared.getEvents(from: start, to: end)
+
+        XCTAssertEqual(results.count, 3, "窗口 [10-23, 10-26)：10-23 完成历史行 + 10-24/25 未完成行")
+        let completedRows = results.filter { $0.isCompleted }
+        XCTAssertEqual(completedRows.count, 1, "仅完成历史日期产出已完成行")
+        XCTAssertEqual(
+            CachedEvent.parseOccurrenceID(completedRows.first?.eventID ?? "")?.occurrence,
+            date(2026, 10, 23, 9, 0)
+        )
+    }
+
+    /// monthly 不做对齐（月末取整累积语义）：1-31 逐次 +1 月得 2-28→3-28…，
+    /// 批量月差跳转会得不同序列（10-31）——本测试锁死取整累积行为不变
+    func testMonthlyExpansionKeepsCumulativeRounding() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-monthend",
+            startDate: date(2026, 1, 31, 9, 0),
+            recurrenceType: .monthly
+        )
+        let (start, end) = dayWindow(2026, 10, 25, days: 7)
+        let results = EventCacheService.shared.getEvents(from: start, to: end)
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(
+            CachedEvent.parseOccurrenceID(results.first?.eventID ?? "")?.occurrence,
+            date(2026, 10, 28, 9, 0),
+            "monthly 序列保持逐次取整累积（1-31→2-28→…→10-28），不做批量月差对齐"
+        )
+    }
+
+    /// 近锚点场景对齐不破坏行为：k 较小（≥1）时回退一周期后推进，
+    /// 窗口内实例与逐次推进完全一致
+    func testNearAnchorAlignedEquivalence() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-near",
+            startDate: date(2026, 10, 20, 9, 0)
+        )
+        let (start, end) = dayWindow(2026, 10, 24, days: 2)
+        let results = EventCacheService.shared.getEvents(from: start, to: end)
+
+        XCTAssertEqual(results.count, 2)
+        XCTAssertEqual(
+            Set(results.compactMap { CachedEvent.parseOccurrenceID($0.eventID)?.occurrence }),
+            [date(2026, 10, 24, 9, 0), date(2026, 10, 25, 9, 0)]
+        )
+    }
+
     // MARK: - 历史锚点 originStartDate（bug: recurring-past-occurrence-invisible）
 
     /// 完成推进把游标（startDate）前移后，被越过的历史未完成实例应保持可见

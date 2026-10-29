@@ -21,6 +21,10 @@ final class StatusBarIconManager {
 
     private var refreshTimer: Timer?
 
+    /// 倒计时徽章数据缓存（bug: reminder-starved-by-badge-expansion 配套节流）：
+    /// 秒级 tick 命中缓存纯计算重绘不查库，查库降频到分钟边界/脏标记驱动
+    private var countdownCache = CountdownBadgeCache()
+
     /// V-19：日期图标生成时的"当天零点"标记，用于按日短路——
     /// 实心/描边日期图标一天内内容不变，同日内定时触发的重绘直接跳过，跨天才重新渲染
     private var iconGenerationDate: Date?
@@ -52,8 +56,16 @@ final class StatusBarIconManager {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.updateIcon()
+            self?.handleCachedEventsChanged()
         }
+    }
+
+    /// 缓存变更（D2/G7v2）：置脏标记并立即重绘——徽章路径经倒计时缓存节流，
+    /// 脏标记使本次 updateIcon 恰好重查一次；同步风暴期间高频通知合并为
+    /// 「置脏 + 每 tick 至多一次查询」（原实现每次通知都全量查库）
+    private func handleCachedEventsChanged() {
+        countdownCache.markDirty()
+        updateIcon()
     }
 
     /// 绑定 statusItem 按钮（由 AppDelegate 在创建 statusItem 后调用）
@@ -93,12 +105,16 @@ final class StatusBarIconManager {
     private func renderCountdownBadge(settings: AppSettings) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            guard let text = Self.latestCountdownText() else {
+            let now = Date()
+            // 配套节流（bug: reminder-starved-by-badge-expansion）：同一分钟内
+            // 重复 tick 命中缓存纯计算重绘，不查库；跨分钟或脏标记才重查
+            guard let start = self.countdownCache.nearestStart(now: now, query: { Self.nearestCountdownStart(now: now) }) else {
                 // 无最近未完成事项：回退默认图标
                 let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
                 self.currentIcon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor, cache: self.iconCache)
                 return
             }
+            let text = CountdownFormatter.formatCountdown(remaining: start.timeIntervalSince(now))
             // 徽标外观与「菜单栏图标」样式逐项配合（实心→实心、描边→描边、日历→无背景、自定义格式→跟随自定义样式）
             let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
             let badgeStyle = settings.iconStyle.badgeStyle(customFormatStyle: settings.customFormatStyle)
@@ -106,19 +122,27 @@ final class StatusBarIconManager {
         }
     }
 
-    /// D2：取最近未完成用户事项的倒计时文案（nil = 无可显示事项）
+    /// D2：取最近未完成用户事项的开始时间（nil = 无可显示事项）——查库核心
     /// 复用列表同款展开链路（bug: badge-recurring-task-invisible）：
     /// 循环任务 base.startDate 为过去首实例，直接查主表会被 startDate > now 排除，
     /// 而未来 occurrence 实例未落库——getEvents 在窗口内展开循环任务后统一返回
     @MainActor
-    static func latestCountdownText(now: Date = Date()) -> String? {
+    static func nearestCountdownStart(now: Date = Date()) -> Date? {
         let upperBound = now.addingTimeInterval(365 * 86400)
         let events = EventCacheService.shared.getEvents(from: now, to: upperBound)
         // getEvents 已按 startDate 升序返回；跳过节假日/有效期过滤由展开链路与列表保持一致
         guard let nearest = events.first(where: {
             $0.category == .user && !$0.isCompleted && ($0.startDate ?? .distantPast) > now
         }) else { return nil }
-        return CountdownFormatter.formatCountdown(remaining: nearest.startDate!.timeIntervalSince(now))
+        return nearest.startDate
+    }
+
+    /// D2：取最近未完成用户事项的倒计时文案（nil = 无可显示事项）
+    /// 文案计算基于 nearestCountdownStart，语义与拆分前一致（测试沿用）
+    @MainActor
+    static func latestCountdownText(now: Date = Date()) -> String? {
+        guard let start = nearestCountdownStart(now: now) else { return nil }
+        return CountdownFormatter.formatCountdown(remaining: start.timeIntervalSince(now))
     }
 
     func updateIconAndRestartTimer() {
@@ -296,6 +320,32 @@ final class StatusBarIconManager {
 
     private static func renderCustomFormatIcon(format: String, style: AppSettings.CustomFormatStyle, iconColor: NSColor) -> NSImage {
         BadgeTextRenderer.render(customFormatter(for: format).string(from: Date()), style: style, iconColor: iconColor)
+    }
+}
+
+// MARK: - 倒计时徽章数据缓存
+
+/// 倒计时徽章查询节流缓存（bug: reminder-starved-by-badge-expansion 配套）：
+/// 秒级 tick 只用缓存的最近事项日期纯计算重绘，查库降频到分钟边界 + 脏标记驱动；
+/// 无事项状态（nil）同样缓存，避免无事项时每秒空查。值类型便于单测注入 query 计数
+struct CountdownBadgeCache {
+    private(set) var nearestStart: Date?
+    private(set) var isDirty = false
+    private var queriedMinute: Int = -1
+
+    /// 缓存变更通知置脏：下个 tick 强制重查（高频通知天然防抖合并）
+    mutating func markDirty() { isDirty = true }
+
+    /// 取最近事项开始时间：同一分钟且未置脏时直接命中缓存，否则重查并记录
+    /// - Parameter query: 查库闭包（注入便于测试统计查询次数）
+    mutating func nearestStart(now: Date, query: () -> Date?) -> Date? {
+        let minute = Int(now.timeIntervalSince1970 / 60)
+        if isDirty || minute != queriedMinute {
+            nearestStart = query()
+            queriedMinute = minute
+            isDirty = false
+        }
+        return nearestStart
     }
 }
 

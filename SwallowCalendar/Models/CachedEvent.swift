@@ -434,6 +434,18 @@ final class EventCacheService {
         // 若序列跟随游标，被越过的历史未完成实例将永久不可见；min 兜底异常数据
         // （originStart 晚于游标）不产生空档；nil（存量未回填）回退游标展开
         var occ = min(base.originStartDate ?? baseStart, baseStart)
+        // 起点对齐（bug: reminder-starved-by-badge-expansion）：日加法族（每天/每周）
+        // 从锚点逐次推进到窗口的迭代数与锚点年龄成正比，全部为无产出的空转——
+        // 用整除跳转直接落到 ≤ windowStart 的最近相位再回退一个周期；回退保证
+        // 「occ < windowStart 但 instanceEnd > windowStart」的跨窗口长实例不遗漏
+        // （回退点之前的实例其 instanceEnd 必 ≤ windowStart，本就无产出）。
+        // 月/年（取整累积）/农历/锚点贴近窗口时不对齐，保持逐次推进行为零变化
+        if let aligned = CalendarService.alignedExpansionStart(
+            origin: occ, recurrenceType: base.recurrenceType, isLunar: base.isLunar, windowStart: windowStart),
+           let steppedBack = CalendarService.previousOccurrence(before: aligned, recurrenceType: base.recurrenceType, isLunar: base.isLunar),
+           steppedBack >= occ {
+            occ = steppedBack
+        }
         var iterations = 0
         while occ < windowEnd {
             // 有效期结束端之外（闭区间端点之后）全部越界，提前退出

@@ -1565,6 +1565,39 @@ extension CalendarService {
         }
     }
 
+    /// 展开起点对齐（bug: reminder-starved-by-badge-expansion）：
+    /// expandOccurrences 从锚点逐次推进到窗口的开销与锚点年龄成正比（31 年前锚点
+    /// 的每天循环 = 1.1 万次无产出推进），状态栏徽章每秒展开把主线程占满，提醒
+    /// 检查 Timer 被饿死——本函数用日历单位整除直接跳到「≤ windowStart 的最近
+    /// 相位」，调用方回退一个周期后即可跳过全部无产出推进。
+    /// 仅适用日加法族（daily/unlimited/weekly）：nextOccurrence 对该族用
+    /// Calendar.date(byAdding: day/weekOfYear) 单位加法，整除跳转与逐次推进产生
+    /// 完全相同的相位序列（completedOccurrenceDates 的 epoch 精确匹配依赖此）；
+    /// monthly/yearly 存在月末取整累积（1-31 逐次 +1 月与一次 +N 月结果不同）、
+    /// 农历无固定数值周期——均返回 nil 保持逐次推进（其锚点年龄成本本就可忽略）。
+    /// 锚点已贴近窗口（k < 1）或窗口早于锚点时返回 nil，调用方零变化回退
+    static func alignedExpansionStart(origin: Date, recurrenceType: RecurrenceType, isLunar: Bool, windowStart: Date) -> Date? {
+        guard !isLunar else { return nil }
+        let calendar = Calendar.current
+        switch recurrenceType {
+        case .unlimited, .daily:
+            let days = calendar.dateComponents([.day], from: origin, to: windowStart).day ?? 0
+            guard days >= 1,
+                  let aligned = calendar.date(byAdding: .day, value: days, to: origin),
+                  aligned < windowStart else { return nil }
+            return aligned
+        case .weekly:
+            // 周期数按天数差整除计算，跳转与 nextOccurrence 同用 .weekOfYear 加法保持同源
+            let weeks = (calendar.dateComponents([.day], from: origin, to: windowStart).day ?? 0) / 7
+            guard weeks >= 1,
+                  let aligned = calendar.date(byAdding: .weekOfYear, value: weeks, to: origin),
+                  aligned < windowStart else { return nil }
+            return aligned
+        case .none, .custom, .hourly, .monthly, .yearly:
+            return nil
+        }
+    }
+
     /// 存量循环行回填历史锚点 originStartDate（bug: recurring-past-occurrence-invisible）
     /// 算法：从游标反向单步回退，取不早于创建时刻的第一个序列点——游标即创建时
     /// 推进/落定的序列首实例，反向链上每点均为合法周期点，时刻模式自动对齐；
