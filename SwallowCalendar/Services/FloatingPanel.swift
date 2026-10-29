@@ -25,13 +25,29 @@ enum Popup {
     }
 }
 
+// MARK: - Toggle 回声窗口
+
+/// R-1（fix: statusbar-toggle-race）：主面板 toggle 的 resignKey 回声窗口。
+/// 点击状态栏图标使 key 面板先失 key 关闭，button action 晚 30-56ms 到达后
+/// 按 presented=N 又 open——同一次点击只应翻转一次状态，窗口内第二次
+/// 翻转视为回声忽略。窗口覆盖取证观测最大间隔 56ms，取 150ms 留余量
+enum PanelToggle {
+    static let resignKeyEchoWindow: TimeInterval = 0.15
+}
+
 class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     var isPresented: Bool = false
     var statusBarButton: NSStatusBarButton?
     let onClose: () -> Void
     /// E-7：保存内容视图构建闭包，close 销毁层级后 open 重建用
     private let contentBuilder: () -> Content
-    
+
+    /// R-1（fix: statusbar-toggle-race）：resignKey 引发的关闭时刻。
+    /// 点击状态栏图标会使 key 面板先失 key（探针实证：keyWin=nil 且 action 晚 30-56ms
+    /// 到达），resignKey 先 close 后，action 的 toggle 按 presented=N 又 open——
+    /// 一轮点击经历「关了又开」，表现为无法关闭。同一次点击只应翻转一次状态
+    private var lastResignKeyCloseAt: Date?
+
     private var pinObserver: NSObjectProtocol?
     private var deactivateObserver: NSObjectProtocol?
     
@@ -114,6 +130,10 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     func toggle() {
         if isPresented {
             close()
+        } else if let at = lastResignKeyCloseAt,
+                  Date().timeIntervalSince(at) < PanelToggle.resignKeyEchoWindow {
+            // R-1：面板刚由本次点击引发的 resignKey 关闭，忽略 action 回声不重开
+            lastResignKeyCloseAt = nil
         } else {
             open()
         }
@@ -219,6 +239,8 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
             return
         }
         if shouldClose() {
+            // R-1：记录失 key 关闭时刻，供 toggle 识别同一次状态栏点击的回声
+            lastResignKeyCloseAt = Date()
             close()
         }
     }
