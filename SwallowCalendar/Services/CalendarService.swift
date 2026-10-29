@@ -17,14 +17,41 @@ final class CalendarService {
     var reminderAuthorizationStatus: EKAuthorizationStatus = .notDetermined
     var calendars: [EKCalendar] = []
     var isLoading = false
-    
+
     /// 事件缓存服务
     let cacheService = EventCacheService.shared
+
+    /// EKEventStore.changed 监听 token（随实例存活；单例常驻，应用退出即终止，无需注销）
+    private var externalStoreChangeObservers: [NSObjectProtocol] = []
 
     // internal 供测试 @testable 使用
     init() {
         authorizationStatus = EKEventStore.authorizationStatus(for: .event)
         reminderAuthorizationStatus = EKEventStore.authorizationStatus(for: .reminder)
+        startObservingExternalStoreChanges()
+    }
+
+    // MARK: - 外部变更监听
+
+    /// 外部 app 对日历/提醒的新建、修改、完成、删除会 post EKEventStoreChanged，
+    /// 转发给后台同步服务做防抖同步（reminder-sync-completeness）
+    /// - Note: macOS 无 scoped 通知中心 API（EKEventStore.notificationCenter(for:) 仅 iOS），
+    ///         变更通知统一投递 default center
+    private func startObservingExternalStoreChanges() {
+        externalStoreChangeObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .EKEventStoreChanged,
+                object: nil,
+                queue: nil
+            ) { [weak self] _ in
+                // EK 通知可能后台线程投递，跳主线程再进入防抖
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    AppLogger.sync.info("EKEventStore.changed → 触发外部变更同步")
+                    BackgroundSyncService.shared.syncOnExternalChange()
+                }
+            }
+        )
     }
 
     // MARK: - Public Methods

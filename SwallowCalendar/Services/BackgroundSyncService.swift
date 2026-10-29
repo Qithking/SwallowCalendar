@@ -15,9 +15,23 @@ final class BackgroundSyncService {
 
     private var modelContainer: ModelContainer?
     private var syncTimer: Timer?
-    private var isSyncing = false
+    /// 同步互斥标志；internal 供测试模拟同步进行中
+    var isSyncing = false
 
     private let syncIntervalSeconds: TimeInterval = 60 * 60
+
+    /// 外部变更（EKEventStore.changed）同步防抖任务与重试计数（reminder-sync-completeness）
+    private var externalChangeTask: Task<Void, Never>?
+    private var externalSyncRetryCount = 0
+
+    /// 外部变更防抖间隔（与应用内改动防抖同为 2s）；internal 供测试注入短间隔
+    var externalChangeDebounceSeconds: TimeInterval = 2
+
+    /// 防抖到期后执行的同步动作；internal 供测试注入 spy 计数
+    /// 外部变更同步跳过 ICS 订阅源（订阅有自身刷新节奏，AC-3）
+    var externalSyncAction: () async -> Void = {
+        await BackgroundSyncService.shared.syncOnce(includeSubscriptions: false)
+    }
 
     private init() {}
 
@@ -30,11 +44,39 @@ final class BackgroundSyncService {
         startTimer()
     }
 
+    /// 外部变更（EKEventStore.changed）触发入口：防抖合并连发通知后同步
+    /// 日历事件与提醒（reminder-sync-completeness）
+    func syncOnExternalChange() {
+        // 每次新外部变更重置重试计数，重试机会针对单次变更而非进程全局
+        externalSyncRetryCount = 0
+        scheduleExternalSync()
+    }
+
+    /// 防抖调度：新通知取消上一个任务，静默 debounceSeconds 后只执行一次同步；
+    /// 到期时若同步正在进行（isSyncing，如手动同步）则重排一次防抖重试，
+    /// 避免该次外部变更被 syncOnce 的互斥 guard 静默丢弃（AC-4）
+    private func scheduleExternalSync() {
+        externalChangeTask?.cancel()
+        externalChangeTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: UInt64(self.externalChangeDebounceSeconds * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            if self.isSyncing && self.externalSyncRetryCount == 0 {
+                self.externalSyncRetryCount += 1
+                self.scheduleExternalSync()
+                return
+            }
+            await self.externalSyncAction()
+        }
+    }
+
     /// 执行一次全量同步
+    /// - Parameter includeSubscriptions: 是否同步 ICS 订阅源；外部变更防抖路径传 false
+    ///   （订阅有自身刷新节奏，避免 EK 变更频繁触发网络刷新，AC-3），其余调用默认 true
     /// - Returns: nil 同步成功；非 nil 为失败原因描述（多个失败以"；"拼接），
     ///            供手动同步 UI 错误反馈；启动/定时/防抖等后台调用忽略返回值
     @discardableResult
-    func syncOnce() async -> String? {
+    func syncOnce(includeSubscriptions: Bool = true) async -> String? {
         guard !isSyncing else { return "同步正在进行中，请稍后重试" }
         guard modelContainer != nil else { return "本地存储未就绪，请稍后重试" }
 
@@ -47,7 +89,6 @@ final class BackgroundSyncService {
         var failures: [String] = []
 
         let preferences = fetchPreferences(context: context)
-        let customSources = fetchCustomSources(context: context)
 
         // E-5：日历授权门槛只包住系统日历/提醒同步——ICS 订阅源同步不依赖 EventKit 授权，
         // 原顶部 guard 会使用户拒绝日历授权时订阅功能静默失效
@@ -82,10 +123,14 @@ final class BackgroundSyncService {
             CalendarService.shared.cacheService.clearRemindersCache()
         }
 
-        let enabledSources = customSources.filter { $0.isEnabled }
-        // 始终调用同步（即使没有启用的源），确保禁用所有订阅时能清理旧缓存
-        if !(await CalendarService.shared.cacheService.syncSubscriptionEvents(sources: enabledSources)) {
-            failures.append("订阅日历同步失败")
+        // ICS 订阅源同步：外部变更防抖路径跳过（includeSubscriptions=false，AC-3）
+        if includeSubscriptions {
+            let customSources = fetchCustomSources(context: context)
+            let enabledSources = customSources.filter { $0.isEnabled }
+            // 始终调用同步（即使没有启用的源），确保禁用所有订阅时能清理旧缓存
+            if !(await CalendarService.shared.cacheService.syncSubscriptionEvents(sources: enabledSources)) {
+                failures.append("订阅日历同步失败")
+            }
         }
 
         return failures.isEmpty ? nil : failures.joined(separator: "；")
