@@ -278,6 +278,8 @@ final class CalendarService {
             ),
             reminderMinutes: Self.extractReminderMinutes(from: reminder.alarms),
             reminderOffsets: Self.extractReminderOffsets(from: reminder.alarms),
+            // absolute 准点闹钟（任务 E 模式）标记：sync 回流时保留缓存提前提醒
+            reminderAlarmIsAbsolute: Self.hasAbsoluteReminderAlarm(reminder.alarms),
             eventColorHex: nil
         )
     }
@@ -355,8 +357,29 @@ final class CalendarService {
         return offsets.isEmpty ? nil : offsets
     }
 
+    /// EK 闹钟数组是否含 absolute（绝对时刻）闹钟：任务 E 模式（bug: reminder-app-shows-advanced-time）
+    /// 下应用为 EKReminder 写准点 absolute(due) 闹钟，EK 侧不含提前量
+    /// （bug: reminder-offsets-wiped-by-sync，提前提醒由应用内缓存承担）
+    /// - Note: 判据为 absoluteDate 非 nil；macOS 上 absolute 闹钟的 relativeOffset
+    ///   呈现为 0 而非 nil（ReminderAlarmAbsoluteTests 实证），不可用 relativeOffset 判定
+    static func hasAbsoluteReminderAlarm(_ alarms: [EKAlarm]?) -> Bool {
+        alarms?.contains { $0.absoluteDate != nil } ?? false
+    }
+
     /// 生成 EKAlarm 数组：多级 offsets 非空时逐档生成；否则按单级 minutes 兼容口径
-    private static func makeAlarms(offsets: [Int]?, minutes: Int?) -> [EKAlarm] {
+    /// - reminderDueDate 非空（EKReminder 路径）：对齐 Apple 自家存储模式，系统侧写
+    ///   absolute(due) 准点闹钟——macOS 提醒 app 将相对闹钟渲染为「提醒我 T-offset」
+    ///   单一告警（bug: reminder-app-shows-advanced-time），提前提醒由应用内缓存
+    ///   reminderOffsets 承担；未设置提前提醒时保持无闹钟
+    static func makeAlarms(offsets: [Int]?, minutes: Int?, reminderDueDate: Date? = nil) -> [EKAlarm] {
+        // 提醒路径：设置了提前提醒（多级或单级）→ 系统侧仅写准点绝对闹钟
+        if let due = reminderDueDate {
+            if offsets?.isEmpty == false || (minutes ?? 0) > 0 {
+                return [EKAlarm(absoluteDate: due)]
+            }
+            return []
+        }
+        // 事件路径：相对偏移闹钟，系统日历通知按提前量触发
         if let offsets, !offsets.isEmpty {
             return offsets.map { EKAlarm(relativeOffset: TimeInterval(-$0 * 60)) }
         }
@@ -632,8 +655,9 @@ final class CalendarService {
         // 语义映射：本项目 EventPriority 9=最高，EKReminder 1=最高、9=最低、0=无
         reminder.priority = Self.ekPriority(from: priority)
         
-        // 设置提醒闹钟：多级 offsets 优先，单级 minutes 兼容
-        reminder.alarms = Self.makeAlarms(offsets: reminderOffsets, minutes: reminderMinutes)
+        // 设置提醒闹钟：多级 offsets 优先，单级 minutes 兼容；
+        // 提醒路径传 due → 系统侧写准点绝对闹钟（提前提醒由应用内缓存承担）
+        reminder.alarms = Self.makeAlarms(offsets: reminderOffsets, minutes: reminderMinutes, reminderDueDate: dueDate)
         
         try eventStore.save(reminder, commit: true)
         
@@ -793,8 +817,9 @@ final class CalendarService {
         }
         reminder.dueDateComponents = components
 
-        // 设置提醒闹钟：多级 offsets 优先，单级 minutes 兼容
-        reminder.alarms = Self.makeAlarms(offsets: reminderOffsets, minutes: reminderMinutes)
+        // 设置提醒闹钟：多级 offsets 优先，单级 minutes 兼容；
+        // 提醒路径传 due → 系统侧写准点绝对闹钟（提前提醒由应用内缓存承担）
+        reminder.alarms = Self.makeAlarms(offsets: reminderOffsets, minutes: reminderMinutes, reminderDueDate: dueDate)
 
         try eventStore.save(reminder, commit: true)
 
@@ -1206,9 +1231,10 @@ final class CalendarService {
                 reminder.dueDateComponents = components
             }
             // 更新提醒闹钟：多级 offsets 优先（空数组=清除），单级 minutes 兼容；
-            // 两者均未传时不动 alarms（保持 nil = 不改提醒语义）
+            // 两者均未传时不动 alarms（保持 nil = 不改提醒语义）；
+            // 提醒路径传当前 due → 系统侧写准点绝对闹钟（提前提醒由应用内缓存承担）
             if reminderOffsets != nil || reminderMinutes != nil {
-                reminder.alarms = Self.makeAlarms(offsets: reminderOffsets, minutes: reminderMinutes)
+                reminder.alarms = Self.makeAlarms(offsets: reminderOffsets, minutes: reminderMinutes, reminderDueDate: reminder.dueDateComponents?.date)
             }
             try eventStore.save(reminder, commit: true)
         } else {

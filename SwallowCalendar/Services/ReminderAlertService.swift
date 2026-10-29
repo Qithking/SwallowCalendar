@@ -54,6 +54,10 @@ final class ReminderAlertService {
     static let shared = ReminderAlertService()
     
     private var timer: Timer?
+    /// 准点调度定时器（bug: due-alert-punctual-scheduling）：单次触发于最近的
+    /// 未提醒 alertTime（含 snooze fireDate），消除 60s 轮询最坏延迟 60 秒的弹窗不及时；
+    /// 60s 轮询保留作兜底，两者经 (eventID, alertTime) 去重不会重复弹窗
+    private var dynamicTimer: Timer?
     private var lastAlertedEventIDs: [String] = []
     /// 持久化已提醒事件ID的 UserDefaults 键
     private static let alertedEventIDsKey = "ReminderAlertService.lastAlertedEventIDs"
@@ -77,6 +81,23 @@ final class ReminderAlertService {
         let savedTime = UserDefaults.standard.double(forKey: Self.lastCheckTimeKey)
         if savedTime > 0 {
             self.lastCheckTime = Date(timeIntervalSince1970: savedTime)
+        }
+        // 准点调度联动（bug: due-alert-punctual-scheduling）：
+        // 缓存变更（同步/新建/编辑/完成广播）后重算下次触发时刻
+        NotificationCenter.default.addObserver(
+            forName: .cachedEventsChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.rescheduleDynamicTimer() }
+        }
+        // 睡眠唤醒：补一次检查（B-14 窗口覆盖挂起区间，挂起期漏掉的提醒即时弹出）
+        // 并重算准点调度（系统挂起期间 Timer 不触发）
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.checkDueEvents()
+                self?.rescheduleDynamicTimer()
+            }
         }
     }
     
@@ -107,6 +128,8 @@ final class ReminderAlertService {
                     await self?.checkDueEvents()
                 }
             }
+            // 准点调度（上下文未就绪时为无害空转，数据同步后经检查/广播重新调度）
+            self?.rescheduleDynamicTimer()
         }
     }
     
@@ -135,6 +158,68 @@ final class ReminderAlertService {
     func stopMonitoring() {
         timer?.invalidate()
         timer = nil
+        dynamicTimer?.invalidate()
+        dynamicTimer = nil
+    }
+
+    // MARK: - 准点调度（bug: due-alert-punctual-scheduling）
+
+    /// 计算下一次应触发提醒的时刻（纯函数，语义由 ReminderAlertDynamicScheduleTests 锁定）
+    /// 候选：各事件各级 alertTime（offsets 与常规检查同口径，含隐式准点档）+ snooze fireDate，
+    /// 均取严格晚于 now 的最早值；智能跳过与无开始时间事件剔除，已完成事件由调用方粗筛剔除。
+    /// 无候选返回 nil（调用方不调度，60s 轮询兜底）
+    static func nextTriggerTime(now: Date, events: [CachedEvent], snoozeRecords: [SnoozeRecord], context: ModelContext) -> Date? {
+        var candidates: [Date] = []
+        for event in events {
+            guard !HolidaySkipResolver.isSkipped(of: event, context: context) else { continue }
+            guard let startDate = event.startDate else { continue }
+            var offsets = event.reminderOffsets
+            if !offsets.contains(0) { offsets.append(0) }
+            for offset in offsets where offset >= 0 {
+                let t = startDate.addingTimeInterval(TimeInterval(-offset * 60))
+                if t > now { candidates.append(t) }
+            }
+        }
+        candidates.append(contentsOf: snoozeRecords.map(\.fireDate).filter { $0 > now })
+        return candidates.min()
+    }
+
+    /// 重算并调度准点触发定时器：检查完成 / .cachedEventsChanged / snooze / 睡眠唤醒后调用。
+    /// 单次 Timer 精确触发于下次 alertTime，触发后跑一次常规检查（窗口判定+去重弹窗）再重调度；
+    /// 取不到候选时不调度，由 60s 轮询兜底并在其后再次尝试调度
+    private func rescheduleDynamicTimer() {
+        dynamicTimer?.invalidate()
+        dynamicTimer = nil
+        guard let context = EventCacheService.shared.context else { return }
+        let now = Date()
+        // 粗筛口径与常规检查一致：alertTime=startDate-offset*60 ≤ startDate，
+        // 故未来档事件必要条件 startDate > now；上限 now+24h 覆盖 UI 上限 1440 分钟提前档
+        let userCategory = EventCategory.user.rawValue
+        let lower = now
+        let upper = now.addingTimeInterval(1440 * 60)
+        let distantPast = Date.distantPast
+        let distantFuture = Date.distantFuture
+        let descriptor = FetchDescriptor<CachedEvent>(
+            predicate: #Predicate {
+                $0.categoryRaw == userCategory &&
+                !$0.isCompleted &&
+                $0.startDate != nil &&
+                ($0.startDate ?? distantPast) >= lower &&
+                ($0.startDate ?? distantFuture) <= upper
+            },
+            sortBy: [SortDescriptor(\.startDate)]
+        )
+        guard let events = try? context.fetch(descriptor) else { return }
+        guard let next = Self.nextTriggerTime(now: now, events: events, snoozeRecords: Self.loadSnoozeRecords(), context: context) else { return }
+        let interval = max(0, next.timeIntervalSince(now))
+        dynamicTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                await self?.checkDueEvents()
+                self?.rescheduleDynamicTimer()
+            }
+        }
+        // 用户可感知的准点提醒：容差收紧到 1 秒
+        dynamicTimer?.tolerance = 1
     }
     
     /// 检查到期的待办事项
@@ -221,10 +306,15 @@ final class ReminderAlertService {
                     // 0 档（准点提醒/未设置提醒 fallback）视为准点档 alertTime=startDate
                     // （bug: due-reminder-zero-offset-miss：与启动检查「未设置提醒过期弹 startDate」对齐，
                     // 已弹过的键经 hasAlertedKey 去重不重复弹）
+                    // bug: due-reminder-onset-miss：设置了提前提醒（offsets 不含 0 档）的事件
+                    // 仅在提前档时刻弹，事件开始时刻无档位命中导致到点不提醒；
+                    // 并入隐式准点档与 fallback [0] 语义对齐（到点必提醒），各档键独立去重
                     // B-14：窗口下界用持久化的上次检查时间——应用挂起/睡眠超 90 秒后，
                     // 固定 90 秒窗口会滤掉挂起期间到期的事项导致漏提醒；
                     // 无记录时回退 90 秒窗口（配合 60 秒定时器确保不遗漏）
-                    alertTimes = offsets.compactMap { offset in
+                    var candidates = offsets
+                    if !candidates.contains(0) { candidates.append(0) }
+                    alertTimes = candidates.compactMap { offset in
                         guard offset >= 0 else { return nil }
                         let t = startDate.addingTimeInterval(TimeInterval(-offset * 60))
                         return (t <= now && t >= windowStart) ? t : nil
@@ -288,6 +378,8 @@ final class ReminderAlertService {
             // 仅在 fetch 成功后更新，失败时保留旧值以免跳过失败区间的提醒
             lastCheckTime = now
             UserDefaults.standard.set(now.timeIntervalSince1970, forKey: Self.lastCheckTimeKey)
+            // 检查完成后重算准点调度（下次 alertTime 可能已变化）
+            rescheduleDynamicTimer()
         } catch {
             AppLogger.reminder.error("检查到期事件失败: \(String(describing: error))")
         }
@@ -395,6 +487,8 @@ final class ReminderAlertService {
         records.removeAll { $0.eventID == eventID }
         records.append(SnoozeRecord(eventID: eventID, fireDate: Date().addingTimeInterval(TimeInterval(minutes * 60))))
         Self.saveSnoozeRecords(records)
+        // snooze 时刻可能早于当前调度 → 重算准点触发
+        rescheduleDynamicTimer()
         AppLogger.reminder.info("稍后提醒 id=\(eventID) minutes=\(minutes)")
     }
 

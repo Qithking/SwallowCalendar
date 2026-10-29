@@ -33,8 +33,12 @@ final class CountdownTimerManager: ObservableObject {
     /// 最小堆：存储 (eventID, deadline) 元组
     private var minHeap: MinHeap = MinHeap()
     
-    /// 可见事件集合：记录当前屏幕可见的事件 ID
-    private var visibleEventIDs: Set<String> = []
+    /// 可见事件注册表：eventID → 同时显示该事件的视图实例数
+    /// fix: panel-countdown-frozen-on-collapse——同一事件可同时显示在
+    /// 主界面与桌面面板（CountdownTextView 三处复用），主界面收起的
+    /// onDisappear 无条件 unregister，若按 Set 单键注销会误删共享注册，
+    /// 导致桌面面板倒计时冻结；按引用计数注销，仅最后一方注销才移除
+    private var visibleEventIDs: [String: Int] = [:]
     
     /// GCD Timer
     private var timer: DispatchSourceTimer?
@@ -61,7 +65,8 @@ final class CountdownTimerManager: ObservableObject {
                     self.minHeap.remove(eventID: eventID)
 
                     self.minHeap.insert(eventID: eventID, deadline: deadline)
-                    self.visibleEventIDs.insert(eventID)
+                    // 引用计数 +1：多处视图同显同一事件时各持一份注册
+                    self.visibleEventIDs[eventID, default: 0] += 1
 
                     if self.timer == nil {
                         self.startTimer()
@@ -78,8 +83,15 @@ final class CountdownTimerManager: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             MainActor.assumeIsolated {
-                // 从可见集合中移除
-                self.visibleEventIDs.remove(eventID)
+                // 引用计数 -1：仍有其他视图显示该事件时保留注册，
+                // 仅最后一方注销才移除（防御生命周期不配对的超额注销）
+                let count = self.visibleEventIDs[eventID] ?? 0
+                guard count > 0 else { return }
+                if count > 1 {
+                    self.visibleEventIDs[eventID] = count - 1
+                    return
+                }
+                self.visibleEventIDs.removeValue(forKey: eventID)
 
                 // 从最小堆中移除
                 self.minHeap.remove(eventID: eventID)
@@ -96,7 +108,7 @@ final class CountdownTimerManager: ObservableObject {
     /// - Parameter eventID: 事件 ID
     /// - Returns: 是否需要刷新
     func shouldRefresh(eventID: String) -> Bool {
-        return visibleEventIDs.contains(eventID)
+        return visibleEventIDs[eventID] != nil
     }
     
     // MARK: - Private Methods

@@ -850,6 +850,45 @@ final class EventCacheService {
         }
     }
 
+    /// syncReminders 更新分支：将 EK 回流映射值合并进既有缓存行，返回是否发生变更
+    /// bug: reminder-offsets-wiped-by-sync——任务 E 模式下应用为 EKReminder 写
+    /// absolute(due) 准点闹钟，EK 侧不含提前量，提前提醒真源为缓存 reminderOffsets：
+    /// 此时跳过 reminderOffsetsJSON/reminderMinutes 的变更检测与覆盖，保留缓存现值；
+    /// 其余（relative/无闹钟）照常采纳 EK 值（B-8 语义：EK 侧为准）
+    @discardableResult
+    static func mergeReminderUpdate(existing: CachedEvent, ek: CalendarEvent) -> Bool {
+        let newTitle = ek.title
+        let newStart = ek.startDate
+        let newEnd = ek.endDate
+        let newIsCompleted = ek.isCompleted
+        // absolute 准点闹钟不携带提前量：提前提醒保留缓存值，不参与变更检测与覆盖
+        let adoptReminder = !ek.reminderAlarmIsAbsolute
+        let newReminderMinutes = ek.reminderMinutes
+        let newOffsetsJSON = CachedEvent.encodeOffsetsJSON(ek.reminderOffsets)
+        let offsetsChanged = adoptReminder && existing.reminderOffsetsJSON != newOffsetsJSON
+        let minutesChanged = adoptReminder && existing.reminderMinutes != newReminderMinutes
+        // 有变更才更新，避免不必要的写入（recurrenceType：档位可能随物化历史出现而推断变化）
+        if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || minutesChanged || offsetsChanged || existing.recurrenceType != ek.recurrenceType {
+            if existing.isCompleted != newIsCompleted {
+                AppLogger.cache.warning("syncReminders isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID)")
+            }
+            existing.title = newTitle
+            existing.startDate = newStart
+            existing.endDate = newEnd
+            existing.isCompleted = newIsCompleted
+            if adoptReminder {
+                // 双写同源一致值（JSON 与 minutes 均来自 EK，本就满足 max 不变量）
+                existing.reminderOffsetsJSON = newOffsetsJSON
+                existing.reminderMinutes = newReminderMinutes
+            }
+            // bug: ek-recurrence-materialization-mirror——系统循环提醒档位以 EK 映射为准
+            existing.recurrenceType = ek.recurrenceType
+            existing.lastUpdated = Date()
+            return true
+        }
+        return false
+    }
+
     /// 同步系统提醒到本地缓存
     /// - Note: 无到期时间的提醒也会同步，但不受日期范围限制
     /// - Returns: 同步是否成功（guard 提前退出/保存失败返回 false），供手动同步错误反馈
@@ -891,33 +930,12 @@ final class EventCacheService {
         // 更新或插入提醒
         for reminder in reminders {
             if let existing = existingByID[reminder.id] {
-                // 仅当事项内容、时间、完成情况或提醒时间有变化时才更新，否则跳过
-                let newTitle = reminder.title
-                let newStart = reminder.startDate
-                let newEnd = reminder.endDate
-                let newIsCompleted = reminder.isCompleted
-                let newReminderMinutes = reminder.reminderMinutes
-                // 步骤7：变更检测同时比较 offsets（多级偏移随 EK alarm 数组带出）
-                let newOffsetsJSON = CachedEvent.encodeOffsetsJSON(reminder.reminderOffsets)
-                let offsetsChanged = existing.reminderOffsetsJSON != newOffsetsJSON
-                // 有变更才更新，避免不必要的写入（recurrenceType：档位可能随物化历史出现而推断变化）
-                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes || offsetsChanged || existing.recurrenceType != reminder.recurrenceType {
-                    if existing.isCompleted != newIsCompleted {
-                        AppLogger.cache.warning("syncReminders isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID)")
-                    }
-                    existing.title = newTitle
-                    existing.startDate = newStart
-                    existing.endDate = newEnd
-                    existing.isCompleted = newIsCompleted
-                    // 双写同源一致值（JSON 与 minutes 均来自 EK，本就满足 max 不变量）
-                    existing.reminderOffsetsJSON = newOffsetsJSON
-                    existing.reminderMinutes = newReminderMinutes
-                    // bug: ek-recurrence-materialization-mirror——系统循环提醒档位以 EK 映射为准
-                    existing.recurrenceType = reminder.recurrenceType
-                    existing.lastUpdated = Date()
-                }
+                // bug: reminder-offsets-wiped-by-sync——更新分支抽为纯函数合并：
+                // absolute 准点闹钟（任务 E 模式）EK 侧不携带提前量，
+                // 此时保留缓存 reminderOffsets，不参与变更检测与覆盖
+                Self.mergeReminderUpdate(existing: existing, ek: reminder)
                 // 存量循环提醒幂等回填历史锚点（同 syncEvents，bug: recurring-past-occurrence-invisible）
-                if existing.recurrenceType != .none, existing.originStartDate == nil, let newStart {
+                if existing.recurrenceType != .none, existing.originStartDate == nil, let newStart = reminder.startDate {
                     existing.originStartDate = CalendarService.resolveOriginStartDate(
                         cursor: newStart,
                         creationDate: calendarService.ekCreationDate(eventID: existing.eventID, isReminder: true),

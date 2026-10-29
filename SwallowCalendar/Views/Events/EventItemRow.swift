@@ -32,12 +32,25 @@ struct EventItemRow: View {
         self.isOverdue = isOverdue
     }
 
+    /// 行内操作统一入口：先复位 hover 再执行动作。
+    /// 鼠标悬停在行内点击按钮时 onHover(false) 不会触发，弹窗会残留
+    /// （bug: popover-leftover-on-row-complete——重复任务完成后事件本体保留
+    ///   （startDate 推进式序列），行不移除、dismantle 兜底不存在，
+    ///   视图更新期间移出事件偶发丢失时 isHovered 卡 true，弹窗悬空；
+    ///   编辑按钮历史修复 popover-not-dismissed-on-edit 同型缺口）
+    static func performRowAction(isHovered: Binding<Bool>, action: () -> Void) {
+        isHovered.wrappedValue = false
+        action()
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             // 完成/未完成复选框
             if event.isCompleted {
                 Button {
-                    onUncomplete?(event)
+                    Self.performRowAction(isHovered: $isHovered) {
+                        onUncomplete?(event)
+                    }
                 } label: {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 16))
@@ -47,7 +60,9 @@ struct EventItemRow: View {
                 .help("标记未完成")
             } else {
                 Button {
-                    onComplete?(event)
+                    Self.performRowAction(isHovered: $isHovered) {
+                        onComplete?(event)
+                    }
                 } label: {
                     Image(systemName: "circle")
                         .font(.system(size: 16))
@@ -124,10 +139,10 @@ struct EventItemRow: View {
                 HStack(spacing: 4) {
                     if onEdit != nil {
                         Button {
-                            // 打开编辑窗口前先收起 hover 弹窗：
-                            // 鼠标仍悬停在行内不会触发 onHover(false)，必须显式置 false，否则弹窗悬浮在编辑窗口之上
-                            isHovered = false
-                            onEdit?(event)
+                            // 打开编辑窗口前先收起 hover 弹窗（统一入口，与完成/删除按钮同款）
+                            Self.performRowAction(isHovered: $isHovered) {
+                                onEdit?(event)
+                            }
                         } label: {
                             Image(systemName: "pencil")
                                 .font(.system(size: 10))
@@ -139,7 +154,9 @@ struct EventItemRow: View {
 
                     if onDelete != nil {
                         Button {
-                            onDelete?(event)
+                            Self.performRowAction(isHovered: $isHovered) {
+                                onDelete?(event)
+                            }
                         } label: {
                             Image(systemName: "trash")
                                 .font(.system(size: 10))

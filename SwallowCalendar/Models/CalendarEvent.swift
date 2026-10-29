@@ -118,6 +118,10 @@ struct CalendarEvent: Identifiable {
     let reminderMinutes: Int
     /// 多级提醒提前分钟数组（plan 步骤 7，nil = EK 侧无多级 alarm；与 reminderMinutes.max 同源）
     var reminderOffsets: [Int]? = nil
+    /// EK 侧闹钟是否为 absolute（绝对时刻）型：任务 E 模式（bug: reminder-app-shows-advanced-time）
+    /// 应用为 EKReminder 写准点 absolute(due) 闹钟，EK 侧不携带提前量，
+    /// 提前提醒真源为缓存 reminderOffsets（bug: reminder-offsets-wiped-by-sync）
+    var reminderAlarmIsAbsolute: Bool = false
     /// 用户选择的事件颜色（nil 时使用 calendarColorHex）
     let eventColorHex: String?
     /// B-25：EK 事件备注（仅系统日历同步拉取时填充，供 syncEvents 判分类/完成标记，
