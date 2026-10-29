@@ -32,6 +32,7 @@ struct EventTodoListView: View {
         cachedEvents.count > displayLimit
     }
 
+    // 事件驱动的后续刷新防抖（防同步风暴高频重查）
     private func debouncedRefresh() {
         refreshTask?.cancel()
         refreshTask = Task {
@@ -39,6 +40,13 @@ struct EventTodoListView: View {
             guard !Task.isCancelled else { return }
             refreshCachedEvents()
         }
+    }
+
+    // 首刷（onAppear）同步立即查询：查询仅毫秒级，先于 .task 全量同步占用主线程执行，
+    // 消除重开面板时列表空窗（此前首刷排在全量同步与月历渲染之后，空窗约 300ms）
+    private func refreshImmediately() {
+        refreshTask?.cancel()
+        refreshCachedEvents()
     }
 
     private func refreshCachedEvents() {
@@ -179,7 +187,7 @@ struct EventTodoListView: View {
             }
         }
         .onAppear {
-            debouncedRefresh()
+            refreshImmediately()
         }
         .onChange(of: refreshTrigger) { _, _ in
             debouncedRefresh()

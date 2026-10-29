@@ -251,10 +251,10 @@ struct ContentView: View {
 
         // 在 mainContext 注入后启动后台同步，确保使用同一 ModelContext
         await BackgroundSyncService.shared.start()
-        
+
         // 同步完成后检查过期事项，确保启动时始终提示
         await ReminderAlertService.shared.checkExpiredEvents()
-        
+
         // 清理过期的 ICS 缓存文件
         ICSService.shared.cleanupExpiredCache()
     }

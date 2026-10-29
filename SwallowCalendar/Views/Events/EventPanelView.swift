@@ -15,7 +15,10 @@ struct EventPanelView: View {
     var externalRefreshTrigger: Bool = false
     var onEventsChanged: (() -> Void)? = nil  // 事件变更通知回调
 
-    @State private var filterMode: EventFilterMode = .thisMonth
+    // 初始值即用户默认档：子列表 onAppear 先于父 onAppear 执行，若初始档为 .thisMonth，
+    // 同步首刷会先查出全量再被默认档过滤（闪现全部事项）；初始值取默认档则首刷即最终档，
+    // 父 onAppear 同值赋值幂等不触发二刷；设置变更仍由下方 onChange 兜底
+    @State private var filterMode: EventFilterMode = AppSettings.shared.defaultFilterModeEnum
     @State private var refreshTrigger = false
     // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
     private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
