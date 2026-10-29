@@ -1511,8 +1511,11 @@ extension CalendarService {
                 return chineseCalendar.date(byAdding: .month, value: 1, to: date)
             case .yearly:
                 return chineseCalendar.date(byAdding: .year, value: 1, to: date)
-            case .none, .custom, .hourly:
-                // .hourly 不虚拟展开（bug: ek-recurrence-materialization-mirror 防双份）
+            case .hourly:
+                // bug: hourly-recurrence-invisible-in-lists——与每天/每周同语义恢复展开+推进；
+                // 无双份风险（锚条目法已过滤 Apple 物化的已完成历史）
+                return chineseCalendar.date(byAdding: .hour, value: 1, to: date)
+            case .none, .custom:
                 return nil
             }
         }
@@ -1527,7 +1530,9 @@ extension CalendarService {
             return Calendar.current.date(byAdding: .month, value: 1, to: date)
         case .yearly:
             return Calendar.current.date(byAdding: .year, value: 1, to: date)
-        case .none, .custom, .hourly:
+        case .hourly:
+            return Calendar.current.date(byAdding: .hour, value: 1, to: date)
+        case .none, .custom:
             return nil
         }
     }
@@ -1547,7 +1552,10 @@ extension CalendarService {
                 return chineseCalendar.date(byAdding: .month, value: -1, to: date)
             case .yearly:
                 return chineseCalendar.date(byAdding: .year, value: -1, to: date)
-            case .none, .custom, .hourly:
+            case .hourly:
+                // 与 nextOccurrence 对应（bug: hourly-recurrence-invisible-in-lists）
+                return chineseCalendar.date(byAdding: .hour, value: -1, to: date)
+            case .none, .custom:
                 return nil
             }
         }
@@ -1560,7 +1568,9 @@ extension CalendarService {
             return Calendar.current.date(byAdding: .month, value: -1, to: date)
         case .yearly:
             return Calendar.current.date(byAdding: .year, value: -1, to: date)
-        case .none, .custom, .hourly:
+        case .hourly:
+            return Calendar.current.date(byAdding: .hour, value: -1, to: date)
+        case .none, .custom:
             return nil
         }
     }
@@ -1570,8 +1580,8 @@ extension CalendarService {
     /// 的每天循环 = 1.1 万次无产出推进），状态栏徽章每秒展开把主线程占满，提醒
     /// 检查 Timer 被饿死——本函数用日历单位整除直接跳到「≤ windowStart 的最近
     /// 相位」，调用方回退一个周期后即可跳过全部无产出推进。
-    /// 仅适用日加法族（daily/unlimited/weekly）：nextOccurrence 对该族用
-    /// Calendar.date(byAdding: day/weekOfYear) 单位加法，整除跳转与逐次推进产生
+    /// 仅适用日加法族（daily/unlimited/weekly/hourly）：nextOccurrence 对该族用
+    /// Calendar.date(byAdding: day/weekOfYear/hour) 单位加法，整除跳转与逐次推进产生
     /// 完全相同的相位序列（completedOccurrenceDates 的 epoch 精确匹配依赖此）；
     /// monthly/yearly 存在月末取整累积（1-31 逐次 +1 月与一次 +N 月结果不同）、
     /// 农历无固定数值周期——均返回 nil 保持逐次推进（其锚点年龄成本本就可忽略）。
@@ -1593,7 +1603,15 @@ extension CalendarService {
                   let aligned = calendar.date(byAdding: .weekOfYear, value: weeks, to: origin),
                   aligned < windowStart else { return nil }
             return aligned
-        case .none, .custom, .hourly, .monthly, .yearly:
+        case .hourly:
+            // bug: hourly-recurrence-invisible-in-lists——小时加法无取整累积，
+            // 整除跳转与 nextOccurrence 同用 .hour 加法保持同源
+            let hours = calendar.dateComponents([.hour], from: origin, to: windowStart).hour ?? 0
+            guard hours >= 1,
+                  let aligned = calendar.date(byAdding: .hour, value: hours, to: origin),
+                  aligned < windowStart else { return nil }
+            return aligned
+        case .none, .custom, .monthly, .yearly:
             return nil
         }
     }

@@ -189,4 +189,30 @@ final class RecurringCompletionTests: XCTestCase {
         XCTAssertEqual(cached.completedOccurrenceDates, [d0])
         XCTAssertEqual(cached.startDate?.timeIntervalSince1970 ?? 0, d2.timeIntervalSince1970, accuracy: 0.001)
     }
+
+    // MARK: - bug: hourly-recurrence-invisible-in-lists
+
+    /// 完成 hourly occurrence：历史追加该时刻、游标推进 +1h
+    /// （此前 .hourly 归入无推进组，完成仅记历史、游标/EK 冻结导致列表失联）
+    func testCompleteHourlyOccurrenceAdvancesCursorOneHour() async throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        let d0 = date(2026, 10, 28, 23, 0)
+        let d1 = Calendar.current.date(byAdding: .hour, value: 1, to: d0)!
+        let cached = try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-hourly",
+            startDate: d0,
+            recurrenceType: .hourly
+        )
+
+        await calendarService.toggleEventCompleted(
+            eventID: occID("rec-hourly", d0),
+            isCompleted: true
+        )
+
+        XCTAssertEqual(cached.completedOccurrenceDates, [d0])
+        XCTAssertFalse(cached.isCompleted)
+        XCTAssertEqual(cached.startDate?.timeIntervalSince1970 ?? 0, d1.timeIntervalSince1970, accuracy: 0.001)
+    }
 }
