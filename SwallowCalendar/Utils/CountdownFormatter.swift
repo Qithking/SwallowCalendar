@@ -55,6 +55,10 @@ enum CountdownFormatter {
         }
     }
 
+    /// 倒计时胶囊字体（countdown-capsule-jitter）：等宽数字变体——秒级刷新时
+    /// 同字符数文本宽度恒定，胶囊宽度不再逐秒变化（与徽标 BadgeTextRenderer 同方案）
+    static let capsuleFont: Font = .system(size: 10, weight: .medium).monospacedDigit()
+
     /// 跨零边沿判定（countdown-overdue-color-sync）：
     /// wasCountingDown = 本胶囊此前是否处于倒计时中；remaining = 当前剩余秒数。
     /// 仅「倒计时中 → 归零」返回 true（跨过截止线的瞬间），用于触发一次外层刷新：

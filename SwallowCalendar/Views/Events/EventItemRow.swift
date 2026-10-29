@@ -388,7 +388,7 @@ struct CountdownTextView: View {
 
     var body: some View {
         Text(countdownText)
-            .font(.system(size: 10, weight: .medium))
+            .font(CountdownFormatter.capsuleFont)
             .foregroundColor(.white)
             .padding(.horizontal, 6)
             .padding(.vertical, 1)
