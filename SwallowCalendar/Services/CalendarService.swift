@@ -416,6 +416,20 @@ final class CalendarService {
         return []
     }
 
+    /// 构造 EKReminder.dueDateComponents（全部写回点唯一入口）
+    /// - Note: bug advance-recurrence-missing-timezone——Calendar.current.dateComponents(_:from:)
+    ///   返回值 timeZone 为 nil（探针实证），带 recurrenceRules 的循环提醒写回无时区 dueDate 后，
+    ///   ReminderKit 推进前向警报报 Fault「dueDate missing timezone」；显式补 Calendar 时区
+    static func makeDueComponents(from date: Date, isAllDay: Bool) -> DateComponents {
+        var components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        if !isAllDay {
+            components.hour = Calendar.current.component(.hour, from: date)
+            components.minute = Calendar.current.component(.minute, from: date)
+        }
+        components.timeZone = Calendar.current.timeZone
+        return components
+    }
+
     // MARK: - CRUD
 
     /// 创建日历事件或提醒
@@ -670,13 +684,8 @@ final class CalendarService {
             throw EventError.noReminderCalendarAvailable
         }
         
-        // 设置到期时间
-        var components = Calendar.current.dateComponents([.year, .month, .day], from: dueDate)
-        if !isAllDay {
-            components.hour = Calendar.current.component(.hour, from: dueDate)
-            components.minute = Calendar.current.component(.minute, from: dueDate)
-        }
-        reminder.dueDateComponents = components
+        // 设置到期时间（统一入口，保证 dueDateComponents 携带时区）
+        reminder.dueDateComponents = Self.makeDueComponents(from: dueDate, isAllDay: isAllDay)
         
         // B-33：同步写入 EK priority——此前只写缓存，EK 侧提醒无优先级；
         // 语义映射：本项目 EventPriority 9=最高，EKReminder 1=最高、9=最低、0=无
@@ -836,13 +845,8 @@ final class CalendarService {
             throw EventError.noReminderCalendarAvailable
         }
 
-        // 设置到期时间
-        var components = Calendar.current.dateComponents([.year, .month, .day], from: dueDate)
-        if !isAllDay {
-            components.hour = Calendar.current.component(.hour, from: dueDate)
-            components.minute = Calendar.current.component(.minute, from: dueDate)
-        }
-        reminder.dueDateComponents = components
+        // 设置到期时间（统一入口，保证 dueDateComponents 携带时区）
+        reminder.dueDateComponents = Self.makeDueComponents(from: dueDate, isAllDay: isAllDay)
 
         // 设置提醒闹钟：多级 offsets 优先，单级 minutes 兼容；
         // 提醒路径传 due → 系统侧写准点绝对闹钟（提前提醒由应用内缓存承担）
@@ -1150,12 +1154,7 @@ final class CalendarService {
                 if isReminder {
                     // EKReminder：dueDateComponents 推进到下一次 occurrence（全天不含时分，与创建逻辑一致）
                     if let reminder = eventStore.calendarItem(withIdentifier: baseID) as? EKReminder, let next {
-                        var components = Calendar.current.dateComponents([.year, .month, .day], from: next)
-                        if !cached.isAllDay {
-                            components.hour = Calendar.current.component(.hour, from: next)
-                            components.minute = Calendar.current.component(.minute, from: next)
-                        }
-                        reminder.dueDateComponents = components
+                        reminder.dueDateComponents = Self.makeDueComponents(from: next, isAllDay: cached.isAllDay)
                         do {
                             try eventStore.save(reminder, commit: true)
                             AppLogger.sync.debug("EKReminder occurrence 推进 ok base=\(baseID)")
@@ -1240,7 +1239,6 @@ final class CalendarService {
             // B-6：startDate 与 endDate 任一传入都更新到期时间（提醒只有 dueDate
             // 一个时间语义），原实现忽略 endDate 导致只调结束时间不生效
             if let dueSource = startDate ?? endDate {
-                var components = Calendar.current.dateComponents([.year, .month, .day], from: dueSource)
                 // 全天事件只写日期；非全天写入具体时间（isAllDay 未传时按原始时间
                 // 是否带时分秒推断——B-22：原 <86400 判定会把跨天定时提醒
                 //（如今天10:00~明天10:30，间隔>24h）误判为全天）
@@ -1251,11 +1249,7 @@ final class CalendarService {
                     let comps = Calendar.current.dateComponents([.hour, .minute, .second], from: dueSource)
                     isTimed = (comps.hour ?? 0) != 0 || (comps.minute ?? 0) != 0 || (comps.second ?? 0) != 0
                 }
-                if isTimed {
-                    components.hour = Calendar.current.component(.hour, from: dueSource)
-                    components.minute = Calendar.current.component(.minute, from: dueSource)
-                }
-                reminder.dueDateComponents = components
+                reminder.dueDateComponents = Self.makeDueComponents(from: dueSource, isAllDay: !isTimed)
             }
             // 更新提醒闹钟：多级 offsets 优先（空数组=清除），单级 minutes 兼容；
             // 两者均未传时不动 alarms（保持 nil = 不改提醒语义）；

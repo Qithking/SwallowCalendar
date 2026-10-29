@@ -378,4 +378,27 @@ class CalendarServiceTests: XCTestCase {
         let prefs = try context.fetch(FetchDescriptor<CalendarPreference>())
         XCTAssertTrue(prefs.isEmpty, "无系统日历时不应写任何偏好记录")
     }
+
+    // MARK: - dueDateComponents 时区（bug advance-recurrence-missing-timezone）
+
+    /// bug advance-recurrence-missing-timezone：dueDateComponents 写回必须携带 timeZone，
+    /// 否则带 recurrenceRules 的循环提醒写回无时区 dueDate 后，
+    /// ReminderKit 推进前向警报报 Fault「dueDate missing timezone」（系统侧提醒不响）
+    func testDueDateComponentsCarryTimeZone() throws {
+        // Given: 一个带具体时分的时刻（15:30，避开零点边界误判全天）
+        let date = try XCTUnwrap(Calendar.current.date(bySettingHour: 15, minute: 30, second: 0, of: Date()))
+
+        // When: 构造全天 / 定时两种 dueDateComponents（全部写回点的唯一入口）
+        let allDay = CalendarService.makeDueComponents(from: date, isAllDay: true)
+        let timed = CalendarService.makeDueComponents(from: date, isAllDay: false)
+
+        // Then: 两者都必须携带与系统日历一致的时区
+        XCTAssertNotNil(allDay.timeZone, "全天 dueDateComponents 必须携带时区")
+        XCTAssertNotNil(timed.timeZone, "定时 dueDateComponents 必须携带时区")
+        XCTAssertEqual(timed.timeZone, Calendar.current.timeZone, "时区应与系统日历时区一致")
+        // 语义不变：全天只写日期（无时分），定时写时分
+        XCTAssertNil(allDay.hour, "全天组件不应带时分")
+        XCTAssertEqual(timed.hour, 15, "定时组件应保留小时")
+        XCTAssertEqual(timed.minute, 30, "定时组件应保留分钟")
+    }
 }
