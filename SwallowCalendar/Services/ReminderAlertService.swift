@@ -23,8 +23,9 @@ struct ReminderAlertKey: Equatable {
         self.alertTime = alertTime
     }
 
-    /// 解码持久化串：时间戳取末段 "|" 之后（eventID 本身不含 "|"，末段分割对
-    /// 新旧格式均正确；时间戳段非法时按旧格式兼容处理）
+    /// 解码持久化串：时间戳取末段 "|" 之后（baseID 恒不含 "|"，末段分割对
+    /// 各格式均正确——纯 eventID（v1 旧格式）、复合 eventID "baseID|occ:<epoch>"
+    /// （R-1 起候选行）、前两者加时间戳的完整键；时间戳段非法时按旧格式兼容处理）
     init(raw: String) {
         if let idx = raw.lastIndex(of: "|"),
            let ts = TimeInterval(raw[raw.index(after: idx)...]) {
@@ -142,8 +143,8 @@ final class ReminderAlertService {
         }
     }
     
-    /// 检查过期事项（供数据同步完成后调用）
-    /// 启动时的检查会忽略 lastAlertedEventIDs 过滤，确保过期事项始终被提示
+    /// 检查到期的事件（供数据同步完成后调用）
+    /// 启动时的检查会忽略 lastAlertedEventIDs 过滤，确保过期事项始终提示
     /// bug: main-panel-reopen-expired-popup：主面板重开会重建 ContentView 并重跑
     /// .task → initializeServices → 本方法，原实现每次都以启动式语义弹窗。
     /// 按需求「仅应用初始启动时弹」：应用生命周期内仅首次调用真正执行，
@@ -156,10 +157,16 @@ final class ReminderAlertService {
         // A-20：inFlight 防执行期重入；完成标志在检查完成后置位——
         // 原前置位使检查中途失败/被中断后永不重试
         isStartupCheckInFlight = true
-        await checkDueEvents(includeExpired: true, ignoreAlertedCache: true)
+        // R-14：仅检查成功才置位完成标志——context 未就绪/fetch 失败时返回 false，
+        // 标志保持未置位，本进程内后续调用（主面板重开/数据同步完成）可重试
+        let succeeded = await checkDueEvents(includeExpired: true, ignoreAlertedCache: true)
         isStartupCheckInFlight = false
-        hasCompletedStartupExpiredCheck = true
-        AppLogger.reminder.info("数据同步后过期事项检查完成")
+        if succeeded {
+            hasCompletedStartupExpiredCheck = true
+            AppLogger.reminder.info("数据同步后过期事项检查完成")
+        } else {
+            AppLogger.reminder.error("启动过期检查失败，完成标志未置位，等待下次触发重试")
+        }
     }
     
     /// 测试辅助：跑一次常规定时检查（bug: due-reminder-zero-offset-miss，@testable 可见）
@@ -233,12 +240,16 @@ final class ReminderAlertService {
         }
         guard let next = Self.nextTriggerTime(now: now, events: events, snoozeRecords: Self.loadSnoozeRecords(), context: context) else { return }
         let interval = max(0, next.timeIntervalSince(now))
-        dynamicTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+        // R-16：加入 .common mode——scheduledTimer 默认挂 default mode，
+        // UI 交互期间准点提醒暂停延迟弹出（A-16/R-15 同型遗漏）
+        let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 await self?.checkDueEvents()
                 self?.rescheduleDynamicTimer()
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        dynamicTimer = timer
         // 用户可感知的准点提醒：容差收紧到 1 秒
         dynamicTimer?.tolerance = 1
     }
@@ -247,11 +258,14 @@ final class ReminderAlertService {
     /// - Parameters:
     ///   - includeExpired: 是否包含已过期的事项（仅在应用启动时使用）
     ///   - ignoreAlertedCache: 是否忽略已提醒缓存（启动时为 true，确保过期事项始终提示）
-    private func checkDueEvents(includeExpired: Bool = false, ignoreAlertedCache: Bool = false) async {
+    /// - Returns: 检查是否成功完成（R-14：context 未就绪或 fetch 失败返回 false，
+    ///            供启动过期检查判断是否置位完成标志；常规调用方忽略返回值）
+    @discardableResult
+    private func checkDueEvents(includeExpired: Bool = false, ignoreAlertedCache: Bool = false) async -> Bool {
         // 使用 EventCacheService 的上下文，确保与待办列表显示的数据一致
         guard let context = EventCacheService.shared.context else {
             AppLogger.reminder.warning("EventCacheService 未配置")
-            return
+            return false
         }
         let now = Date()
         let calendar = Calendar.current
@@ -291,11 +305,21 @@ final class ReminderAlertService {
             var allUserEvents = try context.fetch(baseDescriptor)
             // bug: startup-expired-popup-recurring-miss：循环 base 行 startDate 只是「下一期」
             // 游标，被越过的未完成历史实例直查漏报（主面板经锚点展开可见）——启动过期
-            // 检查把 base 行替换为同源展开实例，与主面板判定源对齐（仅启动路径，常规
-            // 60s 轮询窗口语义不变）
+            // 检查把 base 行替换为同源展开实例，与主面板判定源对齐（R-1 起常规窗口
+            // 路径同样替换，见下方 recurringWindowCandidates）
             if includeExpired {
                 allUserEvents = Self.expiredCheckCandidates(
                     rawEvents: allUserEvents,
+                    upperBound: fetchUpperBound,
+                    context: context
+                )
+            } else {
+                // R-1：常规窗口内循环 base 行同样替换为窗口内展开实例（复合 ID），
+                // 弹窗完成走 occurrence 级路径（写历史/推进游标/EK 不污染），
+                // 与启动路径语义对齐，消除双语义并存
+                allUserEvents = Self.recurringWindowCandidates(
+                    rawEvents: allUserEvents,
+                    windowStart: windowStart,
                     upperBound: fetchUpperBound,
                     context: context
                 )
@@ -401,8 +425,10 @@ final class ReminderAlertService {
             UserDefaults.standard.set(now.timeIntervalSince1970, forKey: Self.lastCheckTimeKey)
             // 检查完成后重算准点调度（下次 alertTime 可能已变化）
             rescheduleDynamicTimer()
+            return true
         } catch {
             AppLogger.reminder.error("检查到期事件失败: \(String(describing: error))")
+            return false
         }
     }
     
@@ -468,6 +494,37 @@ final class ReminderAlertService {
                 windowEnd: upperBound,
                 context: context
             )
+            result.append(contentsOf: instances.filter { !$0.isCompleted })
+        }
+        return result
+    }
+
+    /// 常规轮询窗口候选（bug: window-poll-recurring-base-id-completion，R-1）：
+    /// 常规 60s 轮询路径捞到的循环 base 行同样替换为窗口内展开实例（复合 ID），
+    /// 与启动路径（expiredCheckCandidates）完成语义对齐——否则弹窗行携带 base ID，
+    /// markAsCompleted 经 parseOccurrenceID=nil 走整条完成主路径
+    /// （EK 整条污染、无完成历史、游标不推进），双语义并存。
+    /// 粗筛结果中的循环行 startDate 已落 [windowStart, upperBound]，展开同窗口
+    /// 必产出该期实例；普通单次行原样保留
+    static func recurringWindowCandidates(
+        rawEvents: [CachedEvent],
+        windowStart: Date,
+        upperBound: Date,
+        context: ModelContext
+    ) -> [CachedEvent] {
+        let noneRaw = RecurrenceType.none.rawValue
+        let recurringBases = rawEvents.filter { ($0.recurrenceTypeRaw ?? noneRaw) != noneRaw }
+        guard !recurringBases.isEmpty else { return rawEvents }
+        let baseIDs = Set(recurringBases.map(\.eventID))
+        var result = rawEvents.filter { !baseIDs.contains($0.eventID) }
+        for base in recurringBases {
+            let instances = EventCacheService.shared.expandOccurrences(
+                of: base,
+                windowStart: windowStart,
+                windowEnd: upperBound,
+                context: context
+            )
+            // 已完成历史实例不进候选（实例级 isCompleted 为判定标准，同启动路径）
             result.append(contentsOf: instances.filter { !$0.isCompleted })
         }
         return result
@@ -627,12 +684,25 @@ final class ReminderAlertService {
 
     // MARK: - 去重键辅助
 
+    /// 判断两个 eventID 是否指向同一提醒主体：复合实例 ID（"baseID|occ:<epoch>"，
+    /// R-1 起候选行）归一到 baseID 后比较——静态可测，P2-2 升级兼容的核心判定
+    static func sameAlertSubject(_ lhs: String, _ rhs: String) -> Bool {
+        func baseID(_ id: String) -> String {
+            CachedEvent.parseOccurrenceID(id)?.baseID ?? id
+        }
+        return baseID(lhs) == baseID(rhs)
+    }
+
     /// 判断 (eventID, alertTime) 是否已提醒过：新键精确匹配 alertTime；
-    /// 旧格式键（解码 alertTime == .distantPast）惰性兼容——视为该事件已提醒过
+    /// 旧格式键（解码 alertTime == .distantPast）惰性兼容——视为该事件已提醒过。
+    /// P2-2 升级兼容：存量键 eventID 为循环 base 行 ID，R-1 起候选行为复合实例 ID，
+    /// 精确匹配会脱靶导致升级后首个到点周期重复弹——同一期的 alertTime 不随 ID
+    /// 表示形式变化，baseID 相同且 alertTime 相同即同一次提醒；不同期 alertTime
+    /// 必不同，归一化不会误吞新一期
     private func hasAlertedKey(eventID: String, alertTime: Date) -> Bool {
         lastAlertedEventIDs.contains { raw in
             let decoded = ReminderAlertKey(raw: raw)
-            return decoded.eventID == eventID &&
+            return Self.sameAlertSubject(decoded.eventID, eventID) &&
                    (decoded.alertTime == alertTime || decoded.alertTime == .distantPast)
         }
     }

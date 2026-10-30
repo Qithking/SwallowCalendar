@@ -73,11 +73,15 @@ struct EventCompletedListView: View {
         
         switch appSettings.sortMode {
         case .default:
+            // R-20：与待办列表（EventTodoListView）口径统一——日期为主键、优先级为次键；
+            // 原两列表同档位主次键相反，同档位设置下待办与已办顺序观感矛盾
             sorted.sort {
-                if $0.priority != $1.priority {
-                    return isAscending ? $0.priority < $1.priority : $0.priority > $1.priority
+                let date0 = $0.startDate ?? .distantPast
+                let date1 = $1.startDate ?? .distantPast
+                if date0 != date1 {
+                    return isAscending ? date0 < date1 : date0 > date1
                 }
-                return isAscending ? ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) : ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
+                return isAscending ? $0.priority < $1.priority : $0.priority > $1.priority
             }
         case .createTime:
             sorted.sort {
@@ -176,6 +180,15 @@ struct EventCompletedListView: View {
             debouncedRefresh()
         }
         .onChange(of: selectedDate) { _, _ in
+            debouncedRefresh()
+        }
+        // R-7：对照 EventTodoListView 补广播监听——别处（桌面面板/菜单弹层/过期弹窗）
+        // 完成或取消完成后经 .cachedEventsChanged 广播，已办列表与头部计数同步重载；
+        // 倒计时归零重建行（countdown-overdue-color-sync）同样适用
+        .onReceive(NotificationCenter.default.publisher(for: .cachedEventsChanged)) { _ in
+            debouncedRefresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .countdownExpired)) { _ in
             debouncedRefresh()
         }
     }

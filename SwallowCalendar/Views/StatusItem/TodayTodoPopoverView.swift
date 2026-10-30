@@ -60,8 +60,14 @@ struct TodayTodoPopoverView: View {
         .frame(width: 300)
         .onAppear {
             // 初始档 = 应用设置「默认显示待办」（映射四档，「全部」回退本月）
-            mode = DesktopTodoPanelFilter.defaultMode(from: appSettings.defaultFilterModeEnum)
-            reload()
+            // R-18：与 A-22 面板同修——改档后由 onChange(mode) 链路 reload，
+            // 原无条件 reload + 改档触发 onChange 再 reload 造成挂载双查库
+            let initialMode = DesktopTodoPanelFilter.defaultMode(from: appSettings.defaultFilterModeEnum)
+            if initialMode == mode {
+                reload()
+            } else {
+                mode = initialMode
+            }
         }
         // 勾选完成走 .cachedEventsChanged 广播（主面板同款链路），弹层即时刷新
         .onReceive(NotificationCenter.default.publisher(for: .cachedEventsChanged)) { _ in
@@ -154,7 +160,8 @@ struct TodayTodoPopoverView: View {
     private func reload(now: Date = Date()) {
         // 更新超时判定基准时刻
         reloadAt = now
-        guard EventCacheService.shared.context != nil else {
+        // R-18：单次 guard-let 取上下文——原 nil 检查后又在下方过滤闭包内 context! 强解包（A-22 同型）
+        guard let context = EventCacheService.shared.context else {
             todos = []
             return
         }
@@ -166,7 +173,7 @@ struct TodayTodoPopoverView: View {
         // 档位精判复用面板纯函数（无日期行恒显示、跨天行按 startDate 归档，同面板语义）
         todos = TodayTodoSorter.sort(
             fetched.filter { event in
-                !HolidaySkipResolver.isSkipped(of: event, context: EventCacheService.shared.context!)
+                !HolidaySkipResolver.isSkipped(of: event, context: context)
                     && DesktopTodoPanelFilter.included(event, mode: mode, now: now)
             },
             now: now,

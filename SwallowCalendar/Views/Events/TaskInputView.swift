@@ -357,6 +357,12 @@ struct TaskInputView: View {
         let text = inputText.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
 
+        // R-8：冲刷 200ms NLP 防抖——输入后 200ms 内回车时防抖任务尚未执行，
+        // taskTitle 仍是旧值/空值，落库「待办事项」且用户文本被清空丢弃。
+        // 取消挂起任务并按当前输入框文本同步重解析（V-7 手动修改标记仍生效）
+        nlpTask?.cancel()
+        updateFromNLP(inputText)
+
         isProcessing = true
 
         // V-16：全天由用户开关决定——原"时分均为 0"推断会把 NLP 解析的

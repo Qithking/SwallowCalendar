@@ -80,7 +80,10 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     private let currentVersion: String
     private var checkTimer: Timer?
     private var checkTimerLastRun: Date?
-    private let hasCheckedOnThisLaunchKey = "hasCheckedUpdateOnThisLaunch"
+    // R-9：「本次启动已检查」标志——原持久化在 UserDefaults 且全仓从不清除，
+    // 导致仅进程生命周期第一次启动生效；单例生命周期=进程生命周期，
+    // 实例内存变量天然满足「每次启动重置」
+    private var hasCheckedOnThisLaunch = false
 
     private override init() {
         self.currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
@@ -89,6 +92,10 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         // S-14：启动时后台清理上次更新遗留的 ".old-" 备份包
         // （新版本已成功启动，说明替换完成，备份可安全删除）
         Self.cleanupStaleBackups()
+
+        // P2-3：R-9 把「本次启动已检查」标志改为内存后，旧持久化键成为用户设备上的
+        // 死数据——init 进程仅执行一次，顺带移除历史残留
+        UserDefaults.standard.removeObject(forKey: "hasCheckedUpdateOnThisLaunch")
     }
 
     /// 扫描应用所在目录，删除历史更新留下的 "AppName.old-xxx" 备份。
@@ -125,12 +132,9 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         // 检查设置是否开启且是本次启动首次检查
         guard AppSettings.shared.checkUpdateOnFirstLaunch else { return }
         
-        // 每次启动只检查一次
-        let hasCheckedThisLaunch = UserDefaults.standard.bool(forKey: hasCheckedOnThisLaunchKey)
-        guard !hasCheckedThisLaunch else { return }
-        
-        // 标记本次启动已检查
-        UserDefaults.standard.set(true, forKey: hasCheckedOnThisLaunchKey)
+        // 每次启动只检查一次（R-9：内存标志，进程重启即重置）
+        guard !hasCheckedOnThisLaunch else { return }
+        hasCheckedOnThisLaunch = true
         
         Task {
             await checkForUpdatesWithNotification()

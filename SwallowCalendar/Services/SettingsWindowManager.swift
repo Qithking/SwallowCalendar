@@ -12,12 +12,11 @@ import os
 @MainActor
 final class SettingsWindowManager {
     static let shared = SettingsWindowManager()
-    
+
     var appSettings: AppSettings?
     private var settingsWindow: NSWindow?
-    private var settingsWindowDelegate: SettingsWindowDelegate?
     private var isOpening = false
-    
+
     private init() {}
     
     func openSettings() {
@@ -81,8 +80,10 @@ final class SettingsWindowManager {
         window.minSize = NSSize(width: 450, height: 400)
         window.maxSize = NSSize(width: 1200, height: 900)
         
-        settingsWindowDelegate = SettingsWindowDelegate()
-        window.delegate = settingsWindowDelegate
+        // R-2（恢复 2026-10-27 常驻复用修复，原修复未入库随 reset 丢失）：
+        // 窗口常驻复用——关闭仅 orderOut（isReleasedWhenClosed=false），重开走
+        // 上方已有窗口分支复用实例；不再挂 windowWillClose 置 nil 的 delegate
+        // （反复开关重复创建 NSWindow+SwiftUI 视图树，内存累积、窗口状态丢失）
         window.isReleasedWhenClosed = false
         window.hidesOnDeactivate = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -101,15 +102,5 @@ final class SettingsWindowManager {
                 window.becomeKey()
             }
         }
-    }
-    
-    func windowDidClose() {
-        settingsWindow = nil
-    }
-}
-
-private class SettingsWindowDelegate: NSObject, NSWindowDelegate {
-    func windowWillClose(_ notification: Notification) {
-        SettingsWindowManager.shared.windowDidClose()
     }
 }

@@ -937,7 +937,13 @@ final class EventCacheService {
         migrateReminderFlag(context: context)
 
         // 从系统提醒获取（获取所有提醒，包括已完成的，以正确同步外部状态变化）
-        let reminders = await calendarService.fetchReminders(includeCompleted: true)
+        // R-4：nil = 获取失败（授权丢失/EK XPC 失败），此时差集会把全部现有提醒
+        // 误判为已删除——completedOccurrenceDatesJSON/originStartDate 仅存缓存，
+        // 误删不可恢复。跳过本轮同步（缓存保留旧值），返回 false 供上层反馈
+        guard let reminders = await calendarService.fetchReminders(includeCompleted: true) else {
+            AppLogger.cache.error("syncReminders 跳过：fetchReminders 获取失败（授权丢失或 EK 调用失败），保留现有提醒缓存避免误删")
+            return false
+        }
 
         // 获取现有的提醒，构建字典以优化查询
         var existingByID: [String: CachedEvent] = [:]
@@ -1026,7 +1032,12 @@ final class EventCacheService {
             for event in events {
                 context.delete(event)
             }
-            try? context.save()
+            // R-13：save 失败静默会与库内实际状态不一致，补日志留痕
+            do {
+                try context.save()
+            } catch {
+                AppLogger.cache.error("clearRemindersCache 保存失败: \(String(describing: error))")
+            }
         }
     }
 
@@ -1229,14 +1240,20 @@ final class EventCacheService {
             for event in eventsToDelete {
                 context.delete(event)
             }
-            try? context.save()
+            // R-13：save 失败静默会与库内实际状态不一致，补日志留痕
+            do {
+                try context.save()
+            } catch {
+                AppLogger.cache.error("clearSystemCalendarCache 保存失败: \(String(describing: error))")
+            }
         }
     }
 
     /// 清除缓存（分类保护：仅清系统/订阅缓存）
     /// - Note: 用户自建事项与提醒缓存不清除——非"缓存-EK 双写"场景下
     ///         （如关闭了"同步到系统日历"），清缓存会导致用户数据永久丢失
-    func clearCache() {
+    @MainActor
+    func clearCache() async {
         guard let context = self.context else { return }
 
         let descriptor = FetchDescriptor<CachedEvent>()
@@ -1250,9 +1267,17 @@ final class EventCacheService {
                 }
                 context.delete(event)
                 deletedCount += 1
+                // R-21：每条让出一轮 runloop（A-8 同型）——大量缓存时逐行 delete
+                // 独占主线程冻结 UI，yield 后进度动画与交互可穿插响应
+                await Task.yield()
             }
             if deletedCount > 0 {
-                try? context.save()
+                // R-13：save 失败静默会与库内实际状态不一致，补日志留痕
+                do {
+                    try context.save()
+                } catch {
+                    AppLogger.cache.error("clearCache 保存失败: \(String(describing: error))")
+                }
             }
             AppLogger.cache.info("清除缓存：删除 \(deletedCount) 条系统/订阅缓存，用户事项与提醒已保留")
         }
@@ -1302,7 +1327,12 @@ final class EventCacheService {
         }
 
         if deletedCount > 0 || userDeletedCount > 0 {
-            try? context.save()
+            // R-13：save 失败静默会导致过期缓存反复重删，补日志留痕
+            do {
+                try context.save()
+            } catch {
+                AppLogger.cache.error("cleanupOldEvents 保存失败: \(String(describing: error))")
+            }
             AppLogger.cache.info("清理过期缓存：系统事件 \(deletedCount) 条，已完成用户事项/提醒 \(userDeletedCount) 条（保留 \(Self.userEventRetentionDays) 天）")
         }
     }

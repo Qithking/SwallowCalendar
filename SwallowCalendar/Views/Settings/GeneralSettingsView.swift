@@ -79,6 +79,9 @@ struct GeneralSettingsView: View {
                                 )
                                 .onTapGesture {
                                     settings.accentColorHex = colorHex
+                                    // R-19：同步回写 @State——原只写 settings，ColorPicker
+                                    // 仍持旧 customAccentColor 为基线，轻点即以旧值覆写刚选的预设色
+                                    customAccentColor = Color(hex: colorHex)
                                 }
                         }
                     }

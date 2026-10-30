@@ -200,16 +200,24 @@ final class CalendarService {
     ///   - from: 可选的开始日期，用于过滤有到期时间的提醒
     ///   - to: 可选的结束日期，用于过滤有到期时间的提醒
     /// - Note: 没有到期时间的提醒不受日期范围限制，始终返回
-    func fetchReminders(includeCompleted: Bool = false, from: Date? = nil, to: Date? = nil) async -> [CalendarEvent] {
+    /// - Returns: nil 表示获取失败（授权丢失/EK 调用失败），空数组才是真实无数据；
+    ///           调用方（syncReminders 差集删除）必须区分二者，失败时禁止清空缓存
+    func fetchReminders(includeCompleted: Bool = false, from: Date? = nil, to: Date? = nil) async -> [CalendarEvent]? {
+        // R-4：授权丢失原与"真空"同返 []，下游差集删除会误清全部提醒缓存
+        //（completedOccurrenceDatesJSON/originStartDate 仅存缓存，丢失不可恢复）
         guard reminderAuthorizationStatus == .fullAccess else {
-            return []
+            return nil
         }
 
         let predicate = eventStore.predicateForReminders(in: nil)
 
         return await withCheckedContinuation { continuation in
             eventStore.fetchReminders(matching: predicate) { reminders in
-                let all = reminders ?? []
+                // R-4：EK 回调 nil = XPC 失败，同样与"真空"区分
+                guard let all = reminders else {
+                    continuation.resume(returning: nil)
+                    return
+                }
                 // bug: ek-recurrence-materialization-mirror——Apple 对循环提醒按「发生」物化为
                 // 独立 EKReminder，历史发生以已完成态落库。锚集合 = 带规则的未完成条目，
                 // 同 title 已完成条目即物化历史，不入库（syncReminders 按返回集差集自动删缓存）
@@ -1234,7 +1242,13 @@ final class CalendarService {
         // 编辑即改整条，回查本体 ID（Risks 表 Mitigation：编辑入口先 parseOccurrenceID 分流）
         let baseID = CachedEvent.parseOccurrenceID(eventID)?.baseID ?? eventID
         if isReminder {
-            guard let reminder = eventStore.calendarItem(withIdentifier: baseID) as? EKReminder else { return }
+            // R-5：EK 对象失效（事项可能已被系统侧删除）时静默跳过会令 UI 假装保存成功，
+            // 补 NOT-FOUND 日志（对照 deleteEvent B-7）；缓存分支同步跳过——否则下次同步
+            // 会从 EK 拉回旧状态覆盖（同 B-2 一致性原则）
+            guard let reminder = eventStore.calendarItem(withIdentifier: baseID) as? EKReminder else {
+                AppLogger.sync.warning("updateEvent EKReminder NOT-FOUND，跳过更新 id=\(baseID)")
+                return
+            }
             if let title { reminder.title = title }
             // B-6：startDate 与 endDate 任一传入都更新到期时间（提醒只有 dueDate
             // 一个时间语义），原实现忽略 endDate 导致只调结束时间不生效
@@ -1259,7 +1273,11 @@ final class CalendarService {
             }
             try eventStore.save(reminder, commit: true)
         } else {
-            guard let event = eventStore.event(withIdentifier: baseID) else { return }
+            // R-5：同上，EKEvent 对象失效时补 NOT-FOUND 日志
+            guard let event = eventStore.event(withIdentifier: baseID) else {
+                AppLogger.sync.warning("updateEvent EKEvent NOT-FOUND，跳过更新 id=\(baseID)")
+                return
+            }
             if let title { event.title = title }
             if let startDate { event.startDate = startDate }
             if let endDate { event.endDate = endDate }

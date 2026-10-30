@@ -21,8 +21,11 @@ struct BatchAddView: View {
     @State private var skipHolidays = false
 
     private var validLineCount: Int {
-        text.split(separator: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+        text
+            // R-11：与 prepareLines 同口径——CRLF 的 \r\n 是单个 Character，必须
+            // whereSeparator 拆行，split(separator: "\n") 对 CRLF 文本整个不拆
+            .split(whereSeparator: { $0.isNewline })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .count
     }

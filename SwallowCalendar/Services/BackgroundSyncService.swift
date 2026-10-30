@@ -105,30 +105,35 @@ final class BackgroundSyncService {
 
         var failures: [String] = []
 
-        let preferences = fetchPreferences(context: context)
-
         // E-5：日历授权门槛只包住系统日历/提醒同步——ICS 订阅源同步不依赖 EventKit 授权，
         // 原顶部 guard 会使用户拒绝日历授权时订阅功能静默失效
         let hasCalendarAccess = CalendarService.shared.authorizationStatus == .fullAccess
-        if hasCalendarAccess {
-            let enabledCals = CalendarService.shared.enabledCalendars(preferences: preferences)
+        // R-6：nil = 本地偏好查询失败，跳过系统日历同步段——失败伪装真空会触发
+        // enabledCalendars 全量分支 + seedDefaultCalendarPreferences 放行，
+        // 把用户已裁剪的勾选配置持久化重置；提醒同步不依赖偏好，照常执行
+        if let preferences = fetchPreferences(context: context) {
+            if hasCalendarAccess {
+                let enabledCals = CalendarService.shared.enabledCalendars(preferences: preferences)
 
-            if !enabledCals.isEmpty {
-                if !(await CalendarService.shared.cacheService.syncEvents(from: CalendarService.shared, calendars: enabledCals)) {
-                    failures.append("日历事件同步失败")
+                if !enabledCals.isEmpty {
+                    if !(await CalendarService.shared.cacheService.syncEvents(from: CalendarService.shared, calendars: enabledCals)) {
+                        failures.append("日历事件同步失败")
+                    } else {
+                        // 初始同步成功后默认勾选全部系统日历（幂等：已有偏好记录则跳过），
+                        // 使设置页勾选状态与同步/显示口径一致
+                        CalendarService.shared.seedDefaultCalendarPreferences(
+                            context: context,
+                            preferences: preferences,
+                            calendars: CalendarService.shared.calendars
+                        )
+                    }
                 } else {
-                    // 初始同步成功后默认勾选全部系统日历（幂等：已有偏好记录则跳过），
-                    // 使设置页勾选状态与同步/显示口径一致
-                    CalendarService.shared.seedDefaultCalendarPreferences(
-                        context: context,
-                        preferences: preferences,
-                        calendars: CalendarService.shared.calendars
-                    )
+                    // clearSystemCalendarCache 为 @MainActor 同步方法，同类 @MainActor 上下文可直接调用
+                    CalendarService.shared.cacheService.clearSystemCalendarCache()
                 }
-            } else {
-                // clearSystemCalendarCache 为 @MainActor 同步方法，同类 @MainActor 上下文可直接调用
-                CalendarService.shared.cacheService.clearSystemCalendarCache()
             }
+        } else if hasCalendarAccess {
+            failures.append("本地偏好读取失败，本轮跳过系统日历同步以保护用户配置")
         }
 
         if AppSettings.shared.syncSystemReminders && CalendarService.shared.reminderAuthorizationStatus == .fullAccess {
@@ -142,11 +147,16 @@ final class BackgroundSyncService {
 
         // ICS 订阅源同步：外部变更防抖路径跳过（includeSubscriptions=false，AC-3）
         if includeSubscriptions {
-            let customSources = fetchCustomSources(context: context)
-            let enabledSources = customSources.filter { $0.isEnabled }
-            // 始终调用同步（即使没有启用的源），确保禁用所有订阅时能清理旧缓存
-            if !(await CalendarService.shared.cacheService.syncSubscriptionEvents(sources: enabledSources)) {
-                failures.append("订阅日历同步失败")
+            // R-6：nil = 订阅源查询失败，跳过本轮订阅同步——失败伪装空列表会令
+            // syncSubscriptionEvents(sources: []) 清空订阅缓存
+            if let customSources = fetchCustomSources(context: context) {
+                let enabledSources = customSources.filter { $0.isEnabled }
+                // 始终调用同步（即使没有启用的源），确保禁用所有订阅时能清理旧缓存
+                if !(await CalendarService.shared.cacheService.syncSubscriptionEvents(sources: enabledSources)) {
+                    failures.append("订阅日历同步失败")
+                }
+            } else {
+                failures.append("订阅源读取失败，本轮跳过订阅同步以保护订阅缓存")
             }
         }
 
@@ -155,11 +165,15 @@ final class BackgroundSyncService {
 
     private func startTimer() {
         syncTimer?.invalidate()
-        syncTimer = Timer.scheduledTimer(withTimeInterval: syncIntervalSeconds, repeats: true) { [weak self] _ in
+        // R-15：加入 .common mode——scheduledTimer 默认挂 default mode，
+        // UI 交互（滚动/拖拽 tracking mode）期间周期同步暂停（A-16 同型遗漏）
+        let timer = Timer(timeInterval: syncIntervalSeconds, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 await self?.syncOnce()
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        syncTimer = timer
     }
 
     func stop() {
@@ -167,13 +181,18 @@ final class BackgroundSyncService {
         syncTimer = nil
     }
     
-    private func fetchPreferences(context: ModelContext) -> [CalendarPreference] {
+    /// R-6：返回 nil = 查询失败（数据库异常），空数组才是新用户真空；
+    /// 失败伪装真空会走 enabledCalendars 全量分支 + seedDefaultCalendarPreferences
+    /// 放行落库全勾，把用户已裁剪的日历勾选配置持久化重置
+    private func fetchPreferences(context: ModelContext) -> [CalendarPreference]? {
         let descriptor = FetchDescriptor<CalendarPreference>()
-        return (try? context.fetch(descriptor)) ?? []
+        return try? context.fetch(descriptor)
     }
 
-    private func fetchCustomSources(context: ModelContext) -> [CustomCalendarSource] {
+    /// R-6：返回 nil = 查询失败；失败伪装空列表会令 syncSubscriptionEvents(sources: [])
+    /// 清空订阅缓存
+    private func fetchCustomSources(context: ModelContext) -> [CustomCalendarSource]? {
         let descriptor = FetchDescriptor<CustomCalendarSource>()
-        return (try? context.fetch(descriptor)) ?? []
+        return try? context.fetch(descriptor)
     }
 }

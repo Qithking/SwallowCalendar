@@ -20,7 +20,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // 状态栏图标
     private lazy var statusItem: NSStatusItem = {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.behavior = .removalAllowed
+        // R-24：不设置 behavior 即保持默认不可移除（AppKit 无 .removalDisallowed，
+        // 默认空值已禁止 Cmd+拖除；显式 .removalAllowed 才会开放移除）——accessory
+        // 应用无 Dock 图标与菜单栏恢复入口，图标被拖除后唯一入口消失且无法自行恢复
         item.button?.action = #selector(performStatusItemClick)
         item.button?.target = self
         item.button?.imagePosition = .imageLeft

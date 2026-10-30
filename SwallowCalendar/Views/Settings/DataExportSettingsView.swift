@@ -179,18 +179,21 @@ struct DataExportSettingsView: View {
         
         Task {
             do {
-                // 模拟异步操作（实际 clearCache 是同步的，但为了 UI 反馈使用 Task）
-                try await Task.sleep(nanoseconds: 100_000_000)  // 100ms 延迟让用户看到进度
+                // 100ms 延迟让用户看到进度；clearCache 已 async（见下方 R-21），sleep 仅保留进度反馈
+                try await Task.sleep(nanoseconds: 100_000_000)
                 
-                EventCacheService.shared.clearCache()
+                // R-21：clearCache 改 async（逐行 delete 让出 runloop），await 等待完成
+                await EventCacheService.shared.clearCache()
                 ICSService.shared.clearCache()
 
                 // 通知其他视图缓存已清除，需要刷新
                 NotificationCenter.default.post(name: Notification.Name("CalendarCacheCleared"), object: nil)
-                
+
                 await MainActor.run {
                     isClearing = false
                     clearStatus = .success
+                    // R-21：清除后刷新统计区——原仅 onAppear 加载，清除后「本地事项数」仍显示旧值
+                    loadEventCount()
                     
                     // 5 秒后自动清除状态（sleep 失败直接跳过，无需上抛）
                     Task {

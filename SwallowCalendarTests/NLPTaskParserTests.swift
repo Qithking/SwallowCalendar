@@ -62,6 +62,36 @@ class NLPTaskParserTests: XCTestCase {
         XCTAssertEqual(result2.title, "晨会")
     }
     
+    // R-3：无时间分量的周期输入（如"每天 喝水"）首期应保持今天，
+    // 不应因 now<now 微秒差被"已过推进"逻辑推到明天
+    func testRecurrenceWithoutTimeComponentKeepsToday() {
+        let calendar = Calendar.current
+        let today = Date()
+
+        let daily = NLPTaskParser.parse("每天 喝水")
+        XCTAssertEqual(daily.recurrence, .daily)
+        XCTAssertTrue(calendar.isDate(daily.date, inSameDayAs: today),
+                      "无时间分量的每日任务首期应保持今天，实际: \(daily.date)")
+
+        let weekly = NLPTaskParser.parse("每周 锻炼")
+        XCTAssertEqual(weekly.recurrence, .weekly)
+        XCTAssertTrue(calendar.isDate(weekly.date, inSameDayAs: today),
+                      "无时间分量的每周任务首期应保持今天，实际: \(weekly.date)")
+    }
+
+    // R-10：不存在的公历日期（如"2月30日"）应钳制到该月最后一天，不再静默降级为今天
+    func testNonexistentGregorianDateClampsToMonthEnd() {
+        let calendar = Calendar.current
+        let result = NLPTaskParser.parse("2月30日 开会")
+
+        let comps = calendar.dateComponents([.month, .day], from: result.date)
+        // 月份必须是 2（降级为今天则落在当前月份，必然失败）
+        XCTAssertEqual(comps.month, 2, "2月30日应解析为2月，实际降级: \(result.date)")
+        // 日序必须是2月最后一天（28 或 29，视闰年而定）
+        let daysInMonth = calendar.range(of: .day, in: .month, for: result.date)?.count ?? 0
+        XCTAssertEqual(comps.day, daysInMonth, "应钳制到2月最后一天（\(daysInMonth)日），实际: \(result.date)")
+    }
+
     func testComplexInput() {
         // 测试复杂输入
         let result = NLPTaskParser.parse("明天下午3点开会 红色 重要 每天循环 提前30分钟")

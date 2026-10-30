@@ -79,7 +79,11 @@ struct NLPTaskParser {
         }
 
         // 对于周期任务，如果时间已经过去，推进到下一个周期（最多推进5次，避免极端情况）
-        if let recurrence = result.recurrence, recurrence != .none && result.date < Date() {
+        // R-3：仅当用户显式输入了日期/时间（matched 非空）才执行"已过推进"。
+        // 无时间分量输入（如"每天 喝水"）parseChineseDate 返回 now+空 matched，
+        // 原 now<now 微秒差会误判已过，首期被推到明天；按决策首期保持今天
+        if let recurrence = result.recurrence, recurrence != .none,
+           !dateResult.matched.isEmpty && result.date < Date() {
             var currentDate = result.date
             let maxAdvances = 5
             for _ in 0..<maxAdvances {
@@ -361,10 +365,11 @@ struct NLPTaskParser {
                 var components = calendar.dateComponents([.year], from: now)
                 components.month = month
                 components.day = day
-                var date = calendar.date(from: components)
+                // R-10：不存在日期（2月30日/4月31日）经钳制回退该月最后一天，不再返回 nil
+                var date = Self.clampedCalendarDate(components, calendar: calendar)
                 if let d = date, d < calendar.startOfDay(for: now) {
                     components.year = (components.year ?? 2026) + 1
-                    date = calendar.date(from: components)
+                    date = Self.clampedCalendarDate(components, calendar: calendar)
                 }
                 
                 // 如果已经有时间信息，合并日期和时间
@@ -445,6 +450,31 @@ struct NLPTaskParser {
 
         // 默认今天
         return (now, "", false)
+    }
+
+    /// R-10：公历日期构造——day 超出该月实际天数（如 2月30日）时钳制到该月最后一天。
+    /// 注意 Calendar.date(from:) 对溢出 day 是 lenient 顺延（2月30日→3月2日）而非返回 nil，
+    /// 故需校验构造结果确实落在请求的月/日，否则钳制
+    private static func clampedCalendarDate(_ components: DateComponents, calendar: Calendar) -> Date? {
+        guard let month = components.month, let day = components.day else {
+            return calendar.date(from: components)
+        }
+        if let date = calendar.date(from: components),
+           calendar.component(.month, from: date) == month,
+           calendar.component(.day, from: date) == day {
+            return date
+        }
+        // lenient 顺延或构造失败：从下月1日回退1天得到本月最后一天
+        var nextMonth = components
+        nextMonth.day = 1
+        if month == 12 {
+            nextMonth.month = 1
+            nextMonth.year = (nextMonth.year ?? 0) + 1
+        } else {
+            nextMonth.month = month + 1
+        }
+        guard let firstOfNext = calendar.date(from: nextMonth) else { return calendar.date(from: components) }
+        return calendar.date(byAdding: .day, value: -1, to: firstOfNext)
     }
 
     /// 解析农历日期

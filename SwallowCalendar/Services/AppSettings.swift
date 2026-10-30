@@ -306,10 +306,16 @@ final class AppSettings {
     }
 
     private func updateLaunchAtLogin() {
+        // R-22：先查 status 再操作——默认配置（launchAtLogin=false）对未注册服务
+        // 无条件 unregister() 每次启动记一条 notRegistered 假错误日志；已启用时
+        // 重复 register 同理。状态已符合目标时直接跳过
+        let status = SMAppService.mainApp.status
         do {
             if launchAtLogin {
+                guard status != .enabled, status != .requiresApproval else { return }
                 try SMAppService.mainApp.register()
             } else {
+                guard status == .enabled || status == .requiresApproval else { return }
                 try SMAppService.mainApp.unregister()
             }
         } catch {

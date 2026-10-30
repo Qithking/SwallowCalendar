@@ -41,4 +41,13 @@ class BatchAddParserTests: XCTestCase {
         let text = (1...105).map { "任务\($0)" }.joined(separator: "\n")
         XCTAssertEqual(BatchAddParser.prepareLines(text).count, 100)
     }
+
+    // R-11：CRLF 粘贴（Windows 文本）行尾 \r 必须被清除，不得残留进标题；
+    // 纯 \r 空行也应被过滤不计条数
+    func testPrepareLinesStripsCRLF() {
+        let lines = BatchAddParser.prepareLines("明天下午3点开会\r\n\r\n后天上午10点体检")
+        XCTAssertEqual(lines.count, 2)
+        XCTAssertEqual(lines[0].rawText, "明天下午3点开会", "行尾 \\r 残留会进标题落库")
+        XCTAssertEqual(lines[1].rawText, "后天上午10点体检")
+    }
 }
