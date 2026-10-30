@@ -33,6 +33,16 @@ final class BackgroundSyncService {
         await BackgroundSyncService.shared.syncOnce(includeSubscriptions: false)
     }
 
+    /// 启动/重开面板同步动作；internal 供测试注入 spy。
+    /// 参数 includeSubscriptions：首次启动 true（全量含 ICS），重开 false（AC-3 同语义跳过 ICS）
+    var startupSyncAction: (_ includeSubscriptions: Bool) async -> Void = { includeSubscriptions in
+        await BackgroundSyncService.shared.syncOnce(includeSubscriptions: includeSubscriptions)
+    }
+
+    /// 进程内是否已完成首次启动同步；重开面板走跳过 ICS 的轻量同步（panel-reopen-ics-refresh）
+    /// internal 供测试复位
+    var hasStartedOnce = false
+
     private init() {}
 
     func configure(with container: ModelContainer) {
@@ -40,7 +50,14 @@ final class BackgroundSyncService {
     }
 
     func start() async {
-        await syncOnce()
+        // bug: panel-reopen-ics-refresh——主面板每次重建都调 start()，重开非数据变更事件，
+        // 全量 ICS 网络刷新属 AC-3 语义外开销；首次启动保持全量，重开仅同步 EK 数据
+        if hasStartedOnce {
+            await startupSyncAction(false)
+        } else {
+            hasStartedOnce = true
+            await startupSyncAction(true)
+        }
         startTimer()
     }
 

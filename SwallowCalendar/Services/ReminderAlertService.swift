@@ -71,7 +71,12 @@ final class ReminderAlertService {
     /// 主面板每次重开都会重跑 ContentView.task → checkExpiredEvents()，
     /// 该标志保证启动式过期检查在应用生命周期内仅首次真正执行
     private var hasCompletedStartupExpiredCheck = false
-    
+    /// 启动检查执行中标志（A-20：完成标志后置位后，防执行期间重入双弹）
+    private var isStartupCheckInFlight = false
+    /// block observer token 必须持有，否则注册即释放失效（A-17）
+    private var changeObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
+
     private init() {
         // 从 UserDefaults 恢复已提醒事件ID，避免应用重启后重复弹窗
         if let saved = UserDefaults.standard.stringArray(forKey: Self.alertedEventIDsKey) {
@@ -84,14 +89,14 @@ final class ReminderAlertService {
         }
         // 准点调度联动（bug: due-alert-punctual-scheduling）：
         // 缓存变更（同步/新建/编辑/完成广播）后重算下次触发时刻
-        NotificationCenter.default.addObserver(
+        changeObserver = NotificationCenter.default.addObserver(
             forName: .cachedEventsChanged, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in self?.rescheduleDynamicTimer() }
         }
         // 睡眠唤醒：补一次检查（B-14 窗口覆盖挂起区间，挂起期漏掉的提醒即时弹出）
         // 并重算准点调度（系统挂起期间 Timer 不触发）
-        NSWorkspace.shared.notificationCenter.addObserver(
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
@@ -123,11 +128,15 @@ final class ReminderAlertService {
         DispatchQueue.main.async { [weak self] in
             // 不要立即检查过期事项，等待数据同步完成后由外部调用 checkExpiredEvents()
             // 每分钟检查一次是否有待办事项到期
-            self?.timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
                 Task {
                     await self?.checkDueEvents()
                 }
             }
+            // A-16：加入 .common mode——scheduledTimer 默认挂 default mode，
+            // UI 交互（滚动/拖拽 tracking mode）期间 60s 轮询暂停导致提醒延迟
+            RunLoop.main.add(timer, forMode: .common)
+            self?.timer = timer
             // 准点调度（上下文未就绪时为无害空转，数据同步后经检查/广播重新调度）
             self?.rescheduleDynamicTimer()
         }
@@ -140,12 +149,16 @@ final class ReminderAlertService {
     /// 按需求「仅应用初始启动时弹」：应用生命周期内仅首次调用真正执行，
     /// 后续（主面板重开触发）直接跳过
     func checkExpiredEvents() async {
-        guard !hasCompletedStartupExpiredCheck else {
-            AppLogger.reminder.info("启动过期检查已完成，跳过本次（主面板重开触发）")
+        guard !hasCompletedStartupExpiredCheck, !isStartupCheckInFlight else {
+            AppLogger.reminder.info("启动过期检查已完成或执行中，跳过本次（主面板重开触发）")
             return
         }
-        hasCompletedStartupExpiredCheck = true
+        // A-20：inFlight 防执行期重入；完成标志在检查完成后置位——
+        // 原前置位使检查中途失败/被中断后永不重试
+        isStartupCheckInFlight = true
         await checkDueEvents(includeExpired: true, ignoreAlertedCache: true)
+        isStartupCheckInFlight = false
+        hasCompletedStartupExpiredCheck = true
         AppLogger.reminder.info("数据同步后过期事项检查完成")
     }
     
@@ -209,7 +222,15 @@ final class ReminderAlertService {
             },
             sortBy: [SortDescriptor(\.startDate)]
         )
-        guard let events = try? context.fetch(descriptor) else { return }
+        // bug: reminder-fetch-swallow——try? 吞错无日志，fetch 失败时动态提醒调度
+        // 链路静默失效（不重排定时器）且无迹可查；记录错误后同样终止本次调度
+        let events: [CachedEvent]
+        do {
+            events = try context.fetch(descriptor)
+        } catch {
+            AppLogger.reminder.error("提醒调度窗口查询失败: \(String(describing: error))")
+            return
+        }
         guard let next = Self.nextTriggerTime(now: now, events: events, snoozeRecords: Self.loadSnoozeRecords(), context: context) else { return }
         let interval = max(0, next.timeIntervalSince(now))
         dynamicTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
@@ -365,11 +386,11 @@ final class ReminderAlertService {
                     guard let self else { return }
                     // B-29：移除后同步持久化——原实现只改内存数组，重启后
                     // UserDefaults 仍含旧 ID，5 分钟重提醒窗口失效
-                    for event in mergedEvents {
-                        // 按事件匹配移除（含新键前缀与旧格式键），300 秒后允许再次提醒
-                        self.lastAlertedEventIDs.removeAll { raw in
-                            ReminderAlertKey(raw: raw).eventID == event.eventID
-                        }
+                    // A-18：Set 化事件 ID——原逐事件全量扫描 O(N×M)，合并弹窗
+                    // 事件多时每条都全量遍历已提醒键数组
+                    let mergedIDs = Set(mergedEvents.map(\.eventID))
+                    self.lastAlertedEventIDs.removeAll { raw in
+                        mergedIDs.contains(ReminderAlertKey(raw: raw).eventID)
                     }
                     self.persistAlertedEventIDs()
                 }
@@ -431,6 +452,15 @@ final class ReminderAlertService {
         }
         let baseIDs = Set(recurringBases.map(\.eventID))
         var result = rawEvents.filter { !baseIDs.contains($0.eventID) }
+        // bug: startup-expired-check-n-plus-one——.distantPast 窗口下展开从锚点逐周期推进，
+        // skipHolidays 时逐 occurrence 触发 isRestDay 查库，启动开销随锚点年龄线性增长；
+        // 展开前单次窄查询预热窗口内休/班判定，循环退化为内存命中（判定语义不变）
+        if recurringBases.contains(where: \.skipHolidays) {
+            let origins = recurringBases.compactMap { $0.originStartDate ?? $0.startDate }
+            if let earliest = origins.min() {
+                HolidaySkipResolver.warmRestFlags(from: earliest, to: upperBound, context: context)
+            }
+        }
         for base in recurringBases {
             let instances = EventCacheService.shared.expandOccurrences(
                 of: base,

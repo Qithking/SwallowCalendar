@@ -28,6 +28,14 @@ final class StatusBarIconManager {
     /// V-19：日期图标生成时的"当天零点"标记，用于按日短路——
     /// 实心/描边日期图标一天内内容不变，同日内定时触发的重绘直接跳过，跨天才重新渲染
     private var iconGenerationDate: Date?
+
+    /// 回退默认图标重绘节流（bug: badge-fallback-redraw-every-second）：
+    /// solid/stroke 样式 shouldCache=false，无事项回退路径每秒 tick 全量重渲染；
+    /// 回退图标内容仅随样式/颜色 key 变化，同 key 且持续处于回退态时跳过重绘
+    private var lastWasFallback = false
+    private var lastFallbackIconKey: String?
+    /// 缓存变更通知 observer token（A-17：持有防注册即释放）
+    private var changeObserver: NSObjectProtocol?
     
     /// 图标缓存，避免重复创建相同样式的图标
     private let iconCache = NSCache<NSString, NSImage>()
@@ -51,7 +59,8 @@ final class StatusBarIconManager {
         let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
         currentIcon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor, cache: iconCache)
         // D2/G7v2：订阅缓存变更通知，收到即刷新（不重启定时器），30s 定时器兜底
-        NotificationCenter.default.addObserver(
+        // A-17：token 必须持有，否则 block 注册即释放失效
+        changeObserver = NotificationCenter.default.addObserver(
             forName: .cachedEventsChanged,
             object: nil,
             queue: .main
@@ -109,11 +118,23 @@ final class StatusBarIconManager {
             // 配套节流（bug: reminder-starved-by-badge-expansion）：同一分钟内
             // 重复 tick 命中缓存纯计算重绘，不查库；跨分钟或脏标记才重查
             guard let start = self.countdownCache.nearestStart(now: now, query: { Self.nearestCountdownStart(now: now) }) else {
-                // 无最近未完成事项：回退默认图标
-                let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
-                self.currentIcon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor, cache: self.iconCache)
+                // 无最近未完成事项：回退默认图标（bug: badge-fallback-redraw-every-second——
+                // 每秒 tick 同 key 跳过重绘；从徽标切回或样式/颜色变更才真正生成）
+                let key = Self.fallbackIconKey(
+                    style: settings.iconStyle,
+                    customFormat: settings.customIconFormat,
+                    customFormatStyle: settings.customFormatStyle,
+                    accentColorHex: settings.accentColorHex
+                )
+                if Self.needsFallbackRedraw(lastWasFallback: self.lastWasFallback, lastKey: self.lastFallbackIconKey, currentKey: key) {
+                    self.lastWasFallback = true
+                    self.lastFallbackIconKey = key
+                    let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
+                    self.currentIcon = Self.generateIcon(style: settings.iconStyle, customFormat: settings.customIconFormat, customFormatStyle: settings.customFormatStyle, iconColor: iconColor, cache: self.iconCache)
+                }
                 return
             }
+            self.lastWasFallback = false
             let text = CountdownFormatter.formatCountdown(remaining: start.timeIntervalSince(now))
             // 徽标外观与「菜单栏图标」样式逐项配合（实心→实心、描边→描边、日历→无背景、自定义格式→跟随自定义样式）
             let iconColor = NSColor(hexString: settings.accentColorHex) ?? .systemBlue
@@ -172,9 +193,15 @@ final class StatusBarIconManager {
         }
     }
 
-    private func stopRefreshTimer() {
-        refreshTimer?.invalidate()
-        refreshTimer = nil
+    /// 回退图标内容 key（bug: badge-fallback-redraw-every-second）：
+    /// 回退默认图标外观仅随样式/自定义格式/格式样式/主题色变化，与每秒 tick 无关
+    static func fallbackIconKey(style: IconStyle, customFormat: String, customFormatStyle: AppSettings.CustomFormatStyle, accentColorHex: String) -> String {
+        "\(style.rawValue)|\(customFormat)|\(customFormatStyle.rawValue)|\(accentColorHex)"
+    }
+
+    /// 是否需要重绘回退图标：从倒计时徽标切回（非回退态）或 key 变化（样式/颜色变更）
+    static func needsFallbackRedraw(lastWasFallback: Bool, lastKey: String?, currentKey: String) -> Bool {
+        !lastWasFallback || lastKey != currentKey
     }
 
     private static func generateIcon(style: IconStyle, customFormat: String, customFormatStyle: AppSettings.CustomFormatStyle = .none, iconColor: NSColor = .systemBlue, cache: NSCache<NSString, NSImage>? = nil) -> NSImage {

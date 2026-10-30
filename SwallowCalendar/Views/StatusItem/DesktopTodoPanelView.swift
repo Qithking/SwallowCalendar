@@ -241,15 +241,23 @@ struct DesktopTodoPanelView: View {
         .onAppear {
             // 初始档 = 应用设置「默认显示待办」（映射四档，「全部」回退本月）
             // ——原硬编码 .today（bug: status-views-filter-default）
-            mode = DesktopTodoPanelFilter.defaultMode(from: appSettings.defaultFilterModeEnum)
-            reload()
+            // A-22：改档后由 onChange(mode) 链路 reload，原无条件 reload 造成挂载双查库
+            let initialMode = DesktopTodoPanelFilter.defaultMode(from: appSettings.defaultFilterModeEnum)
+            if initialMode == mode {
+                reload()
+            } else {
+                mode = initialMode
+            }
         }
         // 勾选完成走 .cachedEventsChanged 广播（主面板同款链路），面板即时刷新
+        // bug: desktop-panel-hidden-reload——orderOut 后视图不销毁，隐藏期间跳过 reload 查库
         .onReceive(NotificationCenter.default.publisher(for: .cachedEventsChanged)) { _ in
+            guard DesktopTodoPanelManager.shared.isPanelVisible else { return }
             reload()
         }
         // countdown-overdue-color-sync：倒计时胶囊归零后重建行，红字「已过期」即时生效
         .onReceive(NotificationCenter.default.publisher(for: .countdownExpired)) { _ in
+            guard DesktopTodoPanelManager.shared.isPanelVisible else { return }
             reload()
         }
         // 跨天重查当前档位（如「今天」档跨天后刷新）
@@ -354,7 +362,8 @@ struct DesktopTodoPanelView: View {
 
     private func reload(now: Date = Date()) {
         reloadAt = now
-        guard EventCacheService.shared.context != nil else {
+        // A-22：单次 guard-let 取上下文——原 nil 检查后又在闭包内 context! 强解包
+        guard let context = EventCacheService.shared.context else {
             todos = []
             return
         }
@@ -368,7 +377,7 @@ struct DesktopTodoPanelView: View {
         todos = DesktopTodoPanelSort.sort(
             fetched
                 .filter { event in
-                    !HolidaySkipResolver.isSkipped(of: event, context: EventCacheService.shared.context!)
+                    !HolidaySkipResolver.isSkipped(of: event, context: context)
                         && DesktopTodoPanelFilter.included(event, mode: mode, now: now)
                 }
                 .filter { statusFilter.includes(isCompleted: $0.isCompleted) }

@@ -179,4 +179,53 @@ final class EKRecurrenceSyncTests: XCTestCase {
         }
         XCTAssertTrue(instances.allSatisfy { !$0.isCompleted })
     }
+
+    /// bug: completed-long-instance-cross-window-missing（A-13）——已完成长实例起点在
+    /// 窗口前、实例延伸进窗口时必须产出（与未完成实例的跨窗口重叠判定对称）：
+    /// 4h 时长的每小时循环，昨天 22:00 实例（22:00-02:00）已完成 → 今天窗口应含该完成行；
+    /// 昨天 19/20 时的实例终点（23:00/00:00）不越过窗口起点，不产出（右开区间语义）
+    func testCompletedLongInstanceCrossingWindowStartIsIncluded() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let origin = today.addingTimeInterval(-5 * 3600)   // 昨天 19:00（锚点）
+        let event = CachedEvent(
+            eventID: "long-base",
+            title: "跨午夜长任务",
+            startDate: today.addingTimeInterval(3600),     // 游标：今天 01:00
+            endDate: today.addingTimeInterval(3600 + 4 * 3600),  // duration 4h
+            isAllDay: false,
+            calendarID: "reminder",
+            calendarTitle: "提醒事项",
+            calendarColorHex: "#FF0000",
+            recurrenceType: .hourly
+        )
+        event.isReminder = true
+        // 昨天 19:00-22:00 与今天 00:00 已完成（今天 01:00 起未完成）
+        event.completedOccurrenceDates = [
+            origin,
+            origin.addingTimeInterval(3600),        // 昨天 20:00：实例终点 00:00 不越窗，不产出
+            origin.addingTimeInterval(2 * 3600),    // 昨天 21:00：实例 21:00-01:00 跨窗口
+            origin.addingTimeInterval(3 * 3600),    // 昨天 22:00：实例 22:00-02:00 跨窗口
+            today                                   // 今天 00:00：窗口内正常完成行
+        ]
+
+        let windowEnd = calendar.date(byAdding: .day, value: 1, to: today)!
+        let instances = EventCacheService.shared.expandOccurrences(
+            of: event, windowStart: today, windowEnd: windowEnd,
+            context: container.mainContext
+        )
+
+        let completedStarts = instances
+            .filter(\.isCompleted)
+            .compactMap(\.startDate)
+            .map { $0.timeIntervalSince1970 }
+        XCTAssertEqual(completedStarts.count, 3,
+                       "完成行应产出 21/22 时跨窗口两条 + 00 时窗口内一条，实际 \(completedStarts.count)")
+        XCTAssertTrue(completedStarts.contains(origin.addingTimeInterval(3 * 3600).timeIntervalSince1970),
+                      "昨天 22:00 的跨窗口已完成长实例必须产出（对齐未完成实例重叠判定）")
+        XCTAssertFalse(completedStarts.contains(origin.addingTimeInterval(3600).timeIntervalSince1970),
+                       "昨天 20:00 实例终点恰为窗口起点（右开区间），不得产出")
+    }
 }

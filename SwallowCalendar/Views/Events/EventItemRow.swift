@@ -43,6 +43,14 @@ struct EventItemRow: View {
         action()
     }
 
+    /// 时间徽标分流（bug: completed-row-overdue-capsule——已完成历史行不渲染倒计时/
+    /// 「已过期」标识：CountdownTextView 仅收 startDate 无完成态信息，过去 startDate
+    /// 的完成历史行会在内部归零渲染「已过期」白字彩底胶囊，须行级提前分流；
+    /// 口径对齐桌面面板 DesktopTodoPanelView 的 !isCompleted 守卫）
+    static func showsTimeBadge(isCompleted: Bool, isOverdue: Bool) -> Bool {
+        !isCompleted
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             // 完成/未完成复选框
@@ -95,7 +103,9 @@ struct EventItemRow: View {
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
 
-                        if isOverdue {
+                        if !Self.showsTimeBadge(isCompleted: event.isCompleted, isOverdue: isOverdue) {
+                            // bug: completed-row-overdue-capsule——已完成历史行不渲染时间徽标
+                        } else if isOverdue {
                             Text("已过期")
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(.red)
@@ -108,7 +118,9 @@ struct EventItemRow: View {
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
 
-                        if isOverdue {
+                        if !Self.showsTimeBadge(isCompleted: event.isCompleted, isOverdue: isOverdue) {
+                            // bug: completed-row-overdue-capsule——已完成历史行不渲染时间徽标
+                        } else if isOverdue {
                             Text("已过期")
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(.red)

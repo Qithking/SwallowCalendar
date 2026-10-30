@@ -160,14 +160,9 @@ final class CountdownTimerManager: ObservableObject {
             return
         }
 
-        // 实时倒计时：只要有可见事件即保持 1s 节奏（不再按剩余时长分档停表）
-        let newInterval: TimeInterval = 1
-
-        // 如果间隔发生变化，重新调度 Timer
-        if abs(newInterval - currentInterval) > 0.1 {
-            currentInterval = newInterval
-            timer?.schedule(deadline: .now() + newInterval, repeating: newInterval)
-        }
+        // 实时倒计时：只要有可见事件即保持 1s 节奏（A-19：原「间隔变化重新调度」
+        // 为分档刷新时代残留——固定 1s 后 startTimer 已置 currentInterval=1，
+        // 该分支恒不触发，死代码删除）
     }
 }
 

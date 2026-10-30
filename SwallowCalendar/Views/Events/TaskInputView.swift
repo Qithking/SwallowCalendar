@@ -73,6 +73,12 @@ struct TaskInputView: View {
                                 guard !Task.isCancelled else { return }
                                 updateFromNLP(newValue)
                             }
+                        } else {
+                            // bug: task-input-clear-attribute-leak——清空输入不提交时，
+                            // 上次编辑的属性与 manuallyEdited 标记残留泄漏到下一条任务
+                            // （V-7 标记残留使 NLP 不覆盖用户上次手选字段）；
+                            // 提交路径复位在 addTask→resetTaskAttributes，此处为清空路径对称复位
+                            resetTaskAttributes()
                         }
                         // 联动父视图编辑态：面板显示 ⇔ 编辑态（清空输入即退出编辑态）
                         isEditingAttributes = showAttributeEditor && !newValue.isEmpty

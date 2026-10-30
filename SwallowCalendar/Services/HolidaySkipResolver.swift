@@ -39,6 +39,11 @@ enum HolidaySkipResolver {
     static func isRestDay(_ date: Date, context: ModelContext?) -> Bool {
         let calendar = Calendar.current
         let windowStart = calendar.startOfDay(for: date)
+        // bug: holiday-skip-n-plus-one——日粒度判定缓存优先：
+        // 渲染逐行/倒计时逐秒刷新与循环展开逐 occurrence 判定不再逐次查库
+        if let context, let cached = cachedVerdict(windowStart, context: context) {
+            return cached
+        }
         let windowEnd = calendar.date(byAdding: .day, value: 1, to: windowStart)!
         // 「事件覆盖当日」语义（不用 B-24 左边界放宽：全天节假日事件 endDate = 次日 00:00，
         // 放宽会把当日事件泄漏进次日窗口导致误判为休日）：
@@ -57,13 +62,137 @@ enum HolidaySkipResolver {
         let descriptor = FetchDescriptor<CachedEvent>(predicate: predicate)
         guard let events = try? context?.fetch(descriptor) else {
             // 数据缺失 fail-open：仅周末规则仍生效（确定性规则），平日按工作日照常
+            //（fail-open 非权威判定，不写入缓存）
             return calendar.isDateInWeekend(date)
         }
         // 「班」标识优先：补班日（含补班周末）视为工作日
-        if events.contains(where: { isWorkTitle($0.title) }) { return false }
-        if events.contains(where: { isRestTitle($0.title) }) { return true }
-        // 周六/周日按休处理
-        return calendar.isDateInWeekend(date)
+        let verdict: Bool
+        if events.contains(where: { isWorkTitle($0.title) }) {
+            verdict = false
+        } else if events.contains(where: { isRestTitle($0.title) }) {
+            verdict = true
+        } else {
+            // 周六/周日按休处理
+            verdict = calendar.isDateInWeekend(date)
+        }
+        if let context {
+            storeVerdict(windowStart, verdict, context: context)
+        }
+        return verdict
+    }
+
+    // MARK: - 日粒度判定缓存（bug: holiday-skip-n-plus-one）
+
+    private static let cacheLock = NSLock()
+    /// 判定缓存：按 ModelContext 身份分桶（防多容器/测试串值），键 = 当日零点。
+    /// 桶内强持有 context：context 释放后其地址可能被新实例复用，弱键会撞键串值
+    private static var dayVerdicts: [ObjectIdentifier: DayVerdictBucket] = [:]
+    private static var changeObserver: NSObjectProtocol?
+
+    private struct DayVerdictBucket {
+        let context: ModelContext
+        var verdicts: [Date: Bool] = [:]
+    }
+
+    /// 清空判定缓存（.cachedEventsChanged 回调入口；测试隔离亦可直接调用）
+    static func invalidateDayVerdictCache() {
+        ensureChangeObserver()
+        clearVerdicts()
+    }
+
+    private static func clearVerdicts() {
+        cacheLock.lock()
+        dayVerdicts.removeAll()
+        cacheLock.unlock()
+    }
+
+    private static func ensureChangeObserver() {
+        guard changeObserver == nil else { return }
+        // observer token 必须持有，否则 block 注册即释放失效
+        changeObserver = NotificationCenter.default.addObserver(
+            forName: .cachedEventsChanged, object: nil, queue: nil
+        ) { _ in HolidaySkipResolver.clearVerdicts() }
+    }
+
+    private static func cachedVerdict(_ day: Date, context: ModelContext) -> Bool? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return dayVerdicts[ObjectIdentifier(context)]?.verdicts[day]
+    }
+
+    private static func storeVerdict(_ day: Date, _ verdict: Bool, context: ModelContext) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        let key = ObjectIdentifier(context)
+        var bucket = dayVerdicts[key] ?? DayVerdictBucket(context: context)
+        bucket.verdicts[day] = verdict
+        dayVerdicts[key] = bucket
+    }
+
+    /// 批量预热（bug: startup-expired-check-n-plus-one）：单次按休/班标题窄查询预载
+    /// [from, to) 各日判定，循环展开逐 occurrence 判定退化为内存命中。
+    /// 语义与逐日 isRestDay 完全一致：① 班标识日 false；② 休标识日 true；③ 无标识日周末规则。
+    /// 覆盖日归属沿用「事件覆盖当日」语义：非零长事件严格重叠日窗口；零长事件归属开始日
+    static func warmRestFlags(from: Date, to: Date, context: ModelContext?) {
+        guard let context, from < to else { return }
+        ensureChangeObserver()
+        let calendar = Calendar.current
+        let spanStart = calendar.startOfDay(for: from)
+        // 取数窗口右界放宽到 to 所在日终：边界日 [d, d+1) 的完整重叠语义与逐日查询一致
+        let fetchEnd = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: to))!
+        let distantPast = Date.distantPast
+        let distantFuture = Date.distantFuture
+        // 窗口重叠谓词与逐日 isRestDay 同款；休/班标题过滤放内存做——
+        // #Predicate 关键词 OR 链会触发类型检查超时，且避免关键词常量双处同步
+        let predicate = #Predicate<CachedEvent> { event in
+            ((event.startDate ?? distantPast) < fetchEnd
+                && (event.endDate ?? distantFuture) > spanStart)
+                || (event.startDate != nil
+                    && (event.startDate ?? distantPast) == (event.endDate ?? distantPast)
+                    && (event.startDate ?? distantPast) >= spanStart
+                    && (event.startDate ?? distantPast) < fetchEnd)
+        }
+        guard let overlapping = try? context.fetch(FetchDescriptor<CachedEvent>(predicate: predicate)) else {
+            return  // 取数失败不预热：后续逐日判定走原查库路径（fail-open 语义不变）
+        }
+        let flagged = overlapping.filter { isRestTitle($0.title) || isWorkTitle($0.title) }
+        var restDays = Set<Date>()
+        var workDays = Set<Date>()
+        for event in flagged {
+            let markDay: (Date) -> Void = isWorkTitle(event.title)
+                ? { workDays.insert($0) }
+                : { restDays.insert($0) }
+            // 零长事件归属开始日（取数窗口已保证与 span 重叠）
+            if let zs = event.startDate, let ze = event.endDate, zs == ze {
+                markDay(calendar.startOfDay(for: zs))
+                continue
+            }
+            // 非零长/开区间：nil 端按逐日谓词的 ±∞ 语义夹进取数窗口
+            let s = event.startDate ?? distantPast
+            let e = event.endDate ?? distantFuture
+            var day = calendar.startOfDay(for: max(s, spanStart))
+            let last = min(e, fetchEnd)
+            var guardCount = 0
+            while day < last, guardCount < 4000 {
+                // 逐日窗口判定：start < day+1 且 end > day
+                if s < calendar.date(byAdding: .day, value: 1, to: day)!, e > day {
+                    markDay(day)
+                }
+                day = calendar.date(byAdding: .day, value: 1, to: day)!
+                guardCount += 1
+            }
+        }
+        // 逐日装配判定并写入缓存：班优先 → 休 → 周末规则
+        var day = spanStart
+        var assigned = 0
+        while day < to, assigned < 40_000 {
+            let verdict = workDays.contains(day)
+                ? false
+                : (restDays.contains(day) ? true : calendar.isDateInWeekend(day))
+            storeVerdict(day, verdict, context: context)
+            day = calendar.date(byAdding: .day, value: 1, to: day)!
+            assigned += 1
+        }
     }
 
     /// 跳过判定便捷入口（各消费点收口，防散落漏改）：

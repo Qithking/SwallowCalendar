@@ -43,6 +43,11 @@ final class DesktopTodoPanelManager {
         panel?.level = Self.level(isPinned: pinned)
     }
 
+    /// 面板当前是否可见（bug: desktop-panel-hidden-reload——orderOut 后 SwiftUI 视图
+    /// 不销毁，通知仍触发 reload 查库；视图以本属性守卫跳过隐藏期间查询，
+    /// 重显由 syncVisibility 兜底补发刷新）
+    var isPanelVisible: Bool { panel?.isVisible ?? false }
+
     /// AppDelegate 启动时注入共享容器（避免 Manager → AppDelegate 反向依赖）
     func configure(with container: ModelContainer) {
         self.container = container
@@ -51,9 +56,15 @@ final class DesktopTodoPanelManager {
     /// 开关驱动的显隐同步（幂等；AppSettings.didSet 与 AppDelegate 启动补偿共用）
     func syncVisibility() {
         if AppSettings.shared.todoPanelDisplayMode.desktopPanelEnabled {
+            let wasVisible = isPanelVisible
             guard ensurePanel() else { return }
             // orderFrontRegardless 不 makeKey：显示但不抢焦点
             panel?.orderFrontRegardless()
+            // bug: desktop-panel-hidden-reload——隐藏期间视图守卫跳过了变更刷新，
+            // 重显时补发一次缓存变更通知对齐数据（日变更通知未守卫，跨天场景已覆盖）
+            if !wasVisible {
+                NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
+            }
         } else {
             panel?.orderOut(nil)
         }

@@ -186,6 +186,10 @@ struct BatchAddView: View {
                     AppLogger.ui.error("批量添加失败: \(String(describing: error))")
                     failures.append(BatchAddFailure(rawText: line.rawText, reason: "写入日历失败"))
                 }
+                // bug: batch-add-main-thread-freeze——createEvent 为 @MainActor 同步
+                // EK 写 + 缓存写，最多 100 次循环独占主线程冻结 UI；每条让出一轮
+                // runloop，isProcessing 动画与交互可穿插响应（总量不变，消除冻结）
+                await Task.yield()
             }
             isProcessing = false
 

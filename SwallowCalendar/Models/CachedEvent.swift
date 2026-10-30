@@ -425,8 +425,15 @@ final class EventCacheService {
         let completedSet = Set(base.completedOccurrenceDates.map { $0.timeIntervalSince1970 })
         var result: [CachedEvent] = []
         // ① 完成历史行（有效期外不产出）
-        for occ in base.completedOccurrenceDates where occ >= windowStart && occ < windowEnd && base.isWithinValidity(occ) {
-            result.append(makeOccurrenceInstance(of: base, occurrence: occ, duration: duration, isCompleted: true))
+        for occ in base.completedOccurrenceDates where base.isWithinValidity(occ) {
+            // 与窗口重叠才产出（零长按 B-1 覆盖开始日语义）——起点在窗口前但实例
+            // 延伸进窗口的跨窗口情形必须产出，与 ② 未完成实例的重叠判定对称
+            // （bug: completed-long-instance-cross-window-missing——原裸窗口过滤
+            // 丢弃跨窗口起点已完成长实例，如 23:00-03:00 实例在今日窗口不可见）
+            let instanceEnd = occ.addingTimeInterval(duration)
+            if (occ >= windowStart && occ < windowEnd) || (occ < windowStart && instanceEnd > windowStart) {
+                result.append(makeOccurrenceInstance(of: base, occurrence: occ, duration: duration, isCompleted: true))
+            }
         }
         // ② 未完成序列展开
         // 序列起点取历史锚点 originStartDate 与游标 startDate 的较早者（bug:
@@ -807,7 +814,15 @@ final class EventCacheService {
         guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
 
         let descriptor = FetchDescriptor<CachedEvent>()
-        guard let all = try? context.fetch(descriptor) else { return }
+        // A-23：try? 吞错无日志——迁移 fetch 失败时静默跳过且不标记完成，
+        // 下次启动重试但无迹可查；记录错误后同样终止本次（重试语义不变）
+        let all: [CachedEvent]
+        do {
+            all = try context.fetch(descriptor)
+        } catch {
+            AppLogger.cache.error("循环任务组迁移查询失败: \(String(describing: error))")
+            return
+        }
         let groupRows = all.filter { $0.groupId != nil }
         guard !groupRows.isEmpty else {
             // 无组数据（新库/已迁移库）：直接标记完成
@@ -879,8 +894,11 @@ final class EventCacheService {
         let newOffsetsJSON = CachedEvent.encodeOffsetsJSON(ek.reminderOffsets)
         let offsetsChanged = adoptReminder && existing.reminderOffsetsJSON != newOffsetsJSON
         let minutesChanged = adoptReminder && existing.reminderMinutes != newReminderMinutes
+        // bug: app-recurring-grade-wiped-by-sync——应用自建循环提醒不写 EK 规则，回流映射恒 .none，
+        // 仅当 EK 侧确有规则映射出档位时才采纳，否则保留缓存现值（循环展开/完成推进依赖该档位）
+        let newRecurrence = ek.recurrenceType != .none ? ek.recurrenceType : existing.recurrenceType
         // 有变更才更新，避免不必要的写入（recurrenceType：档位可能随物化历史出现而推断变化）
-        if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || minutesChanged || offsetsChanged || existing.recurrenceType != ek.recurrenceType {
+        if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || minutesChanged || offsetsChanged || existing.recurrenceType != newRecurrence {
             if existing.isCompleted != newIsCompleted {
                 AppLogger.cache.warning("syncReminders isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID)")
             }
@@ -893,8 +911,9 @@ final class EventCacheService {
                 existing.reminderOffsetsJSON = newOffsetsJSON
                 existing.reminderMinutes = newReminderMinutes
             }
-            // bug: ek-recurrence-materialization-mirror——系统循环提醒档位以 EK 映射为准
-            existing.recurrenceType = ek.recurrenceType
+            // bug: ek-recurrence-materialization-mirror——系统循环提醒档位以 EK 映射为准；
+            // EK 无规则时 newRecurrence 即缓存现值，应用自建循环档位保留（app-recurring-grade-wiped-by-sync）
+            existing.recurrenceType = newRecurrence
             existing.lastUpdated = Date()
             return true
         }
