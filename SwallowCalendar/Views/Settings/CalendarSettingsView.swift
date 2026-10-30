@@ -35,6 +35,16 @@ struct CalendarSettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("系统提醒同步至应用", isOn: $settings.syncSystemReminders)
                         .toggleStyle(.switch)
+                        .onChange(of: settings.syncSystemReminders) { _, enabled in
+                            // reminder-auth-prompt：打开开关时若提醒权限从未询问，
+                            // 立即弹系统授权，避免开启后同步静默失效（需等下次启动）
+                            guard enabled,
+                                  calendarService.reminderAuthorizationStatus == .notDetermined else { return }
+                            Task {
+                                await calendarService.requestReminderAccess()
+                                reminderAuthStatus = calendarService.reminderAuthorizationStatus
+                            }
+                        }
                     
                     Text("将系统提醒应用中的待办事项同步到待办列表中")
                         .font(.system(size: 11))

@@ -92,6 +92,28 @@ final class CalendarService {
         }
     }
 
+    /// 启动/开关路径是否需要主动请求提醒权限（reminder-auth-prompt）
+    /// 仅当用户已开启提醒同步且权限处于 notDetermined（从未询问）时需要；
+    /// denied 由启动引导弹窗与设置页「前往设置」承接，fullAccess/writeOnly/restricted 无需请求
+    static func shouldRequestReminderAccess(syncEnabled: Bool, reminderAuth: EKAuthorizationStatus) -> Bool {
+        syncEnabled && reminderAuth == .notDetermined
+    }
+
+    /// 单独请求提醒 fullAccess（reminder-auth-prompt）
+    /// - Note: 日历已授权而提醒 notDetermined 时，原 requestAccess 仅随日历授权入口触发，
+    ///         该状态会永久卡死（同步条件 == .fullAccess 永不满足），需独立请求入口
+    @MainActor
+    func requestReminderAccess() async -> Bool {
+        do {
+            let result = try await eventStore.requestFullAccessToReminders()
+            reminderAuthorizationStatus = result ? .fullAccess : .denied
+            return result
+        } catch {
+            reminderAuthorizationStatus = .denied
+            return false
+        }
+    }
+
     /// 打开系统设置中的提醒权限页面
     func openReminderSettings() {
         // 尝试打开系统设置 - 隐私与安全性 - 提醒事项

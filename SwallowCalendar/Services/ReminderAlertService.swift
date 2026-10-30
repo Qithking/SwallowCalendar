@@ -316,8 +316,12 @@ final class ReminderAlertService {
             } else {
                 // R-1：常规窗口内循环 base 行同样替换为窗口内展开实例（复合 ID），
                 // 弹窗完成走 occurrence 级路径（写历史/推进游标/EK 不污染），
-                // 与启动路径语义对齐，消除双语义并存
-                allUserEvents = Self.recurringWindowCandidates(
+                // 与启动路径语义对齐，消除双语义并存。
+                // bug: poll-window-completed-base-recurring-miss：粗筛 !$0.isCompleted
+                // 会把 base 行被置位的循环任务滤掉（旧版本完成操作整条置位且不写
+                // 完成历史——R-1 修复前行为，存量已污染），主面板 expandOccurrences
+                // 不看该位 → 列表显示但提醒静默；本方法补捞全部循环 base 后统一展开
+                allUserEvents = Self.pollWindowCandidates(
                     rawEvents: allUserEvents,
                     windowStart: windowStart,
                     upperBound: fetchUpperBound,
@@ -528,6 +532,47 @@ final class ReminderAlertService {
             result.append(contentsOf: instances.filter { !$0.isCompleted })
         }
         return result
+    }
+
+    /// 常规轮询窗口候选（含补捞，bug: poll-window-completed-base-recurring-miss）：
+    /// 粗筛谓词 !$0.isCompleted 会把 base 行被置位的循环任务滤掉（旧版本完成操作
+    /// 整条置位且不写完成历史——R-1 修复前行为，存量数据已污染），而主面板
+    /// expandOccurrences 不看该位 → 列表显示但提醒静默。与启动路径
+    /// expiredCheckCandidates 同构：独立查询全部循环 base（不含 isCompleted 条件）
+    /// 合并去重后统一展开，实例级 isCompleted 才是判定标准
+    /// （recurringWindowCandidates 的实例过滤兜底，已完成历史实例不进候选）
+    static func pollWindowCandidates(
+        rawEvents: [CachedEvent],
+        windowStart: Date,
+        upperBound: Date,
+        context: ModelContext
+    ) -> [CachedEvent] {
+        let userCategory = EventCategory.user.rawValue
+        let noneRaw = RecurrenceType.none.rawValue
+        let distantFuture = Date.distantFuture
+        let descriptor = FetchDescriptor<CachedEvent>(
+            predicate: #Predicate {
+                $0.categoryRaw == userCategory &&
+                $0.recurrenceTypeRaw != nil &&
+                $0.recurrenceTypeRaw != noneRaw &&
+                (($0.startDate ?? distantFuture) < upperBound ||
+                 ($0.originStartDate ?? distantFuture) < upperBound)
+            }
+        )
+        var merged = rawEvents
+        do {
+            let missed = try context.fetch(descriptor)
+            let seen = Set(rawEvents.map(\.eventID))
+            merged.append(contentsOf: missed.filter { !seen.contains($0.eventID) })
+        } catch {
+            AppLogger.reminder.error("常规轮询循环 base 补捞失败: \(String(describing: error))")
+        }
+        return recurringWindowCandidates(
+            rawEvents: merged,
+            windowStart: windowStart,
+            upperBound: upperBound,
+            context: context
+        )
     }
 
     /// 显示合并的过期事项提醒弹窗（自定义 SwiftUI 窗口，替代系统 NSAlert）

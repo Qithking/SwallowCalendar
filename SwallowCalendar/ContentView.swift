@@ -217,6 +217,13 @@ struct ContentView: View {
         if calendarService.authorizationStatus == .notDetermined {
             let result = await calendarService.requestAccess(requestReminders: syncReminders)
             reminderGranted = result.reminder
+        } else if CalendarService.shouldRequestReminderAccess(
+            syncEnabled: syncReminders,
+            reminderAuth: calendarService.reminderAuthorizationStatus
+        ) {
+            // reminder-auth-prompt：日历已授权而提醒从未询问时，原逻辑整体跳过导致
+            // 权限永久卡在 notDetermined；开关已开启视为明确使用意图，主动补弹系统授权
+            reminderGranted = await calendarService.requestReminderAccess()
         }
 
         // 若提醒授权被拒绝，弹窗引导用户开启
