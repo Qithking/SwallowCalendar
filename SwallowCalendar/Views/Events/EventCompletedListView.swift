@@ -182,6 +182,14 @@ struct EventCompletedListView: View {
         .onChange(of: selectedDate) { _, _ in
             debouncedRefresh()
         }
+        // sort-pick-reload：同 EventTodoListView——排序切换需触发重载，
+        // 方法体内读 sortMode/sortOrder 不被 Observation 追踪，无触发点则列表不重排
+        .onChange(of: appSettings.sortMode) { _, _ in
+            debouncedRefresh()
+        }
+        .onChange(of: appSettings.sortOrder) { _, _ in
+            debouncedRefresh()
+        }
         // R-7：对照 EventTodoListView 补广播监听——别处（桌面面板/菜单弹层/过期弹窗）
         // 完成或取消完成后经 .cachedEventsChanged 广播，已办列表与头部计数同步重载；
         // 倒计时归零重建行（countdown-overdue-color-sync）同样适用

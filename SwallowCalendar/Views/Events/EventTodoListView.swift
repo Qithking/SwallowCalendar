@@ -198,6 +198,15 @@ struct EventTodoListView: View {
         .onChange(of: selectedDate) { _, _ in
             debouncedRefresh()
         }
+        // sort-pick-reload：排序字段/方向切换立即重排——refreshCachedEvents 在方法体内
+        // 读 appSettings.sortMode/sortOrder（Observation 仅追踪 body 内读取），无触发点
+        // 时切换排序列表纹丝不动，需重开窗口才生效
+        .onChange(of: appSettings.sortMode) { _, _ in
+            debouncedRefresh()
+        }
+        .onChange(of: appSettings.sortOrder) { _, _ in
+            debouncedRefresh()
+        }
         // 4 视图同步（bug: four-view-todo-sync）：别处（桌面面板/菜单弹层/过期弹窗）
         // 完成或编辑后经 .cachedEventsChanged 广播触发重载，与 pop/桌面面板同款链路
         .onReceive(NotificationCenter.default.publisher(for: .cachedEventsChanged)) { _ in
