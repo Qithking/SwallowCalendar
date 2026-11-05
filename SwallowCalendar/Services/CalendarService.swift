@@ -339,7 +339,9 @@ final class CalendarService {
             reminderOffsets: Self.extractReminderOffsets(from: reminder.alarms),
             // absolute 准点闹钟（任务 E 模式）标记：sync 回流时保留缓存提前提醒
             reminderAlarmIsAbsolute: Self.hasAbsoluteReminderAlarm(reminder.alarms),
-            eventColorHex: nil
+            eventColorHex: nil,
+            // 本地循环标记随 notes 透传：merge 回流据此区分「应用内设循环」与「外部删规则」
+            notes: reminder.notes
         )
     }
 
@@ -1424,6 +1426,34 @@ final class CalendarService {
             try context.save()
         } catch {
             AppLogger.sync.error("updateEventRecurrence 缓存保存失败: \(String(describing: error))")
+        }
+
+        // 提醒行同步本地循环标记到 EK notes（bug: reminder-rule-deletion-swallowed）：
+        // 改循环打标记（EK 无规则时回流保留档位），改非循环清标记（不再需要保护）
+        if cached.isReminder {
+            syncLocalRecurrenceMarker(eventID: baseID, marked: newRecurrenceType != .none)
+        }
+    }
+
+    /// 将本地循环标记写入/移除出 EK 提醒 notes；NOT-FOUND 静默（提醒可能已被外部删除）
+    @MainActor
+    private func syncLocalRecurrenceMarker(eventID: String, marked: Bool) {
+        guard let reminder = eventStore.calendarItem(withIdentifier: eventID) as? EKReminder else { return }
+        let marker = EventCacheService.localRecurrenceMarker
+        let notes = reminder.notes ?? ""
+        let hasMarker = notes.contains(marker)
+        guard marked != hasMarker else { return }
+        if marked {
+            reminder.notes = notes.isEmpty ? marker : "\(notes) \(marker)"
+        } else {
+            reminder.notes = notes
+                .replacingOccurrences(of: marker, with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        do {
+            try eventStore.save(reminder, commit: true)
+        } catch {
+            AppLogger.sync.error("本地循环标记写入 EK 失败: \(String(describing: error))")
         }
     }
 

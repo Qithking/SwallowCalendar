@@ -4,7 +4,10 @@
 //
 //  bug: app-recurring-grade-wiped-by-sync——应用自建循环提醒不写 EK recurrenceRules，
 //  syncReminders 回流映射恒 .none，mergeReminderUpdate 无条件覆写会抹平应用循环档位，
-//  导致循环展开/完成推进失效。EK 侧确有规则映射出的档位时才采纳。
+//  导致循环展开/完成推进失效。
+//  修复口径（bug: reminder-rule-deletion-swallowed 方案 C）：EK 无规则时以
+//  notes 本地循环标记（updateEventRecurrence 写入）区分「应用内设循环」（保留）
+//  与「外部删规则」（采纳 .none，见 ExternalChangeSyncTests 同名场景）。
 
 import XCTest
 @testable import SwallowCalendar
@@ -30,8 +33,9 @@ final class AppRecurringGradeSyncTests: XCTestCase {
         )
     }
 
-    /// 构造 EK 回流映射行（同 syncReminders 循环输入）
-    private func makeEK(grade: RecurrenceType) -> CalendarEvent {
+    /// 构造 EK 回流映射行（同 syncReminders 循环输入）；
+    /// 默认带本地循环标记 = 应用自建/应用内改循环提醒的 EK 侧常态
+    private func makeEK(grade: RecurrenceType, notes: String? = EventCacheService.localRecurrenceMarker) -> CalendarEvent {
         CalendarEvent(
             id: "rem-1",
             title: "测试循环提醒",
@@ -49,18 +53,19 @@ final class AppRecurringGradeSyncTests: XCTestCase {
             reminderMinutes: 0,
             reminderOffsets: nil,
             reminderAlarmIsAbsolute: false,
-            eventColorHex: nil
+            eventColorHex: nil,
+            notes: notes
         )
     }
 
-    // V-1：EK 无规则（应用自建循环提醒）时，缓存循环档位必须保留
+    // V-1：EK 无规则但 notes 带本地循环标记（应用自建循环提醒）时，缓存循环档位必须保留
     @MainActor
     func testSyncUpdateKeepsAppRecurringGradeWhenEKHasNoRule() {
         let existing = makeExisting(grade: .daily)
 
         EventCacheService.mergeReminderUpdate(existing: existing, ek: makeEK(grade: .none))
 
-        XCTAssertEqual(existing.recurrenceType, .daily, "EK 无规则回流不得抹平应用自建循环档位")
+        XCTAssertEqual(existing.recurrenceType, .daily, "本地循环标记存在时回流不得抹平应用循环档位")
     }
 
     // V-2：档位无变化时不得产生假变更写入（避免每次 sync 触发无谓存储保存）

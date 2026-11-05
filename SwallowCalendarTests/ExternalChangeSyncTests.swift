@@ -250,4 +250,93 @@ final class ExternalChangeSyncTests: XCTestCase {
             "提醒同步关闭时应清理提醒缓存行"
         )
     }
+
+    // MARK: - 提醒循环规则外部删除（bug: reminder-rule-deletion-swallowed）
+
+    /// 构造已同步的系统循环提醒缓存行（档位来自 EK 规则映射）
+    @discardableResult
+    private func insertRecurringReminder(eventID: String, grade: RecurrenceType) throws -> CachedEvent {
+        let row = CachedEvent(
+            eventID: eventID,
+            title: "测试提醒",
+            startDate: Date(),
+            endDate: Date(),
+            isAllDay: false,
+            calendarID: "reminder",
+            calendarTitle: "提醒",
+            calendarColorHex: "#FF9500",
+            isReminder: true,
+            recurrenceType: grade
+        )
+        EventCacheService.shared.context?.insert(row)
+        try EventCacheService.shared.context?.save()
+        return row
+    }
+
+    /// 构造 EK 提醒映射结果（模拟 fetchReminders 产物）
+    private func makeEKReminderMap(recurrenceType: RecurrenceType, notes: String?) -> CalendarEvent {
+        CalendarEvent(
+            id: "test-reminder",
+            title: "测试提醒",
+            startDate: Date(),
+            endDate: Date(),
+            isAllDay: false,
+            calendarID: "reminder",
+            calendarTitle: "提醒",
+            calendarColorHex: "#FF9500",
+            category: .user,
+            isCompleted: false,
+            priority: 0,
+            isReminder: true,
+            recurrenceType: recurrenceType,
+            reminderMinutes: 0,
+            reminderAlarmIsAbsolute: false,
+            eventColorHex: nil,
+            notes: notes
+        )
+    }
+
+    /// 系统原生循环提醒在系统侧删除规则（EK 映射 .none 且 notes 无本地循环标记）
+    /// → 必须采纳 .none，应用不得永久滞留循环档位
+    func testMergeAdoptsNoneWhenEKRuleDeletedWithoutLocalMarker() throws {
+        try makeSyncContainer()
+        let existing = try insertRecurringReminder(eventID: "test-reminder", grade: .daily)
+        let ek = makeEKReminderMap(recurrenceType: .none, notes: nil)
+
+        // When: 同步回流合并
+        _ = EventCacheService.mergeReminderUpdate(existing: existing, ek: ek)
+
+        // Then: 档位跟随 EK 变为非循环
+        XCTAssertEqual(existing.recurrenceType, .none, "外部删除循环规则后必须采纳非循环档位")
+    }
+
+    /// 应用内设置的循环档位（EK 无规则 + notes 带本地循环标记）→ 保留缓存档位，
+    /// 防止 app-recurring-grade-wiped-by-sync 回归（应用自建/应用内改循环不写 EK 规则）
+    func testMergeKeepsGradeWhenLocalRecurrenceMarkerPresent() throws {
+        try makeSyncContainer()
+        let existing = try insertRecurringReminder(eventID: "test-reminder", grade: .daily)
+        let ek = makeEKReminderMap(
+            recurrenceType: .none,
+            notes: "[SC_RECURRENCE_LOCAL] 备注"  // 与 EventCacheService.localRecurrenceMarker 对应
+        )
+
+        // When: 同步回流合并
+        _ = EventCacheService.mergeReminderUpdate(existing: existing, ek: ek)
+
+        // Then: 本地循环档位保留
+        XCTAssertEqual(existing.recurrenceType, .daily, "本地循环标记存在时不得抹掉循环档位")
+    }
+
+    /// 对照：EK 规则仍在（映射非 .none）→ 以 EK 映射为准（既有行为回归保护）
+    func testMergeAdoptsEKGradeWhenRuleStillPresent() throws {
+        try makeSyncContainer()
+        let existing = try insertRecurringReminder(eventID: "test-reminder", grade: .daily)
+        let ek = makeEKReminderMap(recurrenceType: .weekly, notes: nil)
+
+        // When: 同步回流合并
+        _ = EventCacheService.mergeReminderUpdate(existing: existing, ek: ek)
+
+        // Then: EK 映射档位优先
+        XCTAssertEqual(existing.recurrenceType, .weekly, "EK 规则存在时应采纳映射档位")
+    }
 }

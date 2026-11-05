@@ -994,6 +994,11 @@ final class EventCacheService {
         }
     }
 
+    /// 本地循环标记（bug: reminder-rule-deletion-swallowed）：应用内为提醒设置的循环档位
+    /// 不写 EK 规则（单条化设计），EK 侧无法凭「无规则」区分「应用内设循环」与「外部删规则」；
+    /// updateEventRecurrence 改循环时写入 EKReminder.notes，syncReminders 回流据此保留档位
+    static let localRecurrenceMarker = "[SC_RECURRENCE_LOCAL]"
+
     /// syncReminders 更新分支：将 EK 回流映射值合并进既有缓存行，返回是否发生变更
     /// bug: reminder-offsets-wiped-by-sync——任务 E 模式下应用为 EKReminder 写
     /// absolute(due) 准点闹钟，EK 侧不含提前量，提前提醒真源为缓存 reminderOffsets：
@@ -1011,9 +1016,17 @@ final class EventCacheService {
         let newOffsetsJSON = CachedEvent.encodeOffsetsJSON(ek.reminderOffsets)
         let offsetsChanged = adoptReminder && existing.reminderOffsetsJSON != newOffsetsJSON
         let minutesChanged = adoptReminder && existing.reminderMinutes != newReminderMinutes
-        // bug: app-recurring-grade-wiped-by-sync——应用自建循环提醒不写 EK 规则，回流映射恒 .none，
-        // 仅当 EK 侧确有规则映射出档位时才采纳，否则保留缓存现值（循环展开/完成推进依赖该档位）
-        let newRecurrence = ek.recurrenceType != .none ? ek.recurrenceType : existing.recurrenceType
+        // bug: reminder-rule-deletion-swallowed——EK 无规则时分流：
+        // notes 带本地循环标记 = 应用内设置的循环档位（EK 侧刻意不写规则），保留缓存现值；
+        // 无标记 = 系统原生循环提醒的规则已被外部删除，采纳 .none（否则档位永久滞留）
+        let newRecurrence: RecurrenceType
+        if ek.recurrenceType != .none {
+            newRecurrence = ek.recurrenceType
+        } else if ek.notes?.contains(Self.localRecurrenceMarker) == true {
+            newRecurrence = existing.recurrenceType
+        } else {
+            newRecurrence = .none
+        }
         // 有变更才更新，避免不必要的写入（recurrenceType：档位可能随物化历史出现而推断变化）
         if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || minutesChanged || offsetsChanged || existing.recurrenceType != newRecurrence {
             if existing.isCompleted != newIsCompleted {
@@ -1029,7 +1042,7 @@ final class EventCacheService {
                 existing.reminderMinutes = newReminderMinutes
             }
             // bug: ek-recurrence-materialization-mirror——系统循环提醒档位以 EK 映射为准；
-            // EK 无规则时 newRecurrence 即缓存现值，应用自建循环档位保留（app-recurring-grade-wiped-by-sync）
+            // EK 无规则时按上方分流：本地标记保留 / 无标记采纳 .none
             existing.recurrenceType = newRecurrence
             existing.lastUpdated = Date()
             return true
