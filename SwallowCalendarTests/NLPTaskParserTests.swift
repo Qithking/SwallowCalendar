@@ -58,6 +58,53 @@ class NLPTaskParserTests: XCTestCase {
         XCTAssertEqual(result2.title, "体检")
     }
     
+    /// BUG-17：否定式“不重要”不得被判为高优先级，且标题不残留“不”字
+    func testNegativePriorityKeywordIsLow() {
+        let result = NLPTaskParser.parse("明天下午3点开会 不重要")
+        XCTAssertEqual(result.priority, .low)
+        XCTAssertEqual(result.title, "开会")
+
+        let result2 = NLPTaskParser.parse("明天下午3点开会 不太重要")
+        XCTAssertEqual(result2.priority, .low)
+        XCTAssertEqual(result2.title, "开会")
+
+        // 对照：正向“重要”仍为高优先级
+        let result3 = NLPTaskParser.parse("明天下午3点开会 重要")
+        XCTAssertEqual(result3.priority, .high)
+        XCTAssertEqual(result3.title, "开会")
+    }
+
+    /// BUG-18：支持“上周/本周/下周”前缀——普通星期词只取最近未来，“上周五”会被错误解析为未来
+    func testWeekPrefixWeekdayParsing() {
+        var weekCal = Calendar.current
+        weekCal.firstWeekday = 2  // 周一为周首（周一=0 … 周日=6）
+        let weekStart = weekCal.dateInterval(of: .weekOfYear, for: Date())!.start
+
+        func expectedDay(offsetFromWeekStart days: Int) -> DateComponents {
+            let day = Calendar.current.date(byAdding: .day, value: days, to: weekStart)!
+            return Calendar.current.dateComponents([.year, .month, .day], from: day)
+        }
+        func actualDay(_ date: Date?) -> DateComponents? {
+            guard let date else { return nil }
+            return Calendar.current.dateComponents([.year, .month, .day], from: date)
+        }
+
+        // 上周五 = 本周周一 - 3 天（过去日期）
+        let lastFriday = NLPTaskParser.parse("上周五交报告")
+        XCTAssertEqual(actualDay(lastFriday.date), expectedDay(offsetFromWeekStart: -3))
+        XCTAssertEqual(lastFriday.title, "交报告")
+
+        // 下周一 = 本周周一 + 7 天
+        let nextMonday = NLPTaskParser.parse("下周一开会")
+        XCTAssertEqual(actualDay(nextMonday.date), expectedDay(offsetFromWeekStart: 7))
+        XCTAssertEqual(nextMonday.title, "开会")
+
+        // 本周三 = 本周周一 + 2 天
+        let thisWednesday = NLPTaskParser.parse("本周三复盘")
+        XCTAssertEqual(actualDay(thisWednesday.date), expectedDay(offsetFromWeekStart: 2))
+        XCTAssertEqual(thisWednesday.title, "复盘")
+    }
+
     func testParseRecurrence() {
         // 测试周期解析
         let result1 = NLPTaskParser.parse("每天下午3点开会 循环")

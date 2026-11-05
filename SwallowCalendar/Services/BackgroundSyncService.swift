@@ -27,6 +27,12 @@ final class BackgroundSyncService {
     /// 外部变更防抖间隔（与应用内改动防抖同为 2s）；internal 供测试注入短间隔
     var externalChangeDebounceSeconds: TimeInterval = 2
 
+    /// 同步互斥时防抖重排的最大次数；internal 供测试收窄预算
+    var maxExternalSyncRetries = 10
+
+    /// 重试预算耗尽仍互斥时的待补跑标记；internal 供测试断言
+    var pendingExternalResync = false
+
     /// 防抖到期后执行的同步动作；internal 供测试注入 spy 计数
     /// 外部变更同步跳过 ICS 订阅源（订阅有自身刷新节奏，AC-3）
     var externalSyncAction: () async -> Void = {
@@ -78,9 +84,16 @@ final class BackgroundSyncService {
             guard let self else { return }
             try? await Task.sleep(nanoseconds: UInt64(self.externalChangeDebounceSeconds * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            if self.isSyncing && self.externalSyncRetryCount == 0 {
-                self.externalSyncRetryCount += 1
-                self.scheduleExternalSync()
+            if self.isSyncing {
+                if self.externalSyncRetryCount < self.maxExternalSyncRetries {
+                    // 同步进行中：重排一次防抖重试，避免被 syncOnce 互斥静默丢弃（AC-4）
+                    self.externalSyncRetryCount += 1
+                    self.scheduleExternalSync()
+                } else {
+                    // BUG-10：原实现只重试一次，第二次撞互斥即静默丢弃（最长 60 分钟才可见）；
+                    // 预算耗尽后置待补跑标记，由本轮 syncOnce 结束时立即消费
+                    self.pendingExternalResync = true
+                }
                 return
             }
             await self.externalSyncAction()
@@ -98,7 +111,16 @@ final class BackgroundSyncService {
         guard modelContainer != nil else { return "本地存储未就绪，请稍后重试" }
 
         isSyncing = true
-        defer { isSyncing = false }
+        defer {
+            isSyncing = false
+            // BUG-10：长同步期间外部变更若重试用尽，同步结束立即补跑一次（跳过 ICS，与外部变更同口径）
+            if pendingExternalResync {
+                pendingExternalResync = false
+                Task { [weak self] in
+                    await self?.externalSyncAction()
+                }
+            }
+        }
 
         // 使用 EventCacheService 的统一上下文（优先为环境上下文，与 @Query 共享）
         guard let context = EventCacheService.shared.context else { return "本地存储未就绪，请稍后重试" }

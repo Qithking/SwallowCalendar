@@ -82,8 +82,8 @@ final class RecurringEditDeleteTests: XCTestCase {
 
     // MARK: - 周期 → 1次
 
-    /// 周期改 1 次：完成历史清空（普通任务只有 isCompleted 单状态）、startDate 不动
-    func testRecurrenceToNoneClearsCompletionHistoryKeepsStartDate() throws {
+    /// BUG-21 口径：周期改 1 次 → 完成历史保留（已办可见）、未来展开依据（originStartDate）清除、startDate 不动
+    func testRecurrenceToNoneKeepsCompletionHistoryClearsOrigin() throws {
         let container = try makeContainer()
         EventCacheService.shared.configure(with: container)
         let d0 = date(2026, 10, 26, 9, 0)
@@ -93,11 +93,13 @@ final class RecurringEditDeleteTests: XCTestCase {
             startDate: d0,
             completionHistory: [d0]
         )
+        cached.originStartDate = d0
 
         calendarService.updateEventRecurrence(eventID: "rec-base", newRecurrenceType: .none)
 
         XCTAssertFalse(cached.isCompleted)
-        XCTAssertEqual(cached.completedOccurrenceDates, [])
+        XCTAssertEqual(cached.completedOccurrenceDates, [d0], "改单次必须保留完成历史")
+        XCTAssertNil(cached.originStartDate, "改单次必须清除未来展开依据")
         XCTAssertEqual(cached.startDate?.timeIntervalSince1970 ?? 0, d0.timeIntervalSince1970, accuracy: 0.001)
     }
 

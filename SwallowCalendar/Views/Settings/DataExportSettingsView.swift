@@ -221,7 +221,8 @@ struct DataExportSettingsView: View {
     }
     
     /// nonisolated：纯 CPU 的 ICS 生成，供 Task.detached 后台调用（MainActor 隔离会导致 Swift 6 并发错误）
-    private nonisolated static func generateICS(events: [CalendarEvent]) -> String {
+    /// internal（非 private）以便单测直接验证导出语义
+    nonisolated static func generateICS(events: [CalendarEvent]) -> String {
         var lines: [String] = [
             "BEGIN:VCALENDAR",
             "VERSION:2.0",
@@ -238,9 +239,12 @@ struct DataExportSettingsView: View {
             if let start = event.startDate {
                 if event.isAllDay {
                     lines.append("DTSTART;VALUE=DATE:\(formatICSDateOnly(start))")
-                    // V-5：RFC 5545 全天 DTEND 为 exclusive（不含当天），+1 天才能正确表示完整单日
-                    let inclusiveEnd = event.endDate ?? start
-                    let exclusiveEnd = Calendar.current.date(byAdding: .day, value: 1, to: inclusiveEnd) ?? inclusiveEnd
+                    // BUG-15：EK 全天事件的 endDate 已是 exclusive（次日零点），无需再加一天；
+                    // 仅零长全天（endDate == start）才按单日补 +1 天（RFC 5545 DTEND 不含当天）
+                    let rawEnd = event.endDate ?? start
+                    let exclusiveEnd = rawEnd > start
+                        ? rawEnd
+                        : (Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start)
                     lines.append("DTEND;VALUE=DATE:\(formatICSDateOnly(exclusiveEnd))")
                 } else {
                     lines.append("DTSTART:\(formatICSDate(start))")

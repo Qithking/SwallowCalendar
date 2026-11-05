@@ -15,6 +15,8 @@ final class CalendarService {
     private let eventStore = EKEventStore()
     var authorizationStatus: EKAuthorizationStatus = .notDetermined
     var reminderAuthorizationStatus: EKAuthorizationStatus = .notDetermined
+    /// 测试注入：抑制「同步失败」模态弹窗（生产默认 false，避免单测被 runModal 阻塞）
+    var suppressesSyncFailureAlert = false
     var calendars: [EKCalendar] = []
     var isLoading = false
 
@@ -1108,12 +1110,7 @@ final class CalendarService {
         // 避免下次同步从 EK 拉回旧状态导致完成状态翻转、周期实例膨胀
         if ekSaveFailed {
             AppLogger.sync.warning("EK写入失败，已跳过缓存更新与周期追加 id=\(eventID) completed=\(isCompleted)")
-            NSApp.activate(ignoringOtherApps: true)
-            let alert = NSAlert()
-            alert.messageText = "同步失败"
-            alert.informativeText = "完成状态写入系统日历/提醒失败，本次修改未生效，请稍后重试。"
-            alert.alertStyle = .warning
-            alert.runModal()
+            presentSyncFailureAlert(text: "完成状态写入系统日历/提醒失败，本次修改未生效，请稍后重试。")
             return
         }
 
@@ -1182,6 +1179,12 @@ final class CalendarService {
             let shouldAdvance = next != nil && occurrence >= (cached.startDate ?? occurrence)
 
             var ekSaveFailed = false
+            // BUG-09：对应域名已授权时 NOT-FOUND 等价于「外部已删除」，必须按写失败中止缓存推进，
+            // 否则 EK 保留旧日期、缓存单边推进，下次同步会把游标拉回造成分叉；
+            // 无授权（含测试宿主）时 EK 求值为空，保持「对象不存在不算失败」既有语义
+            let ekReachable = isReminder
+                ? reminderAuthorizationStatus == .fullAccess
+                : authorizationStatus == .fullAccess
             if shouldAdvance {
                 if isReminder {
                     // EKReminder：dueDateComponents 推进到下一次 occurrence（全天不含时分，与创建逻辑一致）
@@ -1196,6 +1199,8 @@ final class CalendarService {
                         }
                     } else {
                         AppLogger.sync.warning("EKReminder NOT-FOUND 跳过 occurrence 推进 base=\(baseID)")
+                        // BUG-09：已授权却查不到 = 外部删除，按写失败处理避免缓存单边推进
+                        if ekReachable { ekSaveFailed = true }
                     }
                 } else {
                     // EKEvent：非全天沿用原时长平移（全天 startDate 即当日 00:00，时长平移等价日界）
@@ -1213,6 +1218,8 @@ final class CalendarService {
                         }
                     } else {
                         AppLogger.sync.warning("EKEvent NOT-FOUND 跳过 occurrence 推进 base=\(baseID)")
+                        // BUG-09：同上，已授权却查不到 = 外部删除
+                        if ekReachable { ekSaveFailed = true }
                     }
                 }
             }
@@ -1220,12 +1227,7 @@ final class CalendarService {
             if ekSaveFailed {
                 // 与主路径一致：EK 写失败不更新缓存，避免下次同步从 EK 拉回旧状态导致状态翻转
                 AppLogger.sync.warning("EK写入失败，已跳过循环 occurrence 缓存更新 base=\(baseID) completed=\(isCompleted)")
-                NSApp.activate(ignoringOtherApps: true)
-                let alert = NSAlert()
-                alert.messageText = "同步失败"
-                alert.informativeText = "完成状态写入系统日历/提醒失败，本次修改未生效，请稍后重试。"
-                alert.alertStyle = .warning
-                alert.runModal()
+                presentSyncFailureAlert(text: "完成状态写入系统日历/提醒失败，本次修改未生效，请稍后重试。")
                 return
             }
 
@@ -1255,6 +1257,17 @@ final class CalendarService {
         }
     }
 
+    /// 同步失败模态提示；测试可经 suppressesSyncFailureAlert 抑制，避免 runModal 阻塞
+    private func presentSyncFailureAlert(text: String) {
+        guard !suppressesSyncFailureAlert else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "同步失败"
+        alert.informativeText = text
+        alert.alertStyle = .warning
+        alert.runModal()
+    }
+
     /// 更新事件（日历事件或提醒）
     /// - Parameter reminderOffsets: 多级提醒偏移数组；nil = 不改提醒，空数组 = 清除全部提醒
     /// - Parameter skipHolidays: nil = 不改跳过节假日标记（编辑面板未触碰该开关时保持原值）
@@ -1265,6 +1278,15 @@ final class CalendarService {
         // 单条化 plan step 7：列表行可能是 occurrence 虚拟展开行（复合 ID），
         // 编辑即改整条，回查本体 ID（Risks 表 Mitigation：编辑入口先 parseOccurrenceID 分流）
         let baseID = CachedEvent.parseOccurrenceID(eventID)?.baseID ?? eventID
+        // BUG-06：编辑展开实例（复合 ID）时不允许改时间——startDate/endDate/isAllDay 会写回
+        // EK base 并回拨整条序列游标；此处统一丢弃时间类参数，仅保留标题/优先级/提醒/颜色等
+        let isOccurrenceInstance = CachedEvent.parseOccurrenceID(eventID) != nil
+        if isOccurrenceInstance, startDate != nil || endDate != nil || isAllDay != nil {
+            AppLogger.ui.warning("updateEvent 展开实例忽略时间修改 id=\(eventID)（需作用于整条系列）")
+        }
+        let effectiveStartDate = isOccurrenceInstance ? nil : startDate
+        let effectiveEndDate = isOccurrenceInstance ? nil : endDate
+        let effectiveIsAllDay = isOccurrenceInstance ? nil : isAllDay
         if isReminder {
             // R-5：EK 对象失效（事项可能已被系统侧删除）时静默跳过会令 UI 假装保存成功，
             // 补 NOT-FOUND 日志（对照 deleteEvent B-7）；缓存分支同步跳过——否则下次同步
@@ -1276,13 +1298,13 @@ final class CalendarService {
             if let title { reminder.title = title }
             // B-6：startDate 与 endDate 任一传入都更新到期时间（提醒只有 dueDate
             // 一个时间语义），原实现忽略 endDate 导致只调结束时间不生效
-            if let dueSource = startDate ?? endDate {
+            if let dueSource = effectiveStartDate ?? effectiveEndDate {
                 // 全天事件只写日期；非全天写入具体时间（isAllDay 未传时按原始时间
                 // 是否带时分秒推断——B-22：原 <86400 判定会把跨天定时提醒
                 //（如今天10:00~明天10:30，间隔>24h）误判为全天）
                 let isTimed: Bool
-                if let isAllDay {
-                    isTimed = !isAllDay
+                if let effectiveIsAllDay {
+                    isTimed = !effectiveIsAllDay
                 } else {
                     let comps = Calendar.current.dateComponents([.hour, .minute, .second], from: dueSource)
                     isTimed = (comps.hour ?? 0) != 0 || (comps.minute ?? 0) != 0 || (comps.second ?? 0) != 0
@@ -1303,12 +1325,12 @@ final class CalendarService {
                 return
             }
             if let title { event.title = title }
-            if let startDate { event.startDate = startDate }
-            if let endDate { event.endDate = endDate }
-            if let isAllDay { event.isAllDay = isAllDay }
+            if let effectiveStartDate { event.startDate = effectiveStartDate }
+            if let effectiveEndDate { event.endDate = effectiveEndDate }
+            if let effectiveIsAllDay { event.isAllDay = effectiveIsAllDay }
             // E-6：切为全天时显式清 endDate——UI 全天保存传 endDate=nil，
             // 上面 if let 不执行会残留原截止时间；EK 全天单日惯例 endDate=startDate
-            if let isAllDay, isAllDay {
+            if let effectiveIsAllDay, effectiveIsAllDay {
                 event.endDate = event.startDate
             }
             // 更新日历事件闹钟：多级 offsets 优先（空数组=清除），单级 minutes 兼容；
@@ -1325,22 +1347,22 @@ final class CalendarService {
             if isReminder {
                 // B-6：提醒只有到期时间一个语义，startDate==endDate 必须同步写，
                 // 原实现只写 startDate、endDate 残留旧值导致缓存与 EK 分叉
-                if let dueSource = startDate ?? endDate {
+                if let dueSource = effectiveStartDate ?? effectiveEndDate {
                     cached.startDate = dueSource
                     cached.endDate = dueSource
                 }
             } else {
-                if let startDate { cached.startDate = startDate }
+                if let effectiveStartDate { cached.startDate = effectiveStartDate }
                 // E-6：切为全天时缓存 endDate 同步清为 startDate（零长全天单日），
                 // 消除带时间→全天切换后的残留截止时间
-                if let isAllDay, isAllDay {
-                    cached.endDate = startDate ?? cached.startDate
-                } else if let endDate {
-                    cached.endDate = endDate
+                if let effectiveIsAllDay, effectiveIsAllDay {
+                    cached.endDate = effectiveStartDate ?? cached.startDate
+                } else if let effectiveEndDate {
+                    cached.endDate = effectiveEndDate
                 }
             }
             // isAllDay 必须同步，否则"全天 ↔ 带时间"切换后缓存与 EK 不一致，UI 显示错误
-            if let isAllDay { cached.isAllDay = isAllDay }
+            if let effectiveIsAllDay { cached.isAllDay = effectiveIsAllDay }
             if let priority { cached.priority = priority.rawValue }
             if let reminderOffsets {
                 // 多级：经 setter 写入维护硬不变量（空数组=清除多级回退单级）
@@ -1374,7 +1396,9 @@ final class CalendarService {
     }
     
     /// 更新事件周期类型（单条化 plan step 7：编辑即改整条）
-    /// - 周期→1次：清完成历史（普通任务只有 isCompleted 单状态），startDate 不动
+    /// - 周期→1次（BUG-21 用户口径）：保留已完成历史（已办列表可见），清未来展开依据；
+    ///   `completedOccurrenceDatesJSON` 不再清空，`originStartDate` 置 nil 防止从远古锚点
+    ///   展开出过去未完成行；游标 startDate 不动
     /// - 1次→周期 / 周期类型变更：仅更新类型，下一次 occurrence 由查询链从 startDate 以新周期推进
     @MainActor
     func updateEventRecurrence(eventID: String, newRecurrenceType: RecurrenceType) {
@@ -1389,7 +1413,8 @@ final class CalendarService {
 
         cached.recurrenceType = newRecurrenceType
         if newRecurrenceType == .none {
-            cached.completedOccurrenceDatesJSON = nil
+            // 清未来展开依据：originStartDate 仅用于展开序列起点，留着会让 ② 从锚点产出历史未完成行
+            cached.originStartDate = nil
             // 切单次对称清除有效期（spec AC-6，plan step 8）：单次任务无周期语义，区间随之失效
             cached.validStartDate = nil
             cached.validEndDate = nil
@@ -1831,7 +1856,11 @@ extension CalendarService {
                 currentDate = nextAnchoredMonthlyDate(from: currentDate, anchorDay: anchorDay) ?? currentDate
             case .yearly:
                 currentDate = Calendar.current.date(byAdding: .year, value: 1, to: currentDate) ?? currentDate
-            case .none, .custom, .hourly:
+            case .hourly:
+                // BUG-19：每小时循环必须推进到未来，否则过去时刻创建的任务立即显示逾期
+                // 且系统侧时间落在过去（.none/.custom 仍无推进语义）
+                currentDate = Calendar.current.date(byAdding: .hour, value: 1, to: currentDate) ?? currentDate
+            case .none, .custom:
                 // B-32：无推进语义，直接返回避免 while 死循环（date <= now 时循环条件恒真）
                 return currentDate
             }

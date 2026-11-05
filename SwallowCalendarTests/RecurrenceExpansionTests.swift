@@ -103,4 +103,24 @@ final class RecurrenceExpansionTests: XCTestCase {
         XCTAssertNil(CalendarService.nextOccurrence(after: date(2026, 10, 24), recurrenceType: .none, isLunar: false))
         XCTAssertNil(CalendarService.nextOccurrence(after: date(2026, 10, 24), recurrenceType: .custom, isLunar: false))
     }
+
+    /// BUG-19：过去时刻创建的每小时任务必须推进到未来（否则立即逾期、系统侧落在过去）
+    func testHourlyAdvanceRecurrenceDateMovesIntoFuture() {
+        let base = Calendar.current.date(byAdding: .hour, value: -3, to: Date())!
+        let advanced = CalendarService.advanceRecurrenceDate(base, recurrenceType: .hourly)
+
+        XCTAssertGreaterThan(advanced, Date(), "每小时循环必须推进到当前时间之后")
+        // 按整小时步进：分钟/秒与基准保持一致
+        let baseComps = Calendar.current.dateComponents([.minute, .second], from: base)
+        let advComps = Calendar.current.dateComponents([.minute, .second], from: advanced)
+        XCTAssertEqual(advComps.minute, baseComps.minute)
+        XCTAssertEqual(advComps.second, baseComps.second)
+    }
+
+    /// 对照：.custom 无推进语义，过去日期保持原值（护栏不得误伤）
+    func testCustomAdvanceRecurrenceDateKeepsPastDate() {
+        let base = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+        let advanced = CalendarService.advanceRecurrenceDate(base, recurrenceType: .custom)
+        XCTAssertEqual(advanced.timeIntervalSince1970, base.timeIntervalSince1970, accuracy: 0.001)
+    }
 }

@@ -416,6 +416,9 @@ final class EventCacheService {
                     && event.recurrenceTypeRaw != noneRaw
                     && ((event.startDate ?? distantPast) < endDate
                         || (event.originStartDate ?? distantFuture) < endDate))
+                // BUG-21：循环改单次后本体已无循环类型，但保留完成历史（已办可见）；
+                // 游标期可能远在窗口之后，此处按「有历史即命中」粗筛，历史行在展开时精确过滤
+                || event.completedOccurrenceDatesJSON != nil
         }
 
         let descriptor = FetchDescriptor<CachedEvent>(
@@ -426,8 +429,13 @@ final class EventCacheService {
         do {
             let events = try context.fetch(descriptor)
             // 循环任务行分离展开为 occurrence 实例（未落库），其余走原有精确过滤
-            let recurring = events.filter { $0.recurrenceType != .none }
-            let normal = events.filter { $0.recurrenceType == .none }
+            // BUG-21：改单次后仍保留完成历史的本体行也走展开（历史行由 ① 产出，现场只留游标一条）
+            let recurring = events.filter {
+                $0.recurrenceType != .none || $0.completedOccurrenceDatesJSON != nil
+            }
+            let normal = events.filter {
+                $0.recurrenceType == .none && $0.completedOccurrenceDatesJSON == nil
+            }
             let expanded = recurring.flatMap {
                 expandOccurrences(of: $0, windowStart: startDate, windowEnd: endDate, context: context)
             }
@@ -464,6 +472,19 @@ final class EventCacheService {
             if (occ >= windowStart && occ < windowEnd) || (occ < windowStart && instanceEnd > windowStart) {
                 result.append(makeOccurrenceInstance(of: base, occurrence: occ, duration: duration, isCompleted: true))
             }
+        }
+        // BUG-21 回归修复：转单次保留历史的本体行（recurrenceType == .none）不走
+        // 复合 ID 实例——完成点击经 toggleRecurringOccurrence 的 .none guard 会被
+        // 静默拒绝，任务永远无法完成。改为窗口重叠时直接产出本体行（本体 eventID
+        // + 落库 isCompleted），完成走 toggleEventCompleted 本体路径写 base.isCompleted
+        if base.recurrenceType == .none {
+            let instanceEnd = baseStart.addingTimeInterval(duration)
+            let inWindow = (baseStart >= windowStart && baseStart < windowEnd)
+                || (baseStart < windowStart && instanceEnd > windowStart)
+            if !base.isCompleted, base.isWithinValidity(baseStart), inWindow {
+                result.append(base)
+            }
+            return result
         }
         // ② 未完成序列展开
         // 序列起点取历史锚点 originStartDate 与游标 startDate 的较早者（bug:
@@ -545,8 +566,13 @@ final class EventCacheService {
     /// occurrence——本方法把传入行拆为普通行 + 循环展开实例（休日实例保留供标识），
     /// 本体行被替换，语义与 getEvents 一致；调用方负责按月窗口传入 @Query 结果
     func mergedDisplayEvents(from rows: [CachedEvent], windowStart: Date, windowEnd: Date, context: ModelContext) -> [CachedEvent] {
-        let recurring = rows.filter { $0.recurrenceType != .none }
-        let normal = rows.filter { $0.recurrenceType == .none }
+        // BUG-21：改单次后保留完成历史的本体行同样走展开，否则历史行在月历不可见
+        let recurring = rows.filter {
+            $0.recurrenceType != .none || $0.completedOccurrenceDatesJSON != nil
+        }
+        let normal = rows.filter {
+            $0.recurrenceType == .none && $0.completedOccurrenceDatesJSON == nil
+        }
         let expanded = recurring.flatMap {
             expandOccurrences(of: $0, windowStart: windowStart, windowEnd: windowEnd, context: context, includeHolidaySkipped: true)
         }
@@ -725,15 +751,21 @@ final class EventCacheService {
                 // 必须同时比较 reminderMinutes 与 offsets（Architect steelman 采纳项）
                 let newOffsetsJSON = CachedEvent.encodeOffsetsJSON(event.reminderOffsets)
                 let offsetsChanged = existing.reminderOffsetsJSON != newOffsetsJSON
+                // BUG-09：循环行的 startDate/endDate 是本地游标事实，EK 仅作镜像；
+                // 外部删除/写失败后若按 EK 旧日期回写，游标会与完成历史分叉（该期再也无法推进）
+                let isRecurringCursor = existing.recurrenceType != .none
+                let startChanged = !isRecurringCursor && existing.startDate != newStart
+                let endChanged = !isRecurringCursor && existing.endDate != newEnd
                 // B-8：变更检测与赋值补齐 isAllDay/calendarTitle/calendarColorHex/category，
                 // 避免 EK 侧修改后缓存残留旧值
-                if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes || offsetsChanged || existing.isAllDay != event.isAllDay || existing.calendarTitle != event.calendarTitle || existing.calendarColorHex != event.calendarColorHex || existing.category != newCategory {
+                if existing.title != newTitle || startChanged || endChanged || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes || offsetsChanged || existing.isAllDay != event.isAllDay || existing.calendarTitle != event.calendarTitle || existing.calendarColorHex != event.calendarColorHex || existing.category != newCategory {
                     if existing.isCompleted != newIsCompleted {
                         AppLogger.cache.warning("syncEvents isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID)")
                     }
                     existing.title = newTitle
-                    existing.startDate = newStart
-                    existing.endDate = newEnd
+                    // 循环行不回写日期（游标由完成推进/编辑维护）；非循环行照旧同步 EK
+                    if startChanged { existing.startDate = newStart }
+                    if endChanged { existing.endDate = newEnd }
                     existing.isCompleted = newIsCompleted
                     // 双写同源一致值（JSON 与 minutes 均来自 EK，本就满足 max 不变量）
                     existing.reminderOffsetsJSON = newOffsetsJSON
@@ -1262,6 +1294,7 @@ final class EventCacheService {
 
         // 5. 删除：缓存中存在但新数据中不存在的订阅事件
         //    对于获取失败的源（源启用但未在 fetchedSourceURLs 中），保留其旧数据
+        var hasChanges = false
         let deletedIDs = Set(existingByID.keys).subtracting(newIDs)
         for eventID in deletedIDs {
             if let event = existingByID[eventID] {
@@ -1274,8 +1307,10 @@ final class EventCacheService {
                 // 如果事件来源是启用的源但获取失败 → 保留（网络问题，不丢失数据）
                 if fetchedSourceURLs.contains(event.calendarID) {
                     context.delete(event)
+                    hasChanges = true
                 } else if !enabledSourceURLs.contains(event.calendarID) {
                     context.delete(event)
+                    hasChanges = true
                 }
                 // else: 源启用但获取失败，保留旧数据
             }
@@ -1297,6 +1332,7 @@ final class EventCacheService {
                     existing.startDate = startDate
                     existing.endDate = endDate
                     existing.lastUpdated = Date()
+                    hasChanges = true
                 }
             } else {
                 // 插入新事件
@@ -1313,12 +1349,18 @@ final class EventCacheService {
                     category: .subscription
                 )
                 context.insert(cached)
+                hasChanges = true
             }
         }
 
         do {
             try context.save()
             lastSyncTime = Date()
+            // BUG-11：订阅同步有实际增删改时广播，月历/待办/休日判定才能即时刷新
+            //（无变更不广播，避免每次轮询触发全量重绘）
+            if hasChanges {
+                NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
+            }
         } catch {
             // B-30：保存失败必须记录日志，静默吞掉会丢数据且无法排查
             AppLogger.cache.error("订阅同步保存失败: \(String(describing: error))")

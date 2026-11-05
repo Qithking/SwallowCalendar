@@ -215,4 +215,53 @@ final class RecurringCompletionTests: XCTestCase {
         XCTAssertFalse(cached.isCompleted)
         XCTAssertEqual(cached.startDate?.timeIntervalSince1970 ?? 0, d1.timeIntervalSince1970, accuracy: 0.001)
     }
+
+    // MARK: - BUG-09 EK NOT-FOUND 授权门控
+
+    /// 已授权但 EK 查不到循环基座 = 外部删除：不得单边推进缓存，否则下次同步把游标拉回造成分叉
+    func testCompleteOccurrenceAbortsWhenEKAuthorizedButItemMissing() async throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        let d0 = date(2026, 10, 26, 9, 0)
+        let cached = try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-authorized",
+            startDate: d0
+        )
+
+        // 模拟真实已授权环境：EK 可达但对象缺失（用户已在系统日历删除）
+        calendarService.authorizationStatus = .fullAccess
+        calendarService.suppressesSyncFailureAlert = true
+
+        await calendarService.toggleEventCompleted(
+            eventID: occID("rec-authorized", d0),
+            isCompleted: true
+        )
+
+        // 写失败中止：历史与游标均不变
+        XCTAssertEqual(cached.completedOccurrenceDates, [])
+        XCTAssertEqual(cached.startDate?.timeIntervalSince1970 ?? 0, d0.timeIntervalSince1970, accuracy: 0.001)
+    }
+
+    /// 对照：无授权（含测试宿主）时 EK 不可达，保持「对象不存在不算失败」兜底，缓存照常推进
+    func testCompleteOccurrenceStillAdvancesWhenEKUnauthorized() async throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        let d0 = date(2026, 10, 26, 9, 0)
+        let d1 = Calendar.current.date(byAdding: .day, value: 1, to: d0)!
+        let cached = try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-unauthorized",
+            startDate: d0
+        )
+
+        // setUp 默认 .notDetermined
+        await calendarService.toggleEventCompleted(
+            eventID: occID("rec-unauthorized", d0),
+            isCompleted: true
+        )
+
+        XCTAssertEqual(cached.completedOccurrenceDates, [d0])
+        XCTAssertEqual(cached.startDate?.timeIntervalSince1970 ?? 0, d1.timeIntervalSince1970, accuracy: 0.001)
+    }
 }

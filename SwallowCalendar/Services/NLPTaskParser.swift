@@ -388,6 +388,37 @@ struct NLPTaskParser {
             }
         }
 
+        // BUG-18：先匹配“上周/本周/下周 + 星期X”——普通星期词只取最近未来，
+        // 无法表达过去（"上周五"）或明确周次（"下周一"）
+        if let weekRange = input.range(
+            of: "(上|本|下)个?(星期|周|礼拜)[一二三四五六日天]",
+            options: .regularExpression
+        ) {
+            let matched = String(input[weekRange])
+            let prefix = String(matched.prefix(1))
+            let weekdayChar = String(matched.suffix(1))
+            let weekdayMap: [String: Int] = ["日": 1, "天": 1, "一": 2, "二": 3, "三": 4, "四": 5, "五": 6, "六": 7]
+            if let targetWeekday = weekdayMap[weekdayChar] {
+                // 周一为周首，本周起点 = 当前周周一 0 点
+                var weekCal = Self.weekdayCalendar
+                weekCal.firstWeekday = 2
+                let weekStart = weekCal.dateInterval(of: .weekOfYear, for: now)?.start
+                    ?? weekCal.startOfDay(for: now)
+                let offsetInWeek = (targetWeekday + 5) % 7  // 周一=0 … 周日=6
+                let weekOffset = prefix == "上" ? -7 : (prefix == "下" ? 7 : 0)
+                if let d = weekCal.date(byAdding: .day, value: offsetInWeek + weekOffset, to: weekStart) {
+                    var timeComponents = weekCal.dateComponents([.hour, .minute, .second], from: baseDate)
+                    timeComponents.year = weekCal.component(.year, from: d)
+                    timeComponents.month = weekCal.component(.month, from: d)
+                    timeComponents.day = weekCal.component(.day, from: d)
+                    if let finalDate = weekCal.date(from: timeComponents) {
+                        return (finalDate, matched + matchedText, false)
+                    }
+                }
+                return (weekStart, matched, false)
+            }
+        }
+
         // 匹配星期X 或 周X 格式（如"周五"、"星期三"）
         // 使用固定周日=1的Calendar（N-15 静态常量），不受用户firstWeekday设置影响
         let gregorianForWeekday = Self.weekdayCalendar
@@ -593,6 +624,10 @@ struct NLPTaskParser {
     // MARK: - 优先级解析
 
     private static func parsePriority(from input: String) -> EventPriority? {
+        // BUG-17：否定式必须先判——"不重要"包含"重要"，原实现会误判为高优先级
+        if input.contains("不是很重要") || input.contains("不太重要") || input.contains("不重要") {
+            return .low
+        }
         if input.contains("重要") || input.contains("紧急") || input.contains("高优") || input.contains("最高") {
             return .high
         }
@@ -721,8 +756,8 @@ struct NLPTaskParser {
             result = result.replacingOccurrences(of: kw, with: "")
         }
 
-        // 移除优先级关键词
-        let priorityKeywords = ["重要", "紧急", "高优", "中等", "普通", "低优", "次要"]
+        // 移除优先级关键词（否定式在前，先整体移除"不重要"，再处理"重要"）
+        let priorityKeywords = ["不是很重要", "不太重要", "不重要", "重要", "紧急", "高优", "中等", "普通", "低优", "次要"]
         for kw in priorityKeywords {
             result = result.replacingOccurrences(of: kw, with: "")
         }
@@ -730,7 +765,8 @@ struct NLPTaskParser {
         // N-6：移除星期词——必须在周期关键词之前，否则"每周一"先移除"每周"后
         // 残留孤立的"一"无法再匹配；正则需同时吞掉前缀"每"，否则"每周一"移除
         // "周一"后残留孤立的"每"字（swift test 暴露）
-        if let weekdayRange = result.range(of: "每?(?:星期|周|礼拜)[一二三四五六日天]", options: .regularExpression) {
+        // BUG-18：同时吞掉"上周/本周/下周"前缀（含"个"），避免残留前缀字
+        if let weekdayRange = result.range(of: "(?:[上本下]个?|每)?(?:星期|周|礼拜)[一二三四五六日天]", options: .regularExpression) {
             result.removeSubrange(weekdayRange)
         }
 

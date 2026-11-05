@@ -53,6 +53,25 @@ struct EditEventSheet: View {
         return try? context.fetch(descriptor).first
     }
 
+    /// BUG-06：展开实例（复合 ID）只允许改非时间字段——写回 startDate/endDate/isAllDay
+    /// 会把整条循环序列的游标回拨到该期；非实例行原样透传
+    static func sanitizedTimeParams(
+        for eventID: String,
+        startDate: Date,
+        endDate: Date?,
+        isAllDay: Bool
+    ) -> (startDate: Date?, endDate: Date?, isAllDay: Bool?) {
+        guard CachedEvent.parseOccurrenceID(eventID) != nil else {
+            return (startDate, endDate, isAllDay)
+        }
+        return (nil, nil, nil)
+    }
+
+    /// 当前编辑对象是否为循环展开出的单期行（复合 ID）
+    private var isOccurrenceInstance: Bool {
+        CachedEvent.parseOccurrenceID(event.id) != nil
+    }
+
     init(event: CalendarEvent, calendarService: CalendarService, onDismiss: (() -> Void)? = nil, onSave: (() -> Void)? = nil) {
         self.event = event
         self.calendarService = calendarService
@@ -136,11 +155,21 @@ struct EditEventSheet: View {
                     Toggle("", isOn: $isAllDay)
                         .toggleStyle(.switch)
                         .labelsHidden()
+                        // BUG-06：单期行不允许改时间，避免回拨整条序列游标
+                        .disabled(isOccurrenceInstance)
                 }
 
                 FormRow(label: "日期") {
                     DatePicker("", selection: $startDate, displayedComponents: isAllDay ? [.date] : [.date, .hourAndMinute])
                         .labelsHidden()
+                        .disabled(isOccurrenceInstance)
+                }
+
+                if isOccurrenceInstance {
+                    Text("当前为循环单期，时间修改请作用于整条系列")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
@@ -436,12 +465,19 @@ struct EditEventSheet: View {
                     end: validityHasEnd ? validityEnd : nil
                 ) : nil
                 let validityParam: ValidityPeriod?? = currentValidity == originalValidity ? nil : .some(currentValidity)
+                // BUG-06：展开实例传 nil 时间参数，服务层也会二次丢弃（双保险）
+                let timeParams = Self.sanitizedTimeParams(
+                    for: event.id,
+                    startDate: startDate,
+                    endDate: newEndDate,
+                    isAllDay: isAllDay
+                )
                 try calendarService.updateEvent(
                     eventID: event.id,
                     title: title,
-                    startDate: startDate,
-                    endDate: newEndDate,
-                    isAllDay: isAllDay,
+                    startDate: timeParams.startDate,
+                    endDate: timeParams.endDate,
+                    isAllDay: timeParams.isAllDay,
                     isReminder: event.isReminder,
                     // .none 的 rawValue 为 0，直接传入可正确清除已有优先级
                     priority: taskPriority,
@@ -451,9 +487,6 @@ struct EditEventSheet: View {
                     skipHolidays: skipHolidays,
                     validity: validityParam
                 )
-                // D2/G7v2：编辑保存成功，广播缓存变更（徽标即时刷新）
-                NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
-                
                 // 如果周期类型发生变化，处理周期任务逻辑
                 if taskRecurrence != originalRecurrence {
                     calendarService.updateEventRecurrence(
@@ -461,6 +494,9 @@ struct EditEventSheet: View {
                         newRecurrenceType: taskRecurrence
                     )
                 }
+
+                // BUG-16：广播必须晚于周期更新——原实现先广播再改周期，列表按旧序列渲染且不再刷新
+                NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
                 
                 // 通知外部刷新
                 onSave?()

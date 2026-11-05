@@ -35,6 +35,9 @@ final class ExternalChangeSyncTests: XCTestCase {
         let service = BackgroundSyncService.shared
         service.externalChangeDebounceSeconds = Self.debounceSeconds
         service.isSyncing = false
+        // BUG-10：复位待补跑标记与重试预算，避免单例状态跨用例污染
+        service.pendingExternalResync = false
+        service.maxExternalSyncRetries = 10
         // 触发 CalendarService 懒加载，注册 EKEventStore.changed 监听（真实链路起点）
         _ = CalendarService.shared
         return service
@@ -113,6 +116,38 @@ final class ExternalChangeSyncTests: XCTestCase {
     }
 
     // MARK: - 订阅源与提醒缓存（AC-3 / AC-5）
+
+    /// BUG-10（触发条件）：长同步跨过全部重试窗口 → 不静默丢弃，置待补跑标记
+    func testRetryBudgetExhaustedSetsPendingFlag() {
+        let service = setUpPipeline()
+        service.maxExternalSyncRetries = 1
+        let spy = SyncSpy()
+        service.externalSyncAction = { spy.count += 1 }
+
+        // Given: 模拟长同步（整个防抖窗口内 isSyncing 恒真）
+        service.isSyncing = true
+        postExternalStoreChange()
+        waitFor(seconds: Self.debounceSeconds * 5)
+
+        XCTAssertEqual(spy.count, 0, "同步进行中不得执行外部同步")
+        XCTAssertTrue(service.pendingExternalResync, "重试预算耗尽后必须置待补跑标记，不得静默丢弃")
+    }
+
+    /// BUG-10（消费路径）：待补跑标记在本轮 syncOnce 结束时立即执行一次（跳过 ICS）
+    func testPendingResyncRunsAfterSyncEnds() async throws {
+        let service = setUpPipeline()
+        _ = try makeSyncContainer()
+        let spy = SyncSpy()
+        service.externalSyncAction = { spy.count += 1 }
+
+        service.pendingExternalResync = true
+        _ = await service.syncOnce(includeSubscriptions: false)
+        // 让 defer 中派生补跑 Task 获得执行机会（MainActor 让出）
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        XCTAssertEqual(spy.count, 1, "同步结束后必须补跑一次被丢弃的外部变更")
+        XCTAssertFalse(service.pendingExternalResync)
+    }
 
     /// 注册三模型的内存容器并注入缓存/后台同步服务（syncOnce 链路依赖）
     private func makeSyncContainer() throws -> ModelContainer {

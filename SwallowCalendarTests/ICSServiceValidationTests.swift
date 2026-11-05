@@ -150,6 +150,68 @@ final class ICSServiceValidationTests: XCTestCase {
         XCTAssertFalse(rows.contains { $0.eventID == stale.eventID }, "源中已不存在的旧行应被删除")
     }
 
+    // MARK: - BUG-11 订阅同步广播
+
+    /// 触发条件：订阅同步有新增行 → 必须广播 .cachedEventsChanged，列表/月历才能即时刷新
+    func testSyncPostsNotificationWhenRowsInserted() async throws {
+        let config = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: CachedEvent.self, configurations: config)
+        EventCacheService.shared.configure(with: container)
+
+        let url = "https://example.com/notify-sync-\(UUID().uuidString).ics"
+        let content = """
+        BEGIN:VCALENDAR
+        VERSION:2.0
+        BEGIN:VEVENT
+        SUMMARY:广播测试事件
+        UID:notify-1
+        DTSTART:20261201T090000
+        END:VEVENT
+        END:VCALENDAR
+        """
+        try seedCache(content, for: url)
+        defer { removeCache(for: url) }
+
+        let exp = expectation(forNotification: .cachedEventsChanged, object: nil, handler: nil)
+        let source = CustomCalendarSource(name: "测试订阅", icsURL: url, isEnabled: true)
+        await EventCacheService.shared.syncSubscriptionEvents(sources: [source])
+        await fulfillment(of: [exp], timeout: 1)
+
+        let rows = try container.mainContext.fetch(FetchDescriptor<CachedEvent>())
+        XCTAssertEqual(rows.count, 1, "新增行应已入库")
+    }
+
+    /// 反向对照：内容无变化的重复同步不广播（避免轮询触发全量重绘）
+    func testSyncDoesNotPostNotificationWhenNothingChanged() async throws {
+        let config = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: CachedEvent.self, configurations: config)
+        EventCacheService.shared.configure(with: container)
+
+        let url = "https://example.com/nochange-sync-\(UUID().uuidString).ics"
+        let content = """
+        BEGIN:VCALENDAR
+        VERSION:2.0
+        BEGIN:VEVENT
+        SUMMARY:无变化事件
+        UID:nochange-1
+        DTSTART:20261201T090000
+        END:VEVENT
+        END:VCALENDAR
+        """
+        try seedCache(content, for: url)
+        defer { removeCache(for: url) }
+
+        let source = CustomCalendarSource(name: "测试订阅", icsURL: url, isEnabled: true)
+        // 首轮入库（会广播，不作为断言对象）
+        await EventCacheService.shared.syncSubscriptionEvents(sources: [source])
+
+        let exp = expectation(forNotification: .cachedEventsChanged, object: nil, handler: nil)
+        exp.isInverted = true
+        // 次轮内容一致：不得广播
+        await EventCacheService.shared.syncSubscriptionEvents(sources: [source])
+        await fulfillment(of: [exp], timeout: 0.5)
+    }
+
     // MARK: - 缓存文件辅助（与 ICSService.cacheFileName 同规则）
 
     private func cacheFileURL(for url: String) -> URL {
