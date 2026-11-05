@@ -498,7 +498,7 @@ final class CalendarService {
                 : startDate <= Date()
             if isOverdue {
                 // 周期任务：如果时间已过，推进到下一个周期
-                finalStartDate = CalendarService.advanceRecurrenceDate(startDate, recurrenceType: recurrenceType)
+                finalStartDate = CalendarService.advanceRecurrenceDate(startDate, recurrenceType: recurrenceType, origin: startDate)
                 
                 // 同时推进 endDate（如果有）
                 if let ed = endDate {
@@ -1152,7 +1152,8 @@ final class CalendarService {
             var next = CalendarService.nextOccurrence(
                 after: occurrence,
                 recurrenceType: cached.recurrenceType,
-                isLunar: cached.isLunar
+                isLunar: cached.isLunar,
+                origin: cached.originStartDate ?? cached.startDate
             )
             // 有效期补齐（spec/task-validity-period AC-5，plan step 5b）：startDate 落后于
             // 有效期开始端（编辑把开始端改到未来产生空档）时，逐周期推进到首个 ≥ validStart
@@ -1162,7 +1163,8 @@ final class CalendarService {
                     next = CalendarService.nextOccurrence(
                         after: t,
                         recurrenceType: cached.recurrenceType,
-                        isLunar: cached.isLunar
+                        isLunar: cached.isLunar,
+                        origin: cached.originStartDate ?? cached.startDate
                     )
                     catchup += 1
                 }
@@ -1555,12 +1557,66 @@ extension CGColor {
 // MARK: - Recurrence Helper
 
 extension CalendarService {
+    // MARK: - BUG-05 锚点原语（非农历 monthly/yearly）
+
+    /// 按锚点 origin 与序号 index 构造第 N 期：年月取自 origin 步进，日取锚定日；
+    /// 目标月天数不足时钳到月末，但下一期仍回弹到原锚定点（1/31 → 2/28 → 3/31）。
+    /// 时分秒保留 origin 的值。非 monthly/yearly 或农历返回 nil（走原有系统取整语义）
+    static func anchoredOccurrence(origin: Date, index: Int, recurrenceType: RecurrenceType) -> Date? {
+        guard recurrenceType == .monthly || recurrenceType == .yearly else { return nil }
+        let calendar = Calendar.current
+        let originComps = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: origin)
+        guard let originYear = originComps.year,
+              let originMonth = originComps.month,
+              let anchorDay = originComps.day else { return nil }
+
+        // 以 origin 所在月的 1 日为基准做步进，避免 DateComponents 月份溢出语义差异
+        var baseComps = DateComponents()
+        baseComps.year = originYear
+        baseComps.month = originMonth
+        baseComps.day = 1
+        baseComps.hour = originComps.hour
+        baseComps.minute = originComps.minute
+        baseComps.second = originComps.second
+        guard let base = calendar.date(from: baseComps) else { return nil }
+
+        let unit: Calendar.Component = recurrenceType == .monthly ? .month : .year
+        guard let targetFirst = calendar.date(byAdding: unit, value: index, to: base),
+              let daysInMonth = calendar.range(of: .day, in: .month, for: targetFirst)?.count else {
+            return nil
+        }
+        var targetComps = calendar.dateComponents([.year, .month], from: targetFirst)
+        targetComps.day = min(anchorDay, daysInMonth)
+        targetComps.hour = originComps.hour
+        targetComps.minute = originComps.minute
+        targetComps.second = originComps.second
+        return calendar.date(from: targetComps)
+    }
+
+    /// 反向求相位：date 相对 origin 的期序号（monthly 按月差、yearly 按年差）；
+    /// 非锚点适用类型返回 nil。用于完成推进/回退与存量完成历史迁移
+    static func anchoredIndex(of date: Date, origin: Date, recurrenceType: RecurrenceType) -> Int? {
+        let calendar = Calendar.current
+        let originComps = calendar.dateComponents([.year, .month], from: origin)
+        let dateComps = calendar.dateComponents([.year, .month], from: date)
+        guard let originYear = originComps.year, let originMonth = originComps.month,
+              let year = dateComps.year, let month = dateComps.month else { return nil }
+        switch recurrenceType {
+        case .monthly:
+            return (year - originYear) * 12 + (month - originMonth)
+        case .yearly:
+            return year - originYear
+        default:
+            return nil
+        }
+    }
+
     /// 确定性单步推进到下一个 occurrence（单条化 plan step 3）
     /// 与当前时间无关（供虚拟展开/完成推进共用，after 为未来日期也精确 +1 周期）；
     /// monthly 走 B-16 锚定日语义（31 日遇小月取月末且不漂移）；
     /// isLunar 走农历 Calendar(identifier: .chinese)（B-17 系统取整语义）；
     /// 跳过节假日不在此处理——语义 v3 为显示层静默过滤，不改写序列
-    static func nextOccurrence(after date: Date, recurrenceType: RecurrenceType, isLunar: Bool) -> Date? {
+    static func nextOccurrence(after date: Date, recurrenceType: RecurrenceType, isLunar: Bool, origin: Date? = nil) -> Date? {
         if isLunar {
             let chineseCalendar = Calendar(identifier: .chinese)
             switch recurrenceType {
@@ -1579,6 +1635,12 @@ extension CalendarService {
             case .none, .custom:
                 return nil
             }
+        }
+        // BUG-05：传入锚点且为 monthly/yearly 时走锚点原语——不再随游标逐月取整漂移
+        if let origin,
+           let index = anchoredIndex(of: date, origin: origin, recurrenceType: recurrenceType),
+           let next = anchoredOccurrence(origin: origin, index: index + 1, recurrenceType: recurrenceType) {
+            return next
         }
         switch recurrenceType {
         case .unlimited, .daily:
@@ -1601,7 +1663,7 @@ extension CalendarService {
     /// nextOccurrence 的逆运算（反向单步，bug: recurring-past-occurrence-invisible）：
     /// 供存量循环行回填历史锚点时从游标反向回退；monthly 与正向同走 Calendar.date(byAdding:)
     /// 系统取整，正反共用取整语义保持序列自洽
-    static func previousOccurrence(before date: Date, recurrenceType: RecurrenceType, isLunar: Bool) -> Date? {
+    static func previousOccurrence(before date: Date, recurrenceType: RecurrenceType, isLunar: Bool, origin: Date? = nil) -> Date? {
         if isLunar {
             let chineseCalendar = Calendar(identifier: .chinese)
             switch recurrenceType {
@@ -1619,6 +1681,15 @@ extension CalendarService {
             case .none, .custom:
                 return nil
             }
+        }
+        // BUG-05：锚点回退——index 小于 1 表示已到序列起点（origin 之前无 occurrence）
+        if let origin,
+           let index = anchoredIndex(of: date, origin: origin, recurrenceType: recurrenceType) {
+            guard index > 0,
+                  let previous = anchoredOccurrence(origin: origin, index: index - 1, recurrenceType: recurrenceType) else {
+                return nil
+            }
+            return previous
         }
         switch recurrenceType {
         case .unlimited, .daily:
@@ -1712,7 +1783,7 @@ extension CalendarService {
     ///   - date: 原始日期
     ///   - recurrenceType: 周期类型
     /// - Returns: 推进后的日期（保证 > Date()）
-    static func advanceRecurrenceDate(_ date: Date, recurrenceType: RecurrenceType) -> Date {
+    static func advanceRecurrenceDate(_ date: Date, recurrenceType: RecurrenceType, origin: Date? = nil) -> Date {
         let now = Date()
 
         // 如果日期已经在未来，直接返回
@@ -1724,6 +1795,23 @@ extension CalendarService {
         // 超限（约 10 年）直接返回当前时间兜底
         let maxIterations = 3660
         var iterations = 0
+
+        // BUG-05：monthly/yearly 传入 origin 时按锚点序列推进——月度回弹原锚点、
+        // 年度 2/29 非闰年落 2/28 并于闰年恢复，避免随游标取整漂移
+        if let origin,
+           let startIndex = anchoredIndex(of: date, origin: origin, recurrenceType: recurrenceType) {
+            var index = max(startIndex, 0)
+            while iterations < maxIterations {
+                guard let candidate = anchoredOccurrence(origin: origin, index: index, recurrenceType: recurrenceType) else {
+                    return currentDate
+                }
+                if candidate > now { return candidate }
+                index += 1
+                iterations += 1
+            }
+            return now
+        }
+
         // B-16：monthly 锚定日——date(byAdding: .month) 遇 31 日→小月会截断到月末，
         // 连续推进后锚点漂移（1/31→2/28→3/28），改按锚定日逐月构造
         let anchorDay = Calendar.current.component(.day, from: date)

@@ -311,9 +311,9 @@ final class EventExpansionTests: XCTestCase {
         )
     }
 
-    /// monthly 不做对齐（月末取整累积语义）：1-31 逐次 +1 月得 2-28→3-28…，
-    /// 批量月差跳转会得不同序列（10-31）——本测试锁死取整累积行为不变
-    func testMonthlyExpansionKeepsCumulativeRounding() throws {
+    /// BUG-05：monthly 展开按 origin 锚定（1-31 → 2-28 → 3-31 … → 10-31），
+    /// 不再逐月取整累积漂移（旧行为 10-28）
+    func testMonthlyExpansionAnchorsToOrigin() throws {
         let container = try makeContainer()
         EventCacheService.shared.configure(with: container)
         try insertRecurring(
@@ -328,8 +328,8 @@ final class EventExpansionTests: XCTestCase {
         XCTAssertEqual(results.count, 1)
         XCTAssertEqual(
             CachedEvent.parseOccurrenceID(results.first?.eventID ?? "")?.occurrence,
-            date(2026, 10, 28, 9, 0),
-            "monthly 序列保持逐次取整累积（1-31→2-28→…→10-28），不做批量月差对齐"
+            date(2026, 10, 31, 9, 0),
+            "monthly 展开锚定 origin：1-31 → 2-28 → 3-31 … → 10-31"
         )
     }
 

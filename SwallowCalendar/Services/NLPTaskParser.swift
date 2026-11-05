@@ -4,6 +4,8 @@
 //
 
 import Foundation
+// AppLogger 底层为 os.Logger，调用 warning/info 等方法需定义模块可见（与项目其他调用方一致）
+import os
 
 /// 自然语言任务解析器
 struct NLPTaskParser {
@@ -632,7 +634,18 @@ struct NLPTaskParser {
 
     // MARK: - 提醒时间解析
 
+    /// BUG-07：提前量统一钳制到上限（1440 分钟）——原"提前 N 天"可产生 >1440 的
+    /// 分钟数，调度窗口上界仅 now+1440，导致该提醒永不触发
     private static func parseReminder(from input: String) -> Int? {
+        guard let raw = parseReminderUnclamped(from: input) else { return nil }
+        let clamped = min(max(raw, 0), CachedEvent.maxReminderLeadMinutes)
+        if clamped != raw {
+            AppLogger.reminder.warning("提醒提前量超上限已收敛 raw=\(raw) clamped=\(clamped)")
+        }
+        return clamped
+    }
+
+    private static func parseReminderUnclamped(from input: String) -> Int? {
         // 匹配 "提前X分钟" 或 "X分钟前"
         if let match = input.range(of: "提前(\\d+)分钟", options: .regularExpression) {
             let matched = String(input[match])
@@ -792,7 +805,7 @@ struct NLPTaskParser {
     /// 将过去的时间推进到下一个周期的有效时间
     private static func advanceToNextPeriod(date: Date, recurrence: RecurrenceType) -> Date {
         // 复用 CalendarService 的公共逻辑，确保一致性
-        return CalendarService.advanceRecurrenceDate(date, recurrenceType: recurrence)
+        return CalendarService.advanceRecurrenceDate(date, recurrenceType: recurrence, origin: date)
     }
 }
 

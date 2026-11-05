@@ -34,12 +34,54 @@ final class RecurrenceExpansionTests: XCTestCase {
     }
 
     func testMonthlyAnchorsToMonthEnd() {
-        // spec Edge cases 定案：月末由 Calendar.date(byAdding:) 系统取整（getNextGregorianDate 语义）
+        // BUG-05：传入锚点后月度回弹原锚点 1/31 → 2/28 → 3/31（不再随游标取整漂移）
+        let origin = date(2026, 1, 31)
+        let next = CalendarService.nextOccurrence(
+            after: origin, recurrenceType: .monthly, isLunar: false, origin: origin)
+        XCTAssertEqual(next, date(2026, 2, 28))
+        let afterFeb = CalendarService.nextOccurrence(
+            after: next!, recurrenceType: .monthly, isLunar: false, origin: origin)
+        XCTAssertEqual(afterFeb, date(2026, 3, 31))
+    }
+
+    func testMonthlyWithoutOriginKeepsLegacyRounding() {
+        // 未传锚点（存量未回填/农历旁路）保持旧取整语义：1/31 → 2/28 → 3/28
         let next = CalendarService.nextOccurrence(after: date(2026, 1, 31), recurrenceType: .monthly, isLunar: false)
         XCTAssertEqual(next, date(2026, 2, 28))
-        // 展开链与完成推进链共用本函数：后续从取整结果继续单步，保持自洽
         let afterFeb = CalendarService.nextOccurrence(after: next!, recurrenceType: .monthly, isLunar: false)
         XCTAssertEqual(afterFeb, date(2026, 3, 28))
+    }
+
+    func testYearlyLeapDayAnchorsBackToLeapYear() {
+        // BUG-05：2/29 非闰年落 2/28，闰年回弹 2/29
+        let origin = date(2028, 2, 29)
+        XCTAssertEqual(
+            CalendarService.nextOccurrence(after: origin, recurrenceType: .yearly, isLunar: false, origin: origin),
+            date(2029, 2, 28))
+        XCTAssertEqual(
+            CalendarService.nextOccurrence(after: date(2031, 2, 28), recurrenceType: .yearly, isLunar: false, origin: origin),
+            date(2032, 2, 29))
+    }
+
+    func testAnchoredPreviousOccurrenceIsSymmetric() {
+        let origin = date(2026, 1, 31)
+        XCTAssertEqual(
+            CalendarService.previousOccurrence(before: date(2026, 2, 28), recurrenceType: .monthly, isLunar: false, origin: origin),
+            origin)
+        XCTAssertNil(
+            CalendarService.previousOccurrence(before: origin, recurrenceType: .monthly, isLunar: false, origin: origin),
+            "origin 之前无 occurrence")
+    }
+
+    func testMigrationRekeysDriftedCompletionDates() {
+        // BUG-05 存量迁移：[1/31, 2/28, 3/28] → [1/31, 2/28, 3/31]
+        let origin = date(2026, 1, 31)
+        let migrated = CachedEvent.migratedAnchorCompletionDates(
+            [date(2026, 1, 31), date(2026, 2, 28), date(2026, 3, 28)],
+            origin: origin,
+            recurrenceType: .monthly
+        )
+        XCTAssertEqual(migrated, [date(2026, 1, 31), date(2026, 2, 28), date(2026, 3, 31)])
     }
 
     func testYearlyAdvancesOneYear() {

@@ -12,8 +12,8 @@ import os
 import SwiftUI  // 为了导入 CalendarEvent
 
 /// 去重键：持久化元素 "eventID|alertTs"（plan 步骤 5 / AC-7 多级提醒各级独立去重）。
-/// 旧格式（无 "|"，仅 eventID）惰性兼容：alertTime 回退 .distantPast，
-/// 匹配语义为"该事件已提醒过"；孤儿键不迁移，保留至 trim（1000 上限）自然淘汰
+/// BUG-03：旧格式（无 "|"）键不再惰性兼容——原实现回退 .distantPast 并以通配语义
+/// 匹配任意 alertTime，叠加 baseID 归一化后整条序列永久静默；现改为解析失败即丢弃
 struct ReminderAlertKey: Equatable {
     let eventID: String
     let alertTime: Date
@@ -24,17 +24,14 @@ struct ReminderAlertKey: Equatable {
     }
 
     /// 解码持久化串：时间戳取末段 "|" 之后（baseID 恒不含 "|"，末段分割对
-    /// 各格式均正确——纯 eventID（v1 旧格式）、复合 eventID "baseID|occ:<epoch>"
-    /// （R-1 起候选行）、前两者加时间戳的完整键；时间戳段非法时按旧格式兼容处理）
-    init(raw: String) {
-        if let idx = raw.lastIndex(of: "|"),
-           let ts = TimeInterval(raw[raw.index(after: idx)...]) {
-            self.eventID = String(raw[..<idx])
-            self.alertTime = Date(timeIntervalSince1970: ts)
-        } else {
-            self.eventID = raw
-            self.alertTime = .distantPast
-        }
+    /// 各格式均正确——复合 eventID "baseID|occ:<epoch>"（R-1 起候选行）、
+    /// 再加时间戳的完整键）；无 "|"、末段非有限数字 → nil（旧格式键一次性迁移丢弃）
+    init?(raw: String) {
+        guard let idx = raw.lastIndex(of: "|"),
+              let ts = TimeInterval(raw[raw.index(after: idx)...]),
+              ts.isFinite else { return nil }
+        self.eventID = String(raw[..<idx])
+        self.alertTime = Date(timeIntervalSince1970: ts)
     }
 
     /// 编码为持久化串（秒级时间戳）
@@ -64,6 +61,8 @@ final class ReminderAlertService {
     private static let alertedEventIDsKey = "ReminderAlertService.lastAlertedEventIDs"
     /// 已提醒事件ID的最大缓存数量
     private let maxAlertedEventIDs = 1000
+    /// BUG-04：弹窗后重提醒间隔（秒），复用 snooze 机制由 60s 轮询触发
+    static let retryInterval: TimeInterval = 300
     /// 持久化上次检查时间的 UserDefaults 键（B-14）
     private static let lastCheckTimeKey = "ReminderAlertService.lastCheckTime"
     /// 上次检查时间（B-14：挂起/睡眠恢复后以"上次检查~now"为提醒窗口，避免漏提醒）
@@ -80,8 +79,14 @@ final class ReminderAlertService {
 
     private init() {
         // 从 UserDefaults 恢复已提醒事件ID，避免应用重启后重复弹窗
+        // BUG-03：一次性迁移——无法解析的旧格式键（无时间戳）直接丢弃，避免永久静默
         if let saved = UserDefaults.standard.stringArray(forKey: Self.alertedEventIDsKey) {
-            self.lastAlertedEventIDs = saved
+            let sanitized = Self.sanitizedAlertedEventIDs(saved)
+            self.lastAlertedEventIDs = sanitized
+            if sanitized.count != saved.count {
+                AppLogger.reminder.info("清理无法解析的旧提醒去重键 count=\(saved.count - sanitized.count)")
+                UserDefaults.standard.set(sanitized, forKey: Self.alertedEventIDsKey)
+            }
         }
         // B-14：恢复上次检查时间，重启后窗口下界不回退到"无记录"状态
         let savedTime = UserDefaults.standard.double(forKey: Self.lastCheckTimeKey)
@@ -216,7 +221,7 @@ final class ReminderAlertService {
         // 故未来档事件必要条件 startDate > now；上限 now+24h 覆盖 UI 上限 1440 分钟提前档
         let userCategory = EventCategory.user.rawValue
         let lower = now
-        let upper = now.addingTimeInterval(1440 * 60)
+        let upper = now.addingTimeInterval(TimeInterval(CachedEvent.maxReminderLeadMinutes * 60))
         let distantPast = Date.distantPast
         let distantFuture = Date.distantFuture
         let descriptor = FetchDescriptor<CachedEvent>(
@@ -281,7 +286,7 @@ final class ReminderAlertService {
         // startDate ∈ [windowLower, now + 1440 分钟]，精确判定仍由下方内存过滤完成。
         // 常规检查下界为 B-14 的 lastCheckTime 窗口（无记录回退 90 秒）；
         // includeExpired 需覆盖全部已过期提醒，下界放开
-        let maxReminderLeadSeconds: TimeInterval = 1440 * 60
+        let maxReminderLeadSeconds = TimeInterval(CachedEvent.maxReminderLeadMinutes * 60)
         let fetchUpperBound = now.addingTimeInterval(maxReminderLeadSeconds)
         let windowStart = lastCheckTime ?? calendar.date(byAdding: .second, value: -90, to: now)!
         let fetchLowerBound = includeExpired ? Date.distantPast : windowStart
@@ -410,17 +415,39 @@ final class ReminderAlertService {
                 // 限制数组大小，避免内存泄漏
                 trimAlertedEventIDsIfNeeded()
                 // 5分钟后允许再次提醒
-                DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak self] in
+                // BUG-03：清理键按 baseID 集合归一——原按原始 ID 精确匹配，
+                // 旧键/复合 ID 永不清理，叠加通配匹配导致永久静默
+                let mergedSubjects = Set(mergedEvents.map { Self.alertSubjectID($0.eventID) })
+                // BUG-04：闭包持有值快照而非模型引用（5 分钟后模型可能已被同步删除）
+                let retryCandidates = mergedEvents.compactMap { event
+                    -> (eventID: String, startDate: Date, isCompleted: Bool)? in
+                    guard let start = event.startDate else { return nil }
+                    return (event.eventID, start, event.isCompleted)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.retryInterval) { [weak self] in
                     guard let self else { return }
                     // B-29：移除后同步持久化——原实现只改内存数组，重启后
                     // UserDefaults 仍含旧 ID，5 分钟重提醒窗口失效
                     // A-18：Set 化事件 ID——原逐事件全量扫描 O(N×M)，合并弹窗
                     // 事件多时每条都全量遍历已提醒键数组
-                    let mergedIDs = Set(mergedEvents.map(\.eventID))
                     self.lastAlertedEventIDs.removeAll { raw in
-                        mergedIDs.contains(ReminderAlertKey(raw: raw).eventID)
+                        // BUG-03：无法解析的旧键直接清除
+                        guard let key = ReminderAlertKey(raw: raw) else { return true }
+                        return mergedSubjects.contains(Self.alertSubjectID(key.eventID))
                     }
                     self.persistAlertedEventIDs()
+
+                    // BUG-04：已提示但尚未处理的事项 5 分钟后重新入队，
+                    // 由 60s 轮询的 consumeDueSnoozes 再次弹窗（提前档不入队）
+                    let existing = Self.loadSnoozeRecords()
+                    let retryRecords = Self.nextRetryRecords(
+                        for: retryCandidates,
+                        now: Date(),
+                        existing: existing
+                    )
+                    if retryRecords != existing {
+                        Self.saveSnoozeRecords(retryRecords)
+                    }
                 }
             }
             // B-14：本次检查已覆盖到 now，记录检查时间作为下次检查（含挂起恢复后）的窗口下界；
@@ -729,26 +756,49 @@ final class ReminderAlertService {
 
     // MARK: - 去重键辅助
 
+    /// BUG-03：去重主体 ID——复合 occurrence ID 归一到 baseID，其余原样返回
+    static func alertSubjectID(_ eventID: String) -> String {
+        CachedEvent.parseOccurrenceID(eventID)?.baseID ?? eventID
+    }
+
+    /// BUG-03：一次性迁移已提醒键——无法解析的旧格式键（无时间戳）丢弃，
+    /// 其余重新编码保持秒级格式（幂等）
+    static func sanitizedAlertedEventIDs(_ saved: [String]) -> [String] {
+        saved.compactMap { ReminderAlertKey(raw: $0)?.encoded }
+    }
+
+    /// BUG-04：生成五分钟重提醒记录——仅已开始（startDate ≤ now）且未完成的事件，
+    /// 提前档不入队（避免 24h 提前档每 5 分钟重复）；已有 snooze 记录不覆盖
+    static func nextRetryRecords(
+        for candidates: [(eventID: String, startDate: Date, isCompleted: Bool)],
+        now: Date,
+        existing: [SnoozeRecord]
+    ) -> [SnoozeRecord] {
+        var records = existing
+        let existingIDs = Set(existing.map(\.eventID))
+        for candidate in candidates {
+            guard candidate.startDate <= now, !candidate.isCompleted else { continue }
+            guard !existingIDs.contains(candidate.eventID) else { continue }
+            records.append(SnoozeRecord(
+                eventID: candidate.eventID,
+                fireDate: now.addingTimeInterval(retryInterval)
+            ))
+        }
+        return records
+    }
+
     /// 判断两个 eventID 是否指向同一提醒主体：复合实例 ID（"baseID|occ:<epoch>"，
     /// R-1 起候选行）归一到 baseID 后比较——静态可测，P2-2 升级兼容的核心判定
     static func sameAlertSubject(_ lhs: String, _ rhs: String) -> Bool {
-        func baseID(_ id: String) -> String {
-            CachedEvent.parseOccurrenceID(id)?.baseID ?? id
-        }
-        return baseID(lhs) == baseID(rhs)
+        alertSubjectID(lhs) == alertSubjectID(rhs)
     }
 
-    /// 判断 (eventID, alertTime) 是否已提醒过：新键精确匹配 alertTime；
-    /// 旧格式键（解码 alertTime == .distantPast）惰性兼容——视为该事件已提醒过。
-    /// P2-2 升级兼容：存量键 eventID 为循环 base 行 ID，R-1 起候选行为复合实例 ID，
-    /// 精确匹配会脱靶导致升级后首个到点周期重复弹——同一期的 alertTime 不随 ID
-    /// 表示形式变化，baseID 相同且 alertTime 相同即同一次提醒；不同期 alertTime
-    /// 必不同，归一化不会误吞新一期
+    /// 判断 (eventID, alertTime) 是否已提醒过：仅 baseID 相同且 alertTime 精确相等。
+    /// BUG-03：删除 .distantPast 通配分支——旧格式键已由启动迁移丢弃，
+    /// 保留通配会让任意一期命中旧键导致整条序列永久静默
     private func hasAlertedKey(eventID: String, alertTime: Date) -> Bool {
-        lastAlertedEventIDs.contains { raw in
-            let decoded = ReminderAlertKey(raw: raw)
-            return Self.sameAlertSubject(decoded.eventID, eventID) &&
-                   (decoded.alertTime == alertTime || decoded.alertTime == .distantPast)
+        lastAlertedEventIDs.compactMap { ReminderAlertKey(raw: $0) }.contains { decoded in
+            Self.sameAlertSubject(decoded.eventID, eventID) && decoded.alertTime == alertTime
         }
     }
 }

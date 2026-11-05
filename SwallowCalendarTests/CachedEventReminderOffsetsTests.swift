@@ -34,6 +34,21 @@ final class CachedEventReminderOffsetsTests: XCTestCase {
         XCTAssertEqual(event.reminderOffsets, [10])
     }
 
+    /// BUG-07：存量 JSON 中超过上限的 offset 读取时自动收敛到 1440
+    func testLegacyOffsetsOverLimitClampedOnRead() {
+        let event = makeEvent()
+        event.reminderOffsetsJSON = "[2880,0]"
+        XCTAssertEqual(event.reminderOffsets, [0, 1440])
+    }
+
+    /// BUG-07：写入超上限 offset 时同样收敛，且 reminderMinutes 随之为 1440
+    func testOffsetsOverLimitClampedOnWrite() {
+        let event = makeEvent()
+        event.reminderOffsets = [2880, 0]
+        XCTAssertEqual(event.reminderOffsets, [0, 1440])
+        XCTAssertEqual(event.reminderMinutes, 1440)
+    }
+
     func testCorruptJSONFallsBackToSingleLevel() {
         let event = makeEvent()
         event.reminderMinutes = 10

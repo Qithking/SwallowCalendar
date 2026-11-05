@@ -65,6 +65,10 @@ final class CachedEvent {
     /// 注意：@Model 宏不保留 didSet（已探针实证），G1 反向重写由 setReminderMinutesRewritingMax 显式承担
     var reminderMinutes: Int = 0
 
+    /// BUG-07：提醒提前量上限（分钟）——调度窗口取数上界与 NLP 解析统一收口到一天，
+    /// 超过上限的提前量此前永不进入 [windowStart, now] 判定窗口，导致完全不提醒
+    static let maxReminderLeadMinutes = 1440
+
     /// G1 反向重写（原 didSet 联动，因 @Model 宏丢弃 didSet 而显式化）：
     /// 直赋单级 minutes 时把多级 offsets 最高档替换为新值并去重，
     /// 维护硬不变量 reminderMinutes == offsets.max()；直赋点必须调用本方法而非直接赋值
@@ -128,18 +132,23 @@ final class CachedEvent {
     /// 多级提醒提前分钟数组（计算属性，真源为 reminderOffsetsJSON 镜像 EventKit 多 alarm）
     /// 读取：解码 JSON，未设置/坏数据/空数组回退 [reminderMinutes]（单级语义）
     /// 写入：去重升序编码 JSON，并维护硬不变量 reminderMinutes == max
+    /// BUG-07：读写均钳制到 [0, maxReminderLeadMinutes]——存量 JSON 超上限值自动收敛
     var reminderOffsets: [Int] {
         get {
-            guard let json = reminderOffsetsJSON,
-                  let data = json.data(using: .utf8),
-                  let offsets = try? JSONDecoder().decode([Int].self, from: data),
-                  !offsets.isEmpty else {
-                return [reminderMinutes]
+            let offsets: [Int]
+            if let json = reminderOffsetsJSON,
+               let data = json.data(using: .utf8),
+               let decoded = try? JSONDecoder().decode([Int].self, from: data),
+               !decoded.isEmpty {
+                offsets = decoded
+            } else {
+                offsets = [reminderMinutes]
             }
-            return offsets
+            return Array(Set(offsets.map { min(max($0, 0), Self.maxReminderLeadMinutes) })).sorted()
         }
         set {
-            let normalized = Array(Set(newValue)).sorted()
+            let clamped = newValue.map { min(max($0, 0), Self.maxReminderLeadMinutes) }
+            let normalized = Array(Set(clamped)).sorted()
             guard !normalized.isEmpty else {
                 // 空数组：清空多级，回退单级语义（reminderMinutes 保持当前值）
                 reminderOffsetsJSON = nil
@@ -189,6 +198,27 @@ final class CachedEvent {
                 completedOccurrenceDatesJSON = String(data: data, encoding: .utf8)
             }
         }
+    }
+
+    /// BUG-05：按 origin 相位重算完成历史（时分秒由锚点原语从 origin 保留）；纯函数供单测
+    static func migratedAnchorCompletionDates(
+        _ dates: [Date],
+        origin: Date,
+        recurrenceType: RecurrenceType
+    ) -> [Date] {
+        let recomputed = dates.compactMap { date -> Date? in
+            guard let index = CalendarService.anchoredIndex(
+                of: date,
+                origin: origin,
+                recurrenceType: recurrenceType
+            ) else { return nil }
+            return CalendarService.anchoredOccurrence(
+                origin: origin,
+                index: index,
+                recurrenceType: recurrenceType
+            )
+        }
+        return Array(Set(recomputed)).sorted()
     }
 
     // MARK: - 有效期判定（spec/task-validity-period AC-1；plan step 3）
@@ -441,6 +471,9 @@ final class EventCacheService {
         // 若序列跟随游标，被越过的历史未完成实例将永久不可见；min 兜底异常数据
         // （originStart 晚于游标）不产生空档；nil（存量未回填）回退游标展开
         var occ = min(base.originStartDate ?? baseStart, baseStart)
+        // BUG-05：序列锚点用于 monthly/yearly 的锚定构造（1/31 → 2/28 → 3/31），
+        // 与游标 occ 解耦，避免推进过程中被取整带偏
+        let sequenceOrigin = occ
         // 起点对齐（bug: reminder-starved-by-badge-expansion）：日加法族（每天/每周）
         // 从锚点逐次推进到窗口的迭代数与锚点年龄成正比，全部为无产出的空转——
         // 用整除跳转直接落到 ≤ windowStart 的最近相位再回退一个周期；回退保证
@@ -472,7 +505,12 @@ final class EventCacheService {
                     }
                 }
             }
-            guard let next = CalendarService.nextOccurrence(after: occ, recurrenceType: base.recurrenceType, isLunar: base.isLunar) else { break }
+            guard let next = CalendarService.nextOccurrence(
+                after: occ,
+                recurrenceType: base.recurrenceType,
+                isLunar: base.isLunar,
+                origin: sequenceOrigin
+            ) else { break }
             occ = next
             iterations += 1
             if iterations >= 4000 {
@@ -765,6 +803,8 @@ final class EventCacheService {
             cleanupOldEvents(context: context, before: startDate)
             // D2/G7v2：系统日历回流完成，广播缓存变更（徽标即时刷新）
             NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
+            // BUG-05：同步完成后做一次完成历史锚点迁移（此时 originStartDate 回填已落库）
+            migrateMonthlyAnchorCompletionDates(context: context)
             return true
         } catch {
             AppLogger.cache.error("同步保存失败: \(String(describing: error))")
@@ -799,6 +839,51 @@ final class EventCacheService {
             }
         } else {
             // 无数据需要迁移，直接标记完成
+            UserDefaults.standard.set(true, forKey: migrationKey)
+        }
+    }
+
+    /// BUG-05：一次性迁移——monthly/yearly 行的完成历史按锚点 origin 重算，
+    /// 旧 [1/31, 2/28, 3/28] 收敛为 [1/31, 2/28, 3/31]，避免已完成期在锚点展开后重现。
+    /// 迁移为一次性，UserDefaults 门控；保存成功才置位，失败下次重试
+    @MainActor
+    private func migrateMonthlyAnchorCompletionDates(context: ModelContext) {
+        let migrationKey = "EventCacheService.monthlyAnchorMigrationDone"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+
+        let monthlyRaw = RecurrenceType.monthly.rawValue
+        let yearlyRaw = RecurrenceType.yearly.rawValue
+        let descriptor = FetchDescriptor<CachedEvent>(predicate: #Predicate<CachedEvent> { event in
+            event.recurrenceTypeRaw == monthlyRaw || event.recurrenceTypeRaw == yearlyRaw
+        })
+        guard let rows = try? context.fetch(descriptor) else {
+            AppLogger.cache.error("月末锚点迁移查询失败，保留待下次重试")
+            return
+        }
+
+        var migratedCount = 0
+        for row in rows where !row.isLunar {
+            guard let origin = row.originStartDate else { continue }
+            let newDates = CachedEvent.migratedAnchorCompletionDates(
+                row.completedOccurrenceDates,
+                origin: origin,
+                recurrenceType: row.recurrenceType
+            )
+            if newDates != row.completedOccurrenceDates {
+                row.completedOccurrenceDates = newDates
+                migratedCount += 1
+            }
+        }
+
+        if migratedCount > 0 {
+            do {
+                try context.save()
+                UserDefaults.standard.set(true, forKey: migrationKey)
+                AppLogger.cache.info("月末锚点完成历史迁移 \(migratedCount) 条")
+            } catch {
+                AppLogger.cache.error("月末锚点迁移保存失败，保留待下次重试: \(String(describing: error))")
+            }
+        } else {
             UserDefaults.standard.set(true, forKey: migrationKey)
         }
     }
@@ -1010,6 +1095,8 @@ final class EventCacheService {
             lastSyncTime = Date()
             // D2/G7v2：系统提醒回流完成，广播缓存变更（徽标即时刷新）
             NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
+            // BUG-05：同步完成后做一次完成历史锚点迁移（此时 originStartDate 回填已落库）
+            migrateMonthlyAnchorCompletionDates(context: context)
         } catch {
             AppLogger.cache.error("提醒保存失败: \(String(describing: error))")
             return false
@@ -1017,17 +1104,20 @@ final class EventCacheService {
         return true
     }
 
-    /// 清除所有提醒缓存（isReminder 为 true 的记录）
+    /// 清除提醒缓存（isReminder 为 true 的记录）
+    /// BUG-01：排除用户自建提醒（category = .user）——默认关闭提醒同步时每次 syncOnce
+    /// 都走整批清理，原谓词会把自建提醒连同完成历史一起永久删除
     @MainActor
     func clearRemindersCache() {
         guard let context = self.context else { return }
-        
+
+        let userCategory = EventCategory.user.rawValue
         let descriptor = FetchDescriptor<CachedEvent>(
             predicate: #Predicate<CachedEvent> { event in
-                event.isReminder == true
+                event.isReminder == true && event.categoryRaw != userCategory
             }
         )
-        
+
         if let events = try? context.fetch(descriptor) {
             for event in events {
                 context.delete(event)
@@ -1158,11 +1248,27 @@ final class EventCacheService {
         // 启用源的 URL 集合（用于判断缓存事件的来源是否仍启用）
         let enabledSourceURLs = Set(enabledSources.map { $0.icsURL })
 
+        // BUG-02：抓取成功但返回 0 事件，且该源已有缓存行——视为可疑空响应
+        //（源被清空/临时返回空），保留旧行并告警；宁留数据不误删
+        let emptyResponseSourceURLs = Set(
+            fetchedEventsBySource.filter { $0.events.isEmpty }.map { $0.source.icsURL }
+        )
+        let suspiciousEmptySources = emptyResponseSourceURLs.filter { url in
+            existingByID.values.contains { $0.calendarID == url }
+        }
+        for url in suspiciousEmptySources {
+            AppLogger.cache.warning("订阅源返回 0 事件但存在缓存行，保留旧数据 url=\(url)")
+        }
+
         // 5. 删除：缓存中存在但新数据中不存在的订阅事件
         //    对于获取失败的源（源启用但未在 fetchedSourceURLs 中），保留其旧数据
         let deletedIDs = Set(existingByID.keys).subtracting(newIDs)
         for eventID in deletedIDs {
             if let event = existingByID[eventID] {
+                // BUG-02：可疑空响应的源不做差集删除（空解析不得清空订阅）
+                if suspiciousEmptySources.contains(event.calendarID) {
+                    continue
+                }
                 // 如果事件来源是启用的源且该源获取成功 → 删除（源中已无此事件）
                 // 如果事件来源不是任何启用的源 → 删除（源已被禁用）
                 // 如果事件来源是启用的源但获取失败 → 保留（网络问题，不丢失数据）

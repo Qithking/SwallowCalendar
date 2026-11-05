@@ -42,25 +42,45 @@ final class ICSService {
             AppLogger.ics.warning("ICS 响应超过大小上限 bytes=\(data.count)")
             throw ICSError.responseTooLarge
         }
-        let content = String(data: data, encoding: .utf8) ?? ""
+        // BUG-02：解码失败不再降级为空串——空串会被解析为零事件并写坏缓存
+        guard let content = String(data: data, encoding: .utf8) else {
+            AppLogger.ics.warning("ICS 响应 UTF-8 解码失败 url=\(url.absoluteString)")
+            throw ICSError.invalidPayload
+        }
 
-        // 缓存到本地
+        // BUG-02：先解析成功再写缓存，避免错误响应覆盖可用缓存
+        let events = try parseICS(content)
         cacheICSContent(content, for: url.absoluteString)
-
-        return parseICS(content)
+        return events
     }
 
     /// 从缓存加载ICS
     func loadCached(url: String) -> [ICSEvent]? {
         guard let content = loadCachedContent(for: url) else { return nil }
-        return parseICS(content)
+        // BUG-02：缓存内容损坏时返回 nil，让调用方回退网络重新拉取
+        guard let events = try? parseICS(content) else {
+            AppLogger.ics.warning("ICS 缓存解析失败，回退网络拉取 url=\(url)")
+            return nil
+        }
+        return events
     }
 
     // MARK: - Parse ICS
 
-    func parseICS(_ content: String) -> [ICSEvent] {
+    /// BUG-02：解析失败抛错——非 ICS 内容（如 HTML 错误页/截断响应）不得当作"零事件"
+    func parseICS(_ content: String) throws -> [ICSEvent] {
         var events: [ICSEvent] = []
         let lines = content.components(separatedBy: .newlines)
+
+        // BUG-02：结构校验——首个非空行须为 BEGIN:VCALENDAR 且必须闭合 END:VCALENDAR
+        // 兼容 UTF-8 BOM 前缀（部分订阅源导出带 BOM，否则合法内容会被误判）
+        let trimmedLines = lines.map { $0.trimmingCharacters(in: .whitespaces) }
+        let firstLine = trimmedLines.first(where: { !$0.isEmpty })
+            .map { $0.hasPrefix("\u{FEFF}") ? String($0.dropFirst()) : $0 }
+        guard firstLine == "BEGIN:VCALENDAR",
+              trimmedLines.contains("END:VCALENDAR") else {
+            throw ICSError.invalidPayload
+        }
 
         // B-20：RFC5545 行折叠——以空格/Tab 开头的行是上一行的续行，长摘要/UID
         // 会被折叠成多行，需先展开（并入上一行，去掉首个续行空白）再逐行解析
@@ -265,6 +285,8 @@ enum ICSError: LocalizedError {
     case parseError
     /// S-4：订阅响应超过大小上限
     case responseTooLarge
+    /// BUG-02：订阅内容不是合法 ICS（解码失败/非 VCALENDAR 结构）
+    case invalidPayload
 
     var errorDescription: String? {
         switch self {
@@ -272,6 +294,7 @@ enum ICSError: LocalizedError {
         case .networkError: return "网络错误"
         case .parseError: return "ICS解析错误"
         case .responseTooLarge: return "订阅内容超过大小限制（5MB）"
+        case .invalidPayload: return "订阅内容不是合法的 ICS 格式"
         }
     }
 }
