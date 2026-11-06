@@ -18,6 +18,7 @@ final class ReminderStartupExpiredCheckTests: XCTestCase {
 
     private let alertedIDsKey = "ReminderAlertService.lastAlertedEventIDs"
     private let lastCheckTimeKey = "ReminderAlertService.lastCheckTime"
+    private let snoozeRecordsKey = "ReminderAlertService.snoozeRecords"
 
     override func setUpWithError() throws {
         resetState()
@@ -32,6 +33,7 @@ final class ReminderStartupExpiredCheckTests: XCTestCase {
         ReminderAlertService.shared.resetForTesting()
         UserDefaults.standard.removeObject(forKey: alertedIDsKey)
         UserDefaults.standard.removeObject(forKey: lastCheckTimeKey)
+        UserDefaults.standard.removeObject(forKey: snoozeRecordsKey)
         ReminderAlertWindowController.shared.close()
     }
 
@@ -67,6 +69,11 @@ final class ReminderStartupExpiredCheckTests: XCTestCase {
         XCTAssertTrue(
             ReminderAlertWindowController.shared.isWindowVisible,
             "应用初始启动时应弹出过期提醒"
+        )
+        // 2026-11-06 口径：不再自动重弹——检查本身不得写入自动 snooze 记录
+        XCTAssertTrue(
+            ReminderAlertService.loadSnoozeRecords().isEmpty,
+            "启动过期汇总不得产生自动重提醒记录（重复提醒仅由用户主动稍后提醒产生）"
         )
 
         // 模拟主面板关闭后重开：弹窗已关，检查再次被触发 → 不应再弹

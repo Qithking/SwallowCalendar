@@ -61,8 +61,6 @@ final class ReminderAlertService {
     private static let alertedEventIDsKey = "ReminderAlertService.lastAlertedEventIDs"
     /// 已提醒事件ID的最大缓存数量
     private let maxAlertedEventIDs = 1000
-    /// BUG-04：弹窗后重提醒间隔（秒），复用 snooze 机制由 60s 轮询触发
-    static let retryInterval: TimeInterval = 300
     /// 持久化上次检查时间的 UserDefaults 键（B-14）
     private static let lastCheckTimeKey = "ReminderAlertService.lastCheckTime"
     /// 上次检查时间（B-14：挂起/睡眠恢复后以"上次检查~now"为提醒窗口，避免漏提醒）
@@ -414,41 +412,9 @@ final class ReminderAlertService {
                 persistAlertedEventIDs()
                 // 限制数组大小，避免内存泄漏
                 trimAlertedEventIDsIfNeeded()
-                // 5分钟后允许再次提醒
-                // BUG-03：清理键按 baseID 集合归一——原按原始 ID 精确匹配，
-                // 旧键/复合 ID 永不清理，叠加通配匹配导致永久静默
-                let mergedSubjects = Set(mergedEvents.map { Self.alertSubjectID($0.eventID) })
-                // BUG-04：闭包持有值快照而非模型引用（5 分钟后模型可能已被同步删除）
-                let retryCandidates = mergedEvents.compactMap { event
-                    -> (eventID: String, startDate: Date, isCompleted: Bool)? in
-                    guard let start = event.startDate else { return nil }
-                    return (event.eventID, start, event.isCompleted)
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + Self.retryInterval) { [weak self] in
-                    guard let self else { return }
-                    // B-29：移除后同步持久化——原实现只改内存数组，重启后
-                    // UserDefaults 仍含旧 ID，5 分钟重提醒窗口失效
-                    // A-18：Set 化事件 ID——原逐事件全量扫描 O(N×M)，合并弹窗
-                    // 事件多时每条都全量遍历已提醒键数组
-                    self.lastAlertedEventIDs.removeAll { raw in
-                        // BUG-03：无法解析的旧键直接清除
-                        guard let key = ReminderAlertKey(raw: raw) else { return true }
-                        return mergedSubjects.contains(Self.alertSubjectID(key.eventID))
-                    }
-                    self.persistAlertedEventIDs()
-
-                    // BUG-04：已提示但尚未处理的事项 5 分钟后重新入队，
-                    // 由 60s 轮询的 consumeDueSnoozes 再次弹窗（提前档不入队）
-                    let existing = Self.loadSnoozeRecords()
-                    let retryRecords = Self.nextRetryRecords(
-                        for: retryCandidates,
-                        now: Date(),
-                        existing: existing
-                    )
-                    if retryRecords != existing {
-                        Self.saveSnoozeRecords(retryRecords)
-                    }
-                }
+                // 2026-11-06 口径：移除原 BUG-04 的 300s 自动重提醒（对已开始未完成事项
+                // 入 SnoozeRecord 再重弹）。到点本身有准点提醒，过期项不再自动重复打扰；
+                // 用户主动「稍后提醒」仍由 snooze() 入队，由 consumeDueSnoozes 触发。
             }
             // B-14：本次检查已覆盖到 now，记录检查时间作为下次检查（含挂起恢复后）的窗口下界；
             // 仅在 fetch 成功后更新，失败时保留旧值以免跳过失败区间的提醒
@@ -686,8 +652,8 @@ final class ReminderAlertService {
                 ?? EventCacheService.shared.displayOccurrence(withID: record.eventID, context: context)
             if let event = resolved, !event.isCompleted {
                 triggered.append(event)
-                // snooze 重提醒写入新 AlertKey（fireDate 时刻）；5 分钟重提醒机制照常运行，
-                // 两窗口重叠致同事项短时重复提醒由合并弹窗替换机制收敛为单窗（已定案行为）
+                // 用户主动「稍后提醒」写入新 AlertKey（fireDate 时刻）；
+                // 2026-11-06 起不再有 300s 自动重提醒，重复提醒只来自用户此操作
                 let key = ReminderAlertKey(eventID: record.eventID, alertTime: record.fireDate).encoded
                 if !lastAlertedEventIDs.contains(key) {
                     lastAlertedEventIDs.append(key)
@@ -765,26 +731,6 @@ final class ReminderAlertService {
     /// 其余重新编码保持秒级格式（幂等）
     static func sanitizedAlertedEventIDs(_ saved: [String]) -> [String] {
         saved.compactMap { ReminderAlertKey(raw: $0)?.encoded }
-    }
-
-    /// BUG-04：生成五分钟重提醒记录——仅已开始（startDate ≤ now）且未完成的事件，
-    /// 提前档不入队（避免 24h 提前档每 5 分钟重复）；已有 snooze 记录不覆盖
-    static func nextRetryRecords(
-        for candidates: [(eventID: String, startDate: Date, isCompleted: Bool)],
-        now: Date,
-        existing: [SnoozeRecord]
-    ) -> [SnoozeRecord] {
-        var records = existing
-        let existingIDs = Set(existing.map(\.eventID))
-        for candidate in candidates {
-            guard candidate.startDate <= now, !candidate.isCompleted else { continue }
-            guard !existingIDs.contains(candidate.eventID) else { continue }
-            records.append(SnoozeRecord(
-                eventID: candidate.eventID,
-                fireDate: now.addingTimeInterval(retryInterval)
-            ))
-        }
-        return records
     }
 
     /// 判断两个 eventID 是否指向同一提醒主体：复合实例 ID（"baseID|occ:<epoch>"，

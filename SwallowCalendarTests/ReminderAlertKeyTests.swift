@@ -51,41 +51,24 @@ final class ReminderAlertKeyTests: XCTestCase {
         XCTAssertEqual(sanitized, ["evt-1|100", "base|occ:200|300"])
     }
 
-    // MARK: - BUG-04 五分钟重提醒
+    // MARK: - 重复提醒边界（2026-11-06 口径：自动重提醒已移除）
 
-    func testRetryRecordsEnqueueStartedUncompletedEvent() {
-        let now = Date(timeIntervalSince1970: 1_000_000)
-        let started = (eventID: "started", startDate: now.addingTimeInterval(-60), isCompleted: false)
-        let records = ReminderAlertService.nextRetryRecords(for: [started], now: now, existing: [])
+    private let snoozeRecordsKey = "ReminderAlertService.snoozeRecords"
+
+    /// 用户主动「稍后提醒」仍入队（保留用户意图）：fireDate = now + minutes
+    func testUserSnoozeEnqueuesRecord() {
+        UserDefaults.standard.removeObject(forKey: snoozeRecordsKey)
+        defer { UserDefaults.standard.removeObject(forKey: snoozeRecordsKey) }
+        let before = Date()
+        ReminderAlertService.shared.snooze(eventID: "user-snooze", minutes: 10)
+        let records = ReminderAlertService.loadSnoozeRecords()
         XCTAssertEqual(records.count, 1)
-        XCTAssertEqual(records.first?.eventID, "started")
+        XCTAssertEqual(records.first?.eventID, "user-snooze")
         XCTAssertEqual(
-            records.first?.fireDate,
-            now.addingTimeInterval(ReminderAlertService.retryInterval)
+            records.first?.fireDate.timeIntervalSince(before) ?? 0,
+            600,
+            accuracy: 5,
+            "用户主动稍后提醒 10 分钟应入队且不被自动重提醒逻辑改写"
         )
-    }
-
-    func testRetryRecordsSkipFutureAndCompletedEvents() {
-        let now = Date(timeIntervalSince1970: 1_000_000)
-        let future = (eventID: "future", startDate: now.addingTimeInterval(3600), isCompleted: false)
-        let completed = (eventID: "completed", startDate: now.addingTimeInterval(-60), isCompleted: true)
-        let records = ReminderAlertService.nextRetryRecords(
-            for: [future, completed],
-            now: now,
-            existing: []
-        )
-        XCTAssertTrue(records.isEmpty, "未开始（提前档）与已完成的事件不得入队")
-    }
-
-    func testRetryRecordsDoNotOverrideExistingSnooze() {
-        let now = Date(timeIntervalSince1970: 1_000_000)
-        let userSnooze = SnoozeRecord(eventID: "started", fireDate: now.addingTimeInterval(600))
-        let started = (eventID: "started", startDate: now.addingTimeInterval(-60), isCompleted: false)
-        let records = ReminderAlertService.nextRetryRecords(
-            for: [started],
-            now: now,
-            existing: [userSnooze]
-        )
-        XCTAssertEqual(records, [userSnooze], "用户设置的稍后提醒不被自动重提醒覆盖")
     }
 }

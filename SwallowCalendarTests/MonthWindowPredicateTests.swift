@@ -93,4 +93,49 @@ final class MonthWindowPredicateTests: XCTestCase {
         XCTAssertTrue(fetched.contains { $0.eventID == "nov-normal" },
                       "窗口内普通行应正常命中")
     }
+
+    /// BUG-21 回归：循环改单次（recurrenceType=.none）后保留完成历史，
+    /// 游标 startDate 已推进到历史窗口之外；月历 @Query 必须仍命中该本体行，
+    /// 否则 mergedDisplayEvents 无从展开，历史期次在月历永久不可见
+    func testMonthWindowPredicateKeepsConvertedSingleWithHistory() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let history = [date(2026, 10, 20), date(2026, 10, 21), date(2026, 10, 22)]
+        let cursor = date(2026, 11, 20)
+        let event = CachedEvent(
+            eventID: "converted-history",
+            title: "转单次任务",
+            startDate: cursor,
+            endDate: cursor.addingTimeInterval(3600),
+            isAllDay: false,
+            calendarID: "test",
+            calendarTitle: "测试日历",
+            calendarColorHex: "#007AFF",
+            category: .user,
+            recurrenceType: .none
+        )
+        event.completedOccurrenceDates = history
+        context.insert(event)
+        try context.save()
+
+        // 2026 年 10 月窗口：与历史期次重叠，但与游标（11/20）不重叠
+        let windowStart = date(2026, 9, 24)
+        let windowEnd = date(2026, 11, 8)
+        let predicate = CachedEvent.monthWindowPredicate(windowStart: windowStart, windowEnd: windowEnd)
+        let fetched = try context.fetch(FetchDescriptor<CachedEvent>(predicate: predicate))
+        XCTAssertTrue(fetched.contains { $0.eventID == "converted-history" },
+                      "转单次保留历史的本体行必须在历史月份窗口命中（游标在窗外）")
+
+        let merged = EventCacheService.shared.mergedDisplayEvents(
+            from: fetched,
+            windowStart: windowStart,
+            windowEnd: windowEnd,
+            context: context
+        )
+        XCTAssertEqual(
+            merged.filter(\.isCompleted).compactMap(\.startDate).sorted(),
+            history,
+            "月历展开必须产出 3 期已完成历史"
+        )
+    }
 }

@@ -311,6 +311,9 @@ extension CachedEvent {
     /// 循环 base 行（startDate=过去首实例）与未来月窗口不重叠，纯窗口重叠谓词会在
     /// 切月后把 base 行排除，mergedDisplayEvents 无行可展开——循环行豁免窗口过滤
     /// （始终包含，数量有限展开窗口自行裁剪）；普通行仍按窗口重叠过滤。
+    /// BUG-21：循环改单次后本体已无循环类型，但保留完成历史（历史期次需在月历可见）；
+    /// 游标 startDate 可能远在历史月份窗口之后，此处与 getEvents 同口径按
+    /// 「有完成历史即命中」粗筛，历史行由展开阶段精确过滤。
     /// @Query 与单测（FetchDescriptor）共用本构造器，保证单一事实源
     static func monthWindowPredicate(windowStart: Date, windowEnd: Date) -> Predicate<CachedEvent> {
         let noneRaw = RecurrenceType.none.rawValue
@@ -320,6 +323,7 @@ extension CachedEvent {
             (event.recurrenceTypeRaw != nil && event.recurrenceTypeRaw != noneRaw)
                 || ((event.startDate ?? distantPast) < windowEnd
                     && (event.endDate ?? distantFuture) > windowStart)
+                || event.completedOccurrenceDatesJSON != nil
         }
     }
 }
@@ -458,10 +462,14 @@ final class EventCacheService {
     /// - Parameter includeHolidaySkipped: true 时休日实例仍产出（月历语义：无顺延，
     ///   原休日格显示并保留「已智能跳过」标识）；列表路径默认 false 静默跳过不变
     func expandOccurrences(of base: CachedEvent, windowStart: Date, windowEnd: Date, context: ModelContext, includeHolidaySkipped: Bool = false) -> [CachedEvent] {
-        guard let baseStart = base.startDate else { return [base] }
-        let duration = (base.endDate ?? baseStart).timeIntervalSince(baseStart)
-        let completedSet = Set(base.completedOccurrenceDates.map { $0.timeIntervalSince1970 })
+        // BUG-21：历史行唯一真源是 completedOccurrenceDatesJSON，必须先于游标守卫产出——
+        // 历史事实不依赖 startDate / originStartDate / nextOccurrence，转换清空游标后仍须可见
         var result: [CachedEvent] = []
+        // 时长继承：startDate 缺失（转换后 EK 到期日被清空）时按零长实例处理
+        let duration: TimeInterval = {
+            guard let start = base.startDate else { return 0 }
+            return (base.endDate ?? start).timeIntervalSince(start)
+        }()
         // ① 完成历史行（有效期外不产出）
         for occ in base.completedOccurrenceDates where base.isWithinValidity(occ) {
             // 与窗口重叠才产出（零长按 B-1 覆盖开始日语义）——起点在窗口前但实例
@@ -473,6 +481,8 @@ final class EventCacheService {
                 result.append(makeOccurrenceInstance(of: base, occurrence: occ, duration: duration, isCompleted: true))
             }
         }
+        guard let baseStart = base.startDate else { return result }
+        let completedSet = Set(base.completedOccurrenceDates.map { $0.timeIntervalSince1970 })
         // BUG-21 回归修复：转单次保留历史的本体行（recurrenceType == .none）不走
         // 复合 ID 实例——完成点击经 toggleRecurringOccurrence 的 .none guard 会被
         // 静默拒绝，任务永远无法完成。改为窗口重叠时直接产出本体行（本体 eventID
