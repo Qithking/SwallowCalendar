@@ -77,6 +77,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
 
+        // 取证：SC_DIAG_WINDOW=1 时自动打开主面板（无需手动点击状态栏），
+        // 使 MonthEventGrid 的 @Query 真实执行，便于 log stream 抓取
+        if ProcessInfo.processInfo.environment["SC_DIAG_WINDOW"] == "1" {
+            DispatchQueue.main.async { [weak self] in
+                self?.panel?.open()
+            }
+        }
+
         // 启动补偿：开关已开则显示桌面面板（覆盖 AppSettings.didSet 早于 configure 的时序）
         DesktopTodoPanelManager.shared.syncVisibility()
 

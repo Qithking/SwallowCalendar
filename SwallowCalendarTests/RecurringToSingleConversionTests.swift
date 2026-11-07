@@ -82,9 +82,10 @@ final class RecurringToSingleConversionTests: XCTestCase {
         XCTAssertEqual(cached.completedOccurrenceDates, [d0, d1, d2], "改单次不得清空完成历史")
         XCTAssertNil(cached.originStartDate, "必须清除未来展开依据")
 
-        // 已办可见：历史 3 期 + 游标当期为 1 条未完成，共 4 行
+        // B 口径：窗口内只剩 3 期已完成历史；游标本体行不再作为未完成行残留
         let fullWindow = visibleEvents(from: d0, to: date(31))
-        XCTAssertEqual(fullWindow.count, 4)
+        XCTAssertEqual(fullWindow.count, 3)
+        XCTAssertTrue(fullWindow.allSatisfy(\.isCompleted), "B：历史行必须全部为已完成样式")
         XCTAssertEqual(fullWindow.filter(\.isCompleted).count, 3, "已办列表仍应显示 3 期历史")
         XCTAssertEqual(
             fullWindow.filter(\.isCompleted).compactMap(\.startDate).sorted(),
@@ -136,12 +137,11 @@ final class RecurringToSingleConversionTests: XCTestCase {
         XCTAssertEqual(fullWindow.filter(\.isCompleted).count, 2)
     }
 
-    /// 场景④（BUG-21 回归）：转单次后完成「游标行」必须生效——
-    /// 未完成游标行须产出本体 eventID（走 toggleEventCompleted 本体路径写
-    /// base.isCompleted），而非复合 ID（会被 toggleRecurringOccurrence 的
-    /// .none guard 静默拒绝，导致任务永远无法完成）
-    func testCompleteCursorRowAfterConversionWritesBaseCompleted() async throws {
-        let d0 = date(26), d1 = date(27), d2 = date(28)
+    /// 场景④（2026-11-07 B 口径）：转单次后不再保留「游标本体行」——
+    /// 未来 0 行，历史仅已完成期次。BUG-21 时代的本体行（作为完成入口）随新口径下线，
+    /// 与 A（循环态未来照常展开）在同一判定入口 participatesInExpansion 下互斥成立。
+    func testConvertedFutureAndHistoryFollowBContract() async throws {
+        let d0 = date(26), d1 = date(27)
         let cached = try insertRecurring(eventID: "rec-convert-done", startDate: d0)
 
         // 完成 1 期后转单次：游标推进到 d1，历史保留 d0
@@ -149,19 +149,14 @@ final class RecurringToSingleConversionTests: XCTestCase {
         CalendarService.shared.updateEventRecurrence(eventID: "rec-convert-done", newRecurrenceType: .none)
         XCTAssertEqual(cached.recurrenceType, .none)
 
-        // 未完成游标行必须是本体 ID，而非复合 occurrence ID
-        let window = visibleEvents(from: d1, to: date(29))
-        XCTAssertEqual(window.count, 1, "转单次后只应剩游标本体一条未完成行")
-        XCTAssertEqual(window[0].eventID, "rec-convert-done", "游标行必须是本体 eventID（完成点击走本体路径）")
-        XCTAssertFalse(window[0].isCompleted)
+        XCTAssertTrue(
+            visibleEvents(from: d1, to: date(29)).isEmpty,
+            "B：转单次后未来 0 行（游标本体行不再产出）"
+        )
 
-        // 完成点击生效：写入 base.isCompleted，重载后未完成行消失
-        await CalendarService.shared.toggleEventCompleted(eventID: window[0].eventID, isCompleted: true)
-        XCTAssertTrue(cached.isCompleted, "转单次后的完成点击必须写入本体 isCompleted")
-
-        let after = visibleEvents(from: d1, to: date(29))
-        XCTAssertTrue(after.isEmpty, "本体完成后窗口内不应再有未完成行")
-        // 已办只有历史复合行 1 条——本体完成后特例不再产出本体行
-        XCTAssertEqual(visibleEvents(from: d0, to: date(29)).filter(\.isCompleted).count, 1)
+        let history = visibleEvents(from: d0, to: date(29))
+        XCTAssertEqual(history.count, 1, "B：历史只保留已完成期次")
+        XCTAssertEqual(history[0].startDate, d0)
+        XCTAssertTrue(history[0].isCompleted)
     }
 }

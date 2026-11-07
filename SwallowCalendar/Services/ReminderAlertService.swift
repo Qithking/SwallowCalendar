@@ -204,6 +204,8 @@ final class ReminderAlertService {
     static func nextTriggerTime(now: Date, events: [CachedEvent], snoozeRecords: [SnoozeRecord], context: ModelContext) -> Date? {
         var candidates: [Date] = []
         for event in events {
+            // B：已转单次且保留历史的本体行不再产生未来提醒（历史期次已完成，仅展示不提醒）
+            guard !(event.hasCompletedHistory && !event.isRecurringActive) else { continue }
             guard !HolidaySkipResolver.isSkipped(of: event, context: context) else { continue }
             guard let startDate = event.startDate else { continue }
             var offsets = event.reminderOffsets
@@ -252,7 +254,17 @@ final class ReminderAlertService {
             AppLogger.reminder.error("提醒调度窗口查询失败: \(String(describing: error))")
             return
         }
-        guard let next = Self.nextTriggerTime(now: now, events: events, snoozeRecords: Self.loadSnoozeRecords(), context: context) else { return }
+        // 循环任务展开（A）：本体行 startDate 只是游标，窗口内未来 occurrence 不落库，
+        // 原实现直接拿本体行算 alertTime——游标一旦落在过去/被越过，后续期次永远不调度。
+        // 与弹窗检查同源：补捞全部循环 base（不看 isCompleted/游标窗口）后统一展开，
+        // 实例级 isCompleted 才是判定标准（复合 ID 也保证弹窗完成走 occurrence 级路径）
+        let expanded = Self.pollWindowCandidates(
+            rawEvents: events,
+            windowStart: lower,
+            upperBound: upper,
+            context: context
+        )
+        guard let next = Self.nextTriggerTime(now: now, events: expanded, snoozeRecords: Self.loadSnoozeRecords(), context: context) else { return }
         let interval = max(0, next.timeIntervalSince(now))
         // R-16：加入 .common mode——scheduledTimer 默认挂 default mode，
         // UI 交互期间准点提醒暂停延迟弹出（A-16/R-15 同型遗漏）
@@ -349,6 +361,8 @@ final class ReminderAlertService {
             // 产出 (事件, 本次应触发的各级 alertTime) 对；同一事件多级同时到期合并为一条
             var duePairs: [(event: CachedEvent, alertTimes: [Date])] = []
             for event in allUserEvents {
+                // B：已转单次且保留历史的本体行不产生任何到期/过期提醒（未来 0 实例）
+                guard !(event.hasCompletedHistory && !event.isRecurringActive) else { continue }
                 // 智能跳过节假日（语义 v3）：勾选任务 startDate 落休日/周末当天静默跳过，不提醒
                 guard !HolidaySkipResolver.isSkipped(of: event, context: context) else { continue }
                 guard let startDate = event.startDate else { continue }

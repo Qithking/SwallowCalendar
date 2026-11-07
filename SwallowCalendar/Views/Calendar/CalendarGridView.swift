@@ -288,7 +288,16 @@ struct CalendarGridView: View {
     let customSources: [CustomCalendarSource]
     let calendarPreferences: [CalendarPreference]
 
-    @State private var currentMonth = Date()
+    // 取证：SC_DIAG_MONTH_OFFSET=N 时初始展示月偏移 N 个月（等效点击「下一月」），
+    // 用于在无人值守运行中抓取切月后的取数日志；无该环境变量时行为不变
+    @State private var currentMonth = CalendarGridView.diagnosticInitialMonth()
+
+    private static func diagnosticInitialMonth() -> Date {
+        guard let raw = ProcessInfo.processInfo.environment["SC_DIAG_MONTH_OFFSET"],
+              let offset = Int(raw),
+              offset != 0 else { return Date() }
+        return Calendar.current.date(byAdding: .month, value: offset, to: Date()) ?? Date()
+    }
 
     private let calendar = Calendar.current
     private let weekDaySymbols: [String] = {
@@ -460,6 +469,8 @@ private struct MonthEventGrid: View {
             windowEnd: queryWindowEnd,
             context: modelContext
         )
+        // 取证快照（仅 SC_MONTH_DIAG=1 输出）：@Query 行数 → 展开数 → 每格渲染数
+        let _: Void = logMonthDiagnostics(events: events)
         // 智能跳过节假日（语义 v3）：预计算「被静默跳过」的事件 id 集合（42 格共享，
         // 避免每格重复扫描节假日数据）；无顺延，月历始终按原日期显示
         let skippedEventIDs: Set<String> = Set(
@@ -511,6 +522,60 @@ private struct MonthEventGrid: View {
 
     // MARK: - Helpers
 
+    // MARK: - 取证日志（SC_MONTH_DIAG=1）
+
+    private static let diagDateTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
+
+    private static let diagDayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "MM-dd"
+        return formatter
+    }()
+
+    /// 真实取数口径快照：@Query 窗口/行数、循环行字段、展开结果、每日期格渲染条目数
+    private func logMonthDiagnostics(events: [CachedEvent]) {
+        guard AppLogger.monthDiagEnabled else { return }
+        let rows = cachedEvents
+        let activeRecurring = rows.filter(\.isRecurringActive).count
+        let withHistory = rows.filter(\.hasCompletedHistory).count
+        AppLogger.monthDiag(
+            "[MonthGrid] window=\(Self.diagDateTimeFormatter.string(from: queryWindowStart))..\(Self.diagDateTimeFormatter.string(from: queryWindowEnd))"
+            + " rows=\(rows.count) activeRecurring=\(activeRecurring) withHistory=\(withHistory) merged=\(events.count)"
+        )
+        for row in rows where row.participatesInExpansion {
+            let specText = row.recurrenceSpecJSON.map { "len:\($0.count)" } ?? "nil"
+            let startText = row.startDate.map { Self.diagDateTimeFormatter.string(from: $0) } ?? "nil"
+            let originText = row.originStartDate.map { Self.diagDateTimeFormatter.string(from: $0) } ?? "nil"
+            AppLogger.monthDiag(
+                "[MonthGrid.row] title=\(row.title) type=\(row.recurrenceTypeRaw ?? "nil") spec=\(specText)"
+                + " start=\(startText) origin=\(originText) completed=\(row.isCompleted) history=\(row.completedOccurrenceDatesJSON ?? "nil")"
+            )
+        }
+        // 渲染口径：eventsForDay 实际入格条数（今天前后各 4 天逐日 + 全窗口非零日概览）
+        let today = calendar.startOfDay(for: Date())
+        for day in days where abs(day.timeIntervalSince(today)) <= 4 * 86_400 {
+            let rendered = eventsForDay(day, from: events).count
+            AppLogger.monthDiag("[MonthGrid.day] key=\(Self.diagDayFormatter.string(from: day)) rendered=\(rendered)")
+        }
+        let nonZeroDays = days.compactMap { day -> String? in
+            let count = eventsForDay(day, from: events).count
+            return count > 0 ? "\(Self.diagDayFormatter.string(from: day))=\(count)" : nil
+        }
+        AppLogger.monthDiag("[MonthGrid.day] nonZero=[\(nonZeroDays.joined(separator: " "))]")
+        // hover 弹窗内容等价数据：每个非零日期格的条目标题（弹窗直接消费 dayEvents）
+        for day in days where abs(day.timeIntervalSince(today)) <= 2 * 86_400 {
+            let titles = eventsForDay(day, from: events).map(\.title).joined(separator: ",")
+            guard !titles.isEmpty else { continue }
+            AppLogger.monthDiag("[MonthGrid.cell] key=\(Self.diagDayFormatter.string(from: day)) titles=[\(titles)]")
+        }
+    }
+
     private static let popoverTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
@@ -531,7 +596,13 @@ private struct MonthEventGrid: View {
         let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
         return events.filter { event in
             guard let start = event.startDate, let end = event.endDate else { return false }
-            guard start < endOfDay && end > startOfDay else { return false }
+            // B-1 零长事件（start==end，如全天任务/仅日期提醒映射产物 00:00）视为覆盖开始当天：
+            // 原判定 end > startOfDay 对 00:00 实例恒为 false，全天循环实例永远进不了日期格
+            if start == end {
+                guard start >= startOfDay && start < endOfDay else { return false }
+            } else {
+                guard start < endOfDay && end > startOfDay else { return false }
+            }
             if event.category == .system {
                 return enabledCalendarIDs.isEmpty || enabledCalendarIDs.contains(event.calendarID)
             }

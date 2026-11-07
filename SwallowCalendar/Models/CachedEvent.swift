@@ -158,6 +158,23 @@ final class CachedEvent {
         set { recurrenceSpecJSON = newValue?.jsonString }
     }
 
+    /// 循环生效判定唯一入口（A）：未转单次 + 能解析出规则（JSON 优先，老数据懒推导）。
+    /// 月历/列表/徽标/提醒四处一律经由此判定，禁止各自再写 `recurrenceType != .none` 的 if——
+    /// 双轨判定（一处看档位、一处看 spec）正是「循环在未来不可见 / 转单次后还冒未来行」的来源
+    var isRecurringActive: Bool {
+        recurrenceType != .none && recurrenceSpec != nil
+    }
+
+    /// 转单次后保留的完成历史（B）：历史行唯一真源
+    var hasCompletedHistory: Bool {
+        completedOccurrenceDatesJSON != nil
+    }
+
+    /// 是否参与展开链路（A 循环生效 或 B 保留历史）；两者在展开阶段互斥
+    var participatesInExpansion: Bool {
+        isRecurringActive || hasCompletedHistory
+    }
+
     /// 多级提醒偏移数组（计算属性，真源为 reminderOffsetsJSON 镜像 EventKit 多 alarm）
     /// 读取：解码 JSON（有符号分钟）并归一化；未设置/坏数据回退单级 reminderMinutes；
     ///       reminderMinutes == 0 且无 JSON = 无提前提醒（返回空数组）
@@ -464,13 +481,10 @@ final class EventCacheService {
         do {
             let events = try context.fetch(descriptor)
             // 循环任务行分离展开为 occurrence 实例（未落库），其余走原有精确过滤
-            // BUG-21：改单次后仍保留完成历史的本体行也走展开（历史行由 ① 产出，现场只留游标一条）
-            let recurring = events.filter {
-                $0.recurrenceType != .none || $0.completedOccurrenceDatesJSON != nil
-            }
-            let normal = events.filter {
-                $0.recurrenceType == .none && $0.completedOccurrenceDatesJSON == nil
-            }
+            // 单一判定入口 participatesInExpansion：A（循环生效）与 B（转单次保留历史）互斥成立，
+            // 不再各处重复 `recurrenceType != .none || completedOccurrenceDatesJSON != nil`
+            let recurring = events.filter(\.participatesInExpansion)
+            let normal = events.filter { !$0.participatesInExpansion }
             let expanded = recurring.flatMap {
                 expandOccurrences(of: $0, windowStart: startDate, windowEnd: endDate, context: context)
             }
@@ -493,9 +507,12 @@ final class EventCacheService {
     /// - Parameter includeHolidaySkipped: true 时休日实例仍产出（月历语义：无顺延，
     ///   原休日格显示并保留「已智能跳过」标识）；列表路径默认 false 静默跳过不变
     func expandOccurrences(of base: CachedEvent, windowStart: Date, windowEnd: Date, context: ModelContext, includeHolidaySkipped: Bool = false) -> [CachedEvent] {
-        // BUG-21：历史行唯一真源是 completedOccurrenceDatesJSON，必须先于游标守卫产出——
-        // 历史事实不依赖 startDate / originStartDate / nextOccurrence，转换清空游标后仍须可见
         var result: [CachedEvent] = []
+        // 取证（SC_MONTH_DIAG=1）：展开入参与产出条数
+        AppLogger.monthDiag(
+            "[expand.in] id=\(base.eventID) title=\(base.title) type=\(base.recurrenceTypeRaw ?? "nil") specLen=\(base.recurrenceSpecJSON?.count ?? 0) active=\(base.isRecurringActive) history=\(base.hasCompletedHistory) start=\(base.startDate.map { "\($0)" } ?? "nil") origin=\(base.originStartDate.map { "\($0)" } ?? "nil") skipHolidays=\(base.skipHolidays) includeSkipped=\(includeHolidaySkipped)"
+        )
+        defer { AppLogger.monthDiag("[expand.out] id=\(base.eventID) count=\(result.count)") }
         // 时长继承：startDate 缺失（转换后 EK 到期日被清空）时按零长实例处理
         let duration: TimeInterval = {
             guard let start = base.startDate else { return 0 }
@@ -514,11 +531,14 @@ final class EventCacheService {
         }
         guard let baseStart = base.startDate else { return result }
         let completedSet = Set(base.completedOccurrenceDates.map { $0.timeIntervalSince1970 })
-        // BUG-21 回归修复：转单次保留历史的本体行（recurrenceType == .none）不走
-        // 复合 ID 实例——完成点击经 toggleRecurringOccurrence 的 .none guard 会被
-        // 静默拒绝，任务永远无法完成。改为窗口重叠时直接产出本体行（本体 eventID
-        // + 落库 isCompleted），完成走 toggleEventCompleted 本体路径写 base.isCompleted
-        if base.recurrenceType == .none {
+        // BUG-21 历史语义收口：转单次后本体不再展开未来，历史行唯一真源是 ①。
+        // 增量口径（B）：仅当无完成历史时才保留本体行，保证「转单次后未来 0 行、历史 N 行」。
+        // 单一判定入口：非循环生效行不展开未来；转单次且保留历史时，历史行由 ① 独家产出，
+        // 不得再追加游标本体——否则历史窗口多一条未完成行，游标落在未来时还会冒未来实例（B 违规）
+        guard base.isRecurringActive, let spec = base.recurrenceSpec else {
+            guard !base.hasCompletedHistory else { return result }
+            // 未转单次也无历史（直接调用的普通单次行）：窗口重叠时产出本体行，
+            // 保持 BUG-21 完成路径（本体 eventID + 落库 isCompleted）可用
             let instanceEnd = baseStart.addingTimeInterval(duration)
             let inWindow = (baseStart >= windowStart && baseStart < windowEnd)
                 || (baseStart < windowStart && instanceEnd > windowStart)
@@ -533,7 +553,6 @@ final class EventCacheService {
         // 若序列跟随游标，被越过的历史未完成实例将永久不可见；min 兜底异常数据
         // （originStart 晚于游标）不产生空档；nil（存量未回填）回退游标展开。
         // 展开与完成推进统一走 RecurrenceSpec（间隔/多选星期/第 N 个周几/结束条件唯一真源）
-        guard let spec = base.recurrenceSpec else { return result }
         let sequenceOrigin = min(base.originStartDate ?? baseStart, baseStart)
         // 首期对齐：origin 可能不匹配多选星期/每月日期（编辑改规则时保留原日期），
         // 展开必须从首个匹配日产出，不能把不匹配的 origin 当成一期
@@ -605,17 +624,16 @@ final class EventCacheService {
     /// occurrence——本方法把传入行拆为普通行 + 循环展开实例（休日实例保留供标识），
     /// 本体行被替换，语义与 getEvents 一致；调用方负责按月窗口传入 @Query 结果
     func mergedDisplayEvents(from rows: [CachedEvent], windowStart: Date, windowEnd: Date, context: ModelContext) -> [CachedEvent] {
-        // BUG-21：改单次后保留完成历史的本体行同样走展开，否则历史行在月历不可见
-        let recurring = rows.filter {
-            $0.recurrenceType != .none || $0.completedOccurrenceDatesJSON != nil
-        }
-        let normal = rows.filter {
-            $0.recurrenceType == .none && $0.completedOccurrenceDatesJSON == nil
-        }
+        // 单一判定入口：A 循环生效 / B 转单次保留历史 都走展开，其余作普通行
+        let recurring = rows.filter(\.participatesInExpansion)
+        let normal = rows.filter { !$0.participatesInExpansion }
         let expanded = recurring.flatMap {
             expandOccurrences(of: $0, windowStart: windowStart, windowEnd: windowEnd, context: context, includeHolidaySkipped: true)
         }
-        return (normal + expanded).sorted { ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) }
+        let result = (normal + expanded).sorted { ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) }
+        // 取证（SC_MONTH_DIAG=1）：@Query 行 → 展开 → 合并产出
+        AppLogger.monthDiag("[merge] rows=\(rows.count) recurring=\(recurring.count) normal=\(normal.count) expanded=\(expanded.count) out=\(result.count)")
+        return result
     }
 
     /// 构造 occurrence 实例（未落库）：拷贝展示相关字段，eventID 用复合格式，
@@ -1093,13 +1111,22 @@ final class EventCacheService {
             newSpecJSON = ekSpec.jsonString
             newRecurrence = ekSpec.legacyType
         } else if ek.recurrenceType != .none {
-            // 兼容未携带 spec 的事件载体：档位非 none 即规则存在，按旧档位推导 spec
+            // 兼容未携带 spec 的事件载体：档位非 none 即规则存在，按旧档位推导 spec。
+            // bug: recurrence-legacy-derived-degrade——旧档位推导会丢失间隔/多选星期/第 N 个周几
+            // （.weekly 无法区分「工作日/每两周」），档位一致且缓存已有 spec 时优先保留，
+            // 否则一次回流就把未来实例降级成每周同一天（A 的「未来不可见」来源之一）
             let derived = RecurrenceSpec.legacy(
                 from: ek.recurrenceType,
                 anchor: ek.startDate ?? existing.originStartDate ?? existing.startDate ?? Date(),
                 isLunar: false
             )
-            newSpecJSON = derived?.jsonString ?? existing.recurrenceSpecJSON
+            if let cachedSpec = existing.recurrenceSpec,
+               existing.recurrenceSpecJSON != nil,
+               cachedSpec.legacyType == ek.recurrenceType {
+                newSpecJSON = existing.recurrenceSpecJSON
+            } else {
+                newSpecJSON = derived?.jsonString ?? existing.recurrenceSpecJSON
+            }
             newRecurrence = ek.recurrenceType
         } else if ek.notes?.contains(Self.localRecurrenceMarker) == true {
             newSpecJSON = existing.recurrenceSpecJSON
