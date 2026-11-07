@@ -208,13 +208,13 @@ final class BackgroundSyncService {
     /// 放行落库全勾，把用户已裁剪的日历勾选配置持久化重置
     private func fetchPreferences(context: ModelContext) -> [CalendarPreference]? {
         let descriptor = FetchDescriptor<CalendarPreference>()
-        return try? context.fetch(descriptor)
+        return CacheFetch.optional(descriptor, in: context, operation: "日历偏好查询")
     }
 
     /// R-6：返回 nil = 查询失败；失败伪装空列表会令 syncSubscriptionEvents(sources: [])
     /// 清空订阅缓存
     private func fetchCustomSources(context: ModelContext) -> [CustomCalendarSource]? {
         let descriptor = FetchDescriptor<CustomCalendarSource>()
-        return try? context.fetch(descriptor)
+        return CacheFetch.optional(descriptor, in: context, operation: "订阅源查询")
     }
 }

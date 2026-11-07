@@ -479,23 +479,25 @@ final class EventCacheService {
             sortBy: [SortDescriptor(\.startDate)]
         )
 
-        do {
-            let events = try context.fetch(descriptor)
-            // 循环任务行分离展开为 occurrence 实例（未落库），其余走原有精确过滤
-            // 单一判定入口 participatesInExpansion：A（循环生效）与 B（转单次保留历史）互斥成立，
-            // 不再各处重复 `recurrenceType != .none || completedOccurrenceDatesJSON != nil`
-            let recurring = events.filter(\.participatesInExpansion)
-            let normal = events.filter { !$0.participatesInExpansion }
-            let expanded = recurring.flatMap {
-                expandOccurrences(of: $0, windowStart: startDate, windowEnd: endDate, context: context)
-            }
-            // 展开实例与普通行共用同一精确过滤（零长/重叠边界 + 日历过滤），并按开始时间归位排序
-            return (filterEvents(normal, from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
-                + filterEvents(expanded, from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: false))
-                .sorted { ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) }
-        } catch {
-            return []
+        // 读路径降级为空：失败与「无数据」在界面表现一致，但失败必须落日志（审计 M1/M6）
+        let events = CacheFetch.degradeToEmpty(
+            descriptor,
+            in: context,
+            operation: "getEvents 窗口查询",
+            reason: "视图按无数据展示，避免界面阻塞"
+        )
+        // 循环任务行分离展开为 occurrence 实例（未落库），其余走原有精确过滤
+        // 单一判定入口 participatesInExpansion：A（循环生效）与 B（转单次保留历史）互斥成立，
+        // 不再各处重复 `recurrenceType != .none || completedOccurrenceDatesJSON != nil`
+        let recurring = events.filter(\.participatesInExpansion)
+        let normal = events.filter { !$0.participatesInExpansion }
+        let expanded = recurring.flatMap {
+            expandOccurrences(of: $0, windowStart: startDate, windowEnd: endDate, context: context)
         }
+        // 展开实例与普通行共用同一精确过滤（零长/重叠边界 + 日历过滤），并按开始时间归位排序
+        return (filterEvents(normal, from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
+            + filterEvents(expanded, from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: false))
+            .sorted { ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) }
     }
 
     /// 循环任务单条展开为窗口内 occurrence 实例（未落库，单条化 plan step 6）：
@@ -610,12 +612,17 @@ final class EventCacheService {
         // 无日期任务行（startDate 为空）不落入窗口重叠判定，单独补查（原弹层谓词语义）
         if let context = context {
             let userCategory = EventCategory.user.rawValue
-            let undated = try? context.fetch(FetchDescriptor<CachedEvent>(
-                predicate: #Predicate {
-                    $0.categoryRaw == userCategory && $0.startDate == nil
-                }
-            ))
-            result.append(contentsOf: undated ?? [])
+            let undated = CacheFetch.degradeToEmpty(
+                FetchDescriptor<CachedEvent>(
+                    predicate: #Predicate {
+                        $0.categoryRaw == userCategory && $0.startDate == nil
+                    }
+                ),
+                in: context,
+                operation: "无日期任务补查",
+                reason: "无日期行缺失不影响窗口内任务展示"
+            )
+            result.append(contentsOf: undated)
         }
         return result
     }
@@ -674,7 +681,8 @@ final class EventCacheService {
         let descriptor = FetchDescriptor<CachedEvent>(
             predicate: #Predicate { $0.eventID == baseID }
         )
-        guard let base = try? context.fetch(descriptor).first else { return nil }
+        // 失败与「本体不存在」都返回 nil，但失败必须落日志（审计 M6）
+        guard let base = CacheFetch.optional(descriptor, in: context, operation: "occurrence 本体回查")?.first else { return nil }
         let isDone = base.completedOccurrenceDates.contains { $0 == parts.occurrence }
         guard !isDone else { return nil }
         let start = base.startDate ?? parts.occurrence
@@ -741,10 +749,14 @@ final class EventCacheService {
         // 全表构建让更新路径能命中窗口外旧行
         var existingByID: [String: CachedEvent] = [:]
         let descriptor = FetchDescriptor<CachedEvent>()
-        if let existing = try? context.fetch(descriptor) {
-            for event in existing {
-                existingByID[event.eventID] = event
-            }
+        // 失败必须中止本次同步：空映射会把全部系统事件当新行插入，
+        // 与既有行触发 @Attribute(.unique) 冲突导致整次保存失败（审计 M6）
+        guard let existing = CacheFetch.optional(descriptor, in: context, operation: "syncEvents 全表映射") else {
+            AppLogger.cache.error("syncEvents 中止：现有缓存映射查询失败")
+            return false
+        }
+        for event in existing {
+            existingByID[event.eventID] = event
         }
         
         let newIDs = Set(systemEvents.map { $0.id })
@@ -911,7 +923,8 @@ final class EventCacheService {
         guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
 
         let descriptor = FetchDescriptor<CachedEvent>()
-        guard let existing = try? context.fetch(descriptor) else { return }
+        // 查询失败保留迁移标记未置位，下次启动重试（审计 M6）
+        guard let existing = CacheFetch.optional(descriptor, in: context, operation: "isReminder 迁移查询") else { return }
 
         var migratedCount = 0
         for event in existing where !event.isReminder && event.calendarTitle == "提醒" {
@@ -947,8 +960,7 @@ final class EventCacheService {
         let descriptor = FetchDescriptor<CachedEvent>(predicate: #Predicate<CachedEvent> { event in
             event.recurrenceTypeRaw == monthlyRaw || event.recurrenceTypeRaw == yearlyRaw
         })
-        guard let rows = try? context.fetch(descriptor) else {
-            AppLogger.cache.error("月末锚点迁移查询失败，保留待下次重试")
+        guard let rows = CacheFetch.optional(descriptor, in: context, operation: "月末锚点迁移查询") else {
             return
         }
 
@@ -1189,10 +1201,13 @@ final class EventCacheService {
         // 获取现有的提醒，构建字典以优化查询
         var existingByID: [String: CachedEvent] = [:]
         let descriptor = FetchDescriptor<CachedEvent>()
-        if let existing = try? context.fetch(descriptor) {
-            for event in existing where event.isReminder {
-                existingByID[event.eventID] = event
-            }
+        // 失败必须中止：空映射会把全部提醒当新行插入并触发唯一约束冲突（审计 M6）
+        guard let existing = CacheFetch.optional(descriptor, in: context, operation: "syncReminders 全表映射") else {
+            AppLogger.cache.error("syncReminders 中止：现有提醒映射查询失败")
+            return false
+        }
+        for event in existing where event.isReminder {
+            existingByID[event.eventID] = event
         }
 
         let newIDs = Set(reminders.map { $0.id })
@@ -1256,16 +1271,18 @@ final class EventCacheService {
             }
         )
 
-        if let events = try? context.fetch(descriptor) {
-            for event in events {
-                context.delete(event)
-            }
-            // R-13：save 失败静默会与库内实际状态不一致，补日志留痕
-            do {
-                try context.save()
-            } catch {
-                AppLogger.cache.error("clearRemindersCache 保存失败: \(String(describing: error))")
-            }
+        // 查询失败不改动任何行，留待下次调用重试（审计 M6）
+        guard let events = CacheFetch.optional(descriptor, in: context, operation: "clearRemindersCache 查询") else {
+            return
+        }
+        for event in events {
+            context.delete(event)
+        }
+        // R-13：save 失败静默会与库内实际状态不一致，补日志留痕
+        do {
+            try context.save()
+        } catch {
+            AppLogger.cache.error("clearRemindersCache 保存失败: \(String(describing: error))")
         }
     }
 
@@ -1281,7 +1298,7 @@ final class EventCacheService {
             }
         )
         // fetch 失败与空结果分开处理：fetch 异常需暴露（与落库失败同口径），空结果属正常
-        guard let events = try? context.fetch(descriptor) else {
+        guard let events = CacheFetch.optional(descriptor, in: context, operation: "禁用订阅源缓存查询") else {
             AppLogger.cache.warning("查询禁用订阅源缓存事件失败，残留事件待下次同步清理: \(sourceURL)")
             return
         }
@@ -1377,10 +1394,13 @@ final class EventCacheService {
                 event.categoryRaw == subscriptionCategory
             }
         )
-        if let existing = try? context.fetch(descriptor) {
-            for event in existing {
-                existingByID[event.eventID] = event
-            }
+        // 失败必须中止：空映射会把全部订阅事件当新行插入并触发唯一约束冲突（审计 M6）
+        guard let existing = CacheFetch.optional(descriptor, in: context, operation: "syncSubscriptionEvents 全表映射") else {
+            AppLogger.cache.error("syncSubscriptionEvents 中止：现有订阅映射查询失败")
+            return false
+        }
+        for event in existing {
+            existingByID[event.eventID] = event
         }
 
         // 启用源的 URL 集合（用于判断缓存事件的来源是否仍启用）
@@ -1488,18 +1508,20 @@ final class EventCacheService {
         guard let context = self.context else { return }
 
         let descriptor = FetchDescriptor<CachedEvent>()
-        if let events = try? context.fetch(descriptor) {
-            // 只删除系统日历的缓存，保留订阅日历事件、用户事件和提醒
-            let eventsToDelete = events.filter { $0.category == .system }
-            for event in eventsToDelete {
-                context.delete(event)
-            }
-            // R-13：save 失败静默会与库内实际状态不一致，补日志留痕
-            do {
-                try context.save()
-            } catch {
-                AppLogger.cache.error("clearSystemCalendarCache 保存失败: \(String(describing: error))")
-            }
+        // 查询失败不改动任何行，留待下次同步重试（审计 M6）
+        guard let events = CacheFetch.optional(descriptor, in: context, operation: "clearSystemCalendarCache 查询") else {
+            return
+        }
+        // 只删除系统日历的缓存，保留订阅日历事件、用户事件和提醒
+        let eventsToDelete = events.filter { $0.category == .system }
+        for event in eventsToDelete {
+            context.delete(event)
+        }
+        // R-13：save 失败静默会与库内实际状态不一致，补日志留痕
+        do {
+            try context.save()
+        } catch {
+            AppLogger.cache.error("clearSystemCalendarCache 保存失败: \(String(describing: error))")
         }
     }
 
@@ -1511,30 +1533,32 @@ final class EventCacheService {
         guard let context = self.context else { return }
 
         let descriptor = FetchDescriptor<CachedEvent>()
-        if let events = try? context.fetch(descriptor) {
-            var deletedCount = 0
-            for event in events {
-                // E-1 分类过滤：跳过用户事项与提醒（与 cleanupOldEvents 保护逻辑同源），
-                // 系统/订阅缓存正常清除，重新同步即可恢复
-                if event.category == .user || event.isReminder {
-                    continue
-                }
-                context.delete(event)
-                deletedCount += 1
-                // R-21：每条让出一轮 runloop（A-8 同型）——大量缓存时逐行 delete
-                // 独占主线程冻结 UI，yield 后进度动画与交互可穿插响应
-                await Task.yield()
-            }
-            if deletedCount > 0 {
-                // R-13：save 失败静默会与库内实际状态不一致，补日志留痕
-                do {
-                    try context.save()
-                } catch {
-                    AppLogger.cache.error("clearCache 保存失败: \(String(describing: error))")
-                }
-            }
-            AppLogger.cache.info("清除缓存：删除 \(deletedCount) 条系统/订阅缓存，用户事项与提醒已保留")
+        // 查询失败不改动任何行，留待下次清缓存重试（审计 M6）
+        guard let events = CacheFetch.optional(descriptor, in: context, operation: "clearCache 查询") else {
+            return
         }
+        var deletedCount = 0
+        for event in events {
+            // E-1 分类过滤：跳过用户事项与提醒（与 cleanupOldEvents 保护逻辑同源），
+            // 系统/订阅缓存正常清除，重新同步即可恢复
+            if event.category == .user || event.isReminder {
+                continue
+            }
+            context.delete(event)
+            deletedCount += 1
+            // R-21：每条让出一轮 runloop（A-8 同型）——大量缓存时逐行 delete
+            // 独占主线程冻结 UI，yield 后进度动画与交互可穿插响应
+            await Task.yield()
+        }
+        if deletedCount > 0 {
+            // R-13：save 失败静默会与库内实际状态不一致，补日志留痕
+            do {
+                try context.save()
+            } catch {
+                AppLogger.cache.error("clearCache 保存失败: \(String(describing: error))")
+            }
+        }
+        AppLogger.cache.info("清除缓存：删除 \(deletedCount) 条系统/订阅缓存，用户事项与提醒已保留")
     }
     
     /// E-9：已完成用户事项/提醒的保留窗口（天），超过后从本地缓存清理
@@ -1544,7 +1568,8 @@ final class EventCacheService {
     /// E-9：已完成的用户事项/提醒超过保留窗口后清理；未完成的永不清理
     private func cleanupOldEvents(context: ModelContext, before cutoffDate: Date) {
         let descriptor = FetchDescriptor<CachedEvent>()
-        guard let events = try? context.fetch(descriptor) else { return }
+        // 查询失败不执行清理，留待下次启动重试（审计 M6）
+        guard let events = CacheFetch.optional(descriptor, in: context, operation: "cleanupOldEvents 查询") else { return }
 
         var deletedCount = 0
         var userDeletedCount = 0

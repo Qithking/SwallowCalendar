@@ -41,7 +41,9 @@ struct CalendarSettingsView: View {
                             guard enabled,
                                   calendarService.reminderAuthorizationStatus == .notDetermined else { return }
                             Task {
-                                await calendarService.requestReminderAccess()
+                                // 返回值与方法内部回写的 reminderAuthorizationStatus 同源，
+                                // 界面统一从状态属性读取并展示，故此处显式忽略 Bool
+                                _ = await calendarService.requestReminderAccess()
                                 reminderAuthStatus = calendarService.reminderAuthorizationStatus
                             }
                         }
@@ -430,7 +432,16 @@ struct CalendarSettingsView: View {
             predicate: #Predicate { $0.icsURL == trimmedURL }
         )
         descriptor.fetchLimit = 1
-        if (try? modelContext.fetch(descriptor))?.isEmpty == false {
+        // 判重查询失败必须中止插入：否则并发写入会插入重复订阅（审计 M6）
+        guard let existing = CacheFetch.optional(
+            descriptor,
+            in: modelContext,
+            operation: "订阅地址判重查询"
+        ) else {
+            saveStatus = "查询失败，请稍后重试"
+            return
+        }
+        if !existing.isEmpty {
             saveStatus = "该订阅地址已存在"
             return
         }

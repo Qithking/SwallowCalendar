@@ -47,6 +47,18 @@ struct SnoozeRecord: Codable, Equatable {
     let fireDate: Date
 }
 
+/// 启动过期检查的资源上限（文件级常量：供非隔离纯函数与测试共用）。
+/// `nonisolated`：Xcode 工程开启了默认 MainActor 隔离，而使用它们的函数是
+/// `nonisolated`；两值均为不可变 Int（Sendable），跨线程只读，无并发风险
+enum ReminderStartupExpiredLimits {
+    /// 回溯窗口（天）：与「一个自然月」对齐，覆盖绝大多数用户会补处理的逾期；
+    /// 更早的逾期视为历史归档，不参与启动弹窗与循环展开（主列表仍可见全部历史）
+    nonisolated static let lookbackDays = 30
+    /// 弹窗单次展示上限：约 5 行/屏 × 6 屏；超出部分在弹窗内以条数提示，
+    /// 且不写入已提醒去重键（避免被隐藏的条目永久静默）
+    nonisolated static let maxAlertRows = 30
+}
+
 @MainActor
 final class ReminderAlertService {
     static let shared = ReminderAlertService()
@@ -96,20 +108,45 @@ final class ReminderAlertService {
         changeObserver = NotificationCenter.default.addObserver(
             forName: .cachedEventsChanged, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.rescheduleDynamicTimer() }
+            // Swift 6：并发闭包内不得引用捕获的可变 self；进入 Task 前先取强快照
+            guard let service = self else { return }
+            Task { @MainActor in service.rescheduleDynamicTimer() }
         }
         // 睡眠唤醒：补一次检查（B-14 窗口覆盖挂起区间，挂起期漏掉的提醒即时弹出）
         // 并重算准点调度（系统挂起期间 Timer 不触发）
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
+            guard let service = self else { return }
             Task { @MainActor in
-                await self?.checkDueEvents()
-                self?.rescheduleDynamicTimer()
+                await service.checkDueEvents()
+                service.rescheduleDynamicTimer()
             }
         }
     }
     
+    /// 测试注入点：模拟启动过期候选的循环 base 查询失败（nil = 真实查询）
+    var startupRecurringFetcherForTesting: (() throws -> [CachedEvent])?
+
+    /// 测试观测：启动过期检查是否已置位完成标志（产线不调用）
+    var startupExpiredCheckCompletedForTesting: Bool { hasCompletedStartupExpiredCheck }
+
+    /// 启动过期检查的窗口下界（自然日对齐，避免跨时区/夏令时漂移）
+    nonisolated static func startupExpiredLowerBound(now: Date, calendar: Calendar = .current) -> Date {
+        let raw = calendar.date(byAdding: .day, value: -ReminderStartupExpiredLimits.lookbackDays, to: now) ?? now
+        return calendar.startOfDay(for: raw)
+    }
+
+    /// 启动过期弹窗按「最近过期优先」截断；返回实际展示行与被截断条数
+    nonisolated static func cappedExpiredRows(
+        _ events: [CachedEvent],
+        limit: Int = ReminderStartupExpiredLimits.maxAlertRows
+    ) -> (visible: [CachedEvent], hiddenCount: Int) {
+        guard limit >= 0, events.count > limit else { return (events, 0) }
+        let sorted = events.sorted { ($0.expiryTime ?? .distantPast) > ($1.expiryTime ?? .distantPast) }
+        return (Array(sorted.prefix(limit)), events.count - limit)
+    }
+
     /// 配置服务
     func configure(with container: ModelContainer) {
         // modelContainer 已不再需要，保留方法以兼容调用方
@@ -309,9 +346,12 @@ final class ReminderAlertService {
         // now - cap 以覆盖「开始已过、延后档提醒仍在未来」；includeExpired 下界放开
         let maxReminderLeadSeconds = TimeInterval(CachedEvent.maxReminderLeadMinutes * 60)
         let fetchUpperBound = now.addingTimeInterval(maxReminderLeadSeconds)
-        let windowStart = lastCheckTime ?? calendar.date(byAdding: .second, value: -90, to: now)!
+        let windowStart = lastCheckTime ?? (calendar.date(byAdding: .second, value: -90, to: now) ?? now)
+        // H2：启动过期检查限定回溯窗口，历史更早的逾期不再参与展开与弹窗，
+        // 冷启动开销与历史总量解耦（主列表仍可查看全部历史）
+        let expiredLowerBound = Self.startupExpiredLowerBound(now: now, calendar: calendar)
         let fetchLowerBound = includeExpired
-            ? Date.distantPast
+            ? expiredLowerBound
             : min(windowStart, now.addingTimeInterval(-maxReminderLeadSeconds))
         // 哨兵日期用局部常量捕获：#Predicate 宏内直接写 Date.distantPast 会展开成
         // 静态成员 keypath（Value<Date.Type>），既不符合 StandardPredicateExpression，
@@ -336,10 +376,14 @@ final class ReminderAlertService {
             // 检查把 base 行替换为同源展开实例，与主面板判定源对齐（R-1 起常规窗口
             // 路径同样替换，见下方 recurringWindowCandidates）
             if includeExpired {
-                allUserEvents = Self.expiredCheckCandidates(
+                // H1：查询失败会抛到下方 catch → 本轮返回 false，不置位完成标志以便重试；
+                // 不再用未展开的 rawEvents 顶替（会漏掉循环历史实例）
+                allUserEvents = try Self.expiredCheckCandidates(
                     rawEvents: allUserEvents,
                     upperBound: fetchUpperBound,
-                    context: context
+                    lowerBound: expiredLowerBound,
+                    context: context,
+                    recurringBaseFetcher: startupRecurringFetcherForTesting
                 )
             } else {
                 // R-1：常规窗口内循环 base 行同样替换为窗口内展开实例（复合 ID），
@@ -425,11 +469,25 @@ final class ReminderAlertService {
                         AppLogger.reminder.info("到期提醒弹出 id=\(pair.event.eventID) level=\(level)min alertTime=\(Int(alertTime.timeIntervalSince1970)) isReminder=\(pair.event.isReminder)")
                     }
                 }
+                // H2：启动过期弹窗按「最近过期优先」截断，超限条数在弹窗内明示，
+                // 不静默丢弃；常规轮询不截断（displayEvents 原样）
+                let displayEvents: [CachedEvent]
+                let hiddenCount: Int
+                if includeExpired {
+                    let capped = Self.cappedExpiredRows(mergedEvents)
+                    displayEvents = capped.visible
+                    hiddenCount = capped.hiddenCount
+                } else {
+                    displayEvents = mergedEvents
+                    hiddenCount = 0
+                }
                 // 合并显示所有到期/即将到期的事项
-                let isExpired = includeExpired || mergedEvents.allSatisfy { ($0.startDate ?? now) < now }
-                showCombinedAlert(for: mergedEvents, isExpired: isExpired)
+                let isExpired = includeExpired || displayEvents.allSatisfy { ($0.startDate ?? now) < now }
+                showCombinedAlert(for: displayEvents, isExpired: isExpired, hiddenCount: hiddenCount)
                 // 记录已提醒的各级键（追加到末尾，保持插入顺序；snooze 键已在 consumeDueSnoozes 记录）
-                duePairs.forEach { pair in
+                // 只记录实际展示行：被上限隐藏的条目不得标已提醒，否则下次启动也不会再弹
+                let visibleIDs = Set(displayEvents.map(\.eventID))
+                duePairs.filter { visibleIDs.contains($0.event.eventID) }.forEach { pair in
                     pair.alertTimes.forEach { alertTime in
                         lastAlertedEventIDs.append(ReminderAlertKey(eventID: pair.event.eventID, alertTime: alertTime).encoded)
                     }
@@ -471,19 +529,30 @@ final class ReminderAlertService {
             let descriptor = FetchDescriptor<CachedEvent>(
                 predicate: #Predicate { $0.eventID == rowID }
             )
-            guard let fresh = try? context.fetch(descriptor).first, !fresh.isCompleted else { return nil }
+            // 查询失败保留旧快照行；查询成功但为空 = 行已删除，应移除（审计 M2）
+            guard let rows = CacheFetch.optional(descriptor, in: context, operation: "弹窗行状态刷新") else {
+                return event
+            }
+            guard let fresh = rows.first, !fresh.isCompleted else { return nil }
             return fresh
         }
     }
 
     /// 启动过期检查候选集（bug: startup-expired-popup-recurring-miss）：
     /// 循环 base 行（用户分类、游标或锚点早于窗口右界）替换为
-    /// expandOccurrences 同源展开实例（窗口 [distantPast, upperBound]），
+    /// expandOccurrences 同源展开实例（窗口 [lowerBound, upperBound]），
     /// 普通行原样保留，已完成历史实例剔除不弹窗。
     /// 注意不得按 base.isCompleted 过滤循环行（bug 第二轮）：旧版本完成操作
     /// 会置位 base 行且不写完成历史，主面板 expandOccurrences 也不看该位——
     /// 按它过滤会与主面板判定源不一致，实例级 isCompleted 才是判定标准
-    static func expiredCheckCandidates(rawEvents: [CachedEvent], upperBound: Date, context: ModelContext) -> [CachedEvent] {
+    /// - Throws: 循环 base 查询失败（H1：调用方须感知，不得降级为未展开集合）
+    static func expiredCheckCandidates(
+        rawEvents: [CachedEvent],
+        upperBound: Date,
+        lowerBound: Date = .distantPast,
+        context: ModelContext,
+        recurringBaseFetcher: (() throws -> [CachedEvent])? = nil
+    ) throws -> [CachedEvent] {
         let userCategory = EventCategory.user.rawValue
         let noneRaw = RecurrenceType.none.rawValue
         let distantFuture = Date.distantFuture
@@ -496,24 +565,38 @@ final class ReminderAlertService {
                  ($0.originStartDate ?? distantFuture) < upperBound)
             }
         )
-        guard let recurringBases = try? context.fetch(descriptor), !recurringBases.isEmpty else {
-            return rawEvents
+        // H1：失败必须抛出（checkDueEvents 记日志并返回 false，完成标志不置位可重试），
+        // 不得用未展开的 rawEvents 顶替；注入点仅测试使用
+        let recurringBases: [CachedEvent]
+        if let recurringBaseFetcher {
+            recurringBases = try recurringBaseFetcher()
+        } else {
+            recurringBases = try CacheFetch.throwing(
+                descriptor,
+                in: context,
+                operation: "启动过期循环候选查询"
+            )
         }
+        guard !recurringBases.isEmpty else { return rawEvents }
         let baseIDs = Set(recurringBases.map(\.eventID))
         var result = rawEvents.filter { !baseIDs.contains($0.eventID) }
-        // bug: startup-expired-check-n-plus-one——.distantPast 窗口下展开从锚点逐周期推进，
-        // skipHolidays 时逐 occurrence 触发 isRestDay 查库，启动开销随锚点年龄线性增长；
+        // bug: startup-expired-check-n-plus-one——窗口内展开从 lowerBound 逐周期推进，
+        // skipHolidays 时逐 occurrence 触发 isRestDay 查库，启动开销随窗口长度线性增长；
         // 展开前单次窄查询预热窗口内休/班判定，循环退化为内存命中（判定语义不变）
         if recurringBases.contains(where: \.skipHolidays) {
             let origins = recurringBases.compactMap { $0.originStartDate ?? $0.startDate }
             if let earliest = origins.min() {
-                HolidaySkipResolver.warmRestFlags(from: earliest, to: upperBound, context: context)
+                HolidaySkipResolver.warmRestFlags(
+                    from: max(earliest, lowerBound),
+                    to: upperBound,
+                    context: context
+                )
             }
         }
         for base in recurringBases {
             let instances = EventCacheService.shared.expandOccurrences(
                 of: base,
-                windowStart: .distantPast,
+                windowStart: lowerBound,
                 windowEnd: upperBound,
                 context: context
             )
@@ -596,10 +679,11 @@ final class ReminderAlertService {
 
     /// 显示合并的过期事项提醒弹窗（自定义 SwiftUI 窗口，替代系统 NSAlert）
     /// G4：单条完成接 markAsCompleted、稍后提醒接 snooze
-    private func showCombinedAlert(for events: [CachedEvent], isExpired: Bool) {
+    private func showCombinedAlert(for events: [CachedEvent], isExpired: Bool, hiddenCount: Int) {
         ReminderAlertWindowController.shared.show(
             events: events,
             isExpired: isExpired,
+            hiddenCount: hiddenCount,
             onCompleteAll: { [weak self] in
                 Task { @MainActor in
                     // B-15：仅标记已开始的实例——"提醒时间已到但事件尚未开始"（startDate > now）
@@ -674,7 +758,8 @@ final class ReminderAlertService {
                 predicate: #Predicate { $0.eventID == record.eventID }
             )
             // 复合 occurrence ID 实例未落库：回查本体重建展示实例（已完成实例被剔除）
-            let resolved = try? context.fetch(descriptor).first
+            // 查询失败与「本体不存在」都回退 displayOccurrence，但失败必须落日志（审计 M6）
+            let resolved = CacheFetch.optional(descriptor, in: context, operation: "稍后提醒事件回查")?.first
                 ?? EventCacheService.shared.displayOccurrence(withID: record.eventID, context: context)
             if let event = resolved, !event.isCompleted {
                 triggered.append(event)
@@ -712,7 +797,8 @@ final class ReminderAlertService {
                     let baseDescriptor = FetchDescriptor<CachedEvent>(
                         predicate: #Predicate { $0.eventID == baseID }
                     )
-                    return try? context.fetch(baseDescriptor).first
+                    // 查询失败交给外层 catch 上报，不静默当作「无本体」（审计 M6）
+                    return try CacheFetch.throwing(baseDescriptor, in: context, operation: "完成标记回查本体").first
                 }
             if let event = resolved {
                 // 使用 CalendarService 的双向同步方法（同时更新 EventKit 和 SwiftData）

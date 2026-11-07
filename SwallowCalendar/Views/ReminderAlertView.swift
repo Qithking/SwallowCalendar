@@ -24,6 +24,9 @@ final class ReminderAlertWindowController {
 
     private var window: ReminderAlertWindow?
 
+    /// 测试观测：最近一次弹窗因上限被隐藏的条数（产线不读取）
+    private(set) var lastHiddenCount = 0
+
     private init() {}
 
     /// 显示提醒弹窗（重复调用会替换已有窗口）
@@ -31,6 +34,7 @@ final class ReminderAlertWindowController {
     func show(
         events: [CachedEvent],
         isExpired: Bool,
+        hiddenCount: Int = 0,
         onCompleteAll: @escaping () -> Void,
         onEventComplete: @escaping (String) -> Void = { _ in },
         onSnooze: @escaping (String, Int) -> Void = { _, _ in }
@@ -42,9 +46,11 @@ final class ReminderAlertWindowController {
         // 列表内部 maxHeight 封顶 5 项，超出由 ScrollView 滚动承接。
         let width: CGFloat = 340
 
+        lastHiddenCount = hiddenCount
         let rootView = ReminderAlertView(
             events: events,
             isExpired: isExpired,
+            hiddenCount: hiddenCount,
             onDismiss: { [weak self] in self?.close() },
             onCompleteAll: { [weak self] in
                 self?.close()
@@ -104,6 +110,8 @@ final class ReminderAlertWindowController {
 struct ReminderAlertView: View {
     let events: [CachedEvent]
     let isExpired: Bool
+    /// 启动弹窗因上限被隐藏的历史逾期条数（>0 时头部明示，避免误以为只有这些）
+    let hiddenCount: Int
     let onDismiss: () -> Void
     let onCompleteAll: () -> Void
     /// C2：单条完成回调（eventID）
@@ -117,6 +125,7 @@ struct ReminderAlertView: View {
     init(
         events: [CachedEvent],
         isExpired: Bool,
+        hiddenCount: Int = 0,
         onDismiss: @escaping () -> Void,
         onCompleteAll: @escaping () -> Void,
         onEventComplete: @escaping (String) -> Void,
@@ -124,6 +133,7 @@ struct ReminderAlertView: View {
     ) {
         self.events = events
         self.isExpired = isExpired
+        self.hiddenCount = hiddenCount
         self.onDismiss = onDismiss
         self.onCompleteAll = onCompleteAll
         self.onEventComplete = onEventComplete
@@ -186,6 +196,12 @@ struct ReminderAlertView: View {
                 Text(isExpired ? "已过期，请及时处理" : "即将到期")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
+                if hiddenCount > 0 {
+                    // 上限截断明示：避免用户误以为历史逾期只有当前这些
+                    Text("另有 \(hiddenCount) 条更早的逾期未显示")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
             }
             Spacer()
         }

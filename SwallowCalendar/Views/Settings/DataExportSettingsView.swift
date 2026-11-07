@@ -122,7 +122,11 @@ struct DataExportSettingsView: View {
     
     private func loadEventCount() {
         let descriptor = FetchDescriptor<CachedEvent>()
-        cachedEventCount = (try? modelContext.fetchCount(descriptor)) ?? 0
+        cachedEventCount = CacheFetch.countDegradingToZero(
+            descriptor,
+            in: modelContext,
+            operation: "导出页缓存事件计数"
+        )
     }
 
     private static let dateFormatter: DateFormatter = {
@@ -142,7 +146,13 @@ struct DataExportSettingsView: View {
 
                 // 获取所有启用的日历（modelContext 限主线程访问，数据收集保留在此处）
                 let descriptor = FetchDescriptor<CalendarPreference>()
-                let preferences = (try? modelContext.fetch(descriptor)) ?? []
+                // 偏好缺失时按未过滤（全部启用）导出，保证导出不中断；失败落日志（审计 M6）
+                let preferences = CacheFetch.degradeToEmpty(
+                    descriptor,
+                    in: modelContext,
+                    operation: "导出日历偏好查询",
+                    reason: "偏好缺失时按全部日历导出，避免导出中断"
+                )
                 let enabledCals = calendarService.enabledCalendars(preferences: preferences)
 
                 // V-4：导出范围改为全部时间——原"现在~+2 年"会漏掉历史与远期事项

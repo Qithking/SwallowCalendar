@@ -60,9 +60,10 @@ enum HolidaySkipResolver {
                     && (event.startDate ?? distantPast) < windowEnd)
         }
         let descriptor = FetchDescriptor<CachedEvent>(predicate: predicate)
-        guard let events = try? context?.fetch(descriptor) else {
-            // 数据缺失 fail-open：仅周末规则仍生效（确定性规则），平日按工作日照常
-            //（fail-open 非权威判定，不写入缓存）
+        // 查询失败 fail-open：仅周末规则仍生效（确定性规则），平日按工作日照常
+        //（fail-open 非权威判定，不写入缓存）；失败必须落日志（审计 M6）
+        guard let context,
+              let events = CacheFetch.optional(descriptor, in: context, operation: "休/班判定查询") else {
             return calendar.isDateInWeekend(date)
         }
         // 「班」标识优先：补班日（含补班周末）视为工作日
@@ -75,9 +76,7 @@ enum HolidaySkipResolver {
             // 周六/周日按休处理
             verdict = calendar.isDateInWeekend(date)
         }
-        if let context {
-            storeVerdict(windowStart, verdict, context: context)
-        }
+        storeVerdict(windowStart, verdict, context: context)
         return verdict
     }
 
@@ -152,9 +151,13 @@ enum HolidaySkipResolver {
                     && (event.startDate ?? distantPast) >= spanStart
                     && (event.startDate ?? distantPast) < fetchEnd)
         }
-        guard let overlapping = try? context.fetch(FetchDescriptor<CachedEvent>(predicate: predicate)) else {
-            return  // 取数失败不预热：后续逐日判定走原查库路径（fail-open 语义不变）
-        }
+        // 取数失败不预热：后续逐日判定走原查库路径（fail-open 语义不变），失败必须落日志
+        let overlapping = CacheFetch.degradeToEmpty(
+            FetchDescriptor<CachedEvent>(predicate: predicate),
+            in: context,
+            operation: "节假日缓存预热查询",
+            reason: "预热失败时逐日判定回退原查库路径，结果正确性不变"
+        )
         let flagged = overlapping.filter { isRestTitle($0.title) || isWorkTitle($0.title) }
         var restDays = Set<Date>()
         var workDays = Set<Date>()

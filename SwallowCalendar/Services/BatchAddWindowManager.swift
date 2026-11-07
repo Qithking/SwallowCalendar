@@ -51,9 +51,8 @@ final class BatchAddWindowManager {
             title: "批量添加",
             contentSize: NSSize(width: BatchAddView.contentWidth, height: contentSizeHeight)
         )
-        newWindow.contentView = hostingView
         // 拖动区只盖标题栏空白区（避开交通灯与底部操作行），复用编辑窗口修好的落位逻辑
-        GlassWindowChrome.installDragRegion(on: hostingView)
+        GlassWindowChrome.installContentView(on: newWindow, hostingView: hostingView)
         newWindow.center()
         newWindow.hidesOnDeactivate = false
         newWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]

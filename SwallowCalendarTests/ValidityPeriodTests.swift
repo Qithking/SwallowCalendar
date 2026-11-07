@@ -355,7 +355,7 @@ final class ValidityPeriodTests: XCTestCase {
             validEnd: date(2026, 10, 31, 23, 59, 59)
         )
 
-        calendarService.updateEventRecurrence(eventID: "v-none", newRecurrenceType: .none)
+        try calendarService.updateEventRecurrence(eventID: "v-none", newRecurrenceType: .none)
 
         XCTAssertNil(cached.validStartDate)
         XCTAssertNil(cached.validEndDate)
@@ -376,7 +376,7 @@ final class ValidityPeriodTests: XCTestCase {
             validEnd: date(2026, 10, 31, 23, 59, 59)
         )
 
-        calendarService.updateEventRecurrence(eventID: "v-weekly", newRecurrenceType: .weekly)
+        try calendarService.updateEventRecurrence(eventID: "v-weekly", newRecurrenceType: .weekly)
 
         XCTAssertEqual(cached.validStartDate, date(2026, 10, 26, 0, 0))
         XCTAssertEqual(cached.validEndDate, date(2026, 10, 31, 23, 59, 59))

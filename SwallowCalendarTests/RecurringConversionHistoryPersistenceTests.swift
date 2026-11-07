@@ -78,7 +78,7 @@ final class RecurringConversionHistoryPersistenceTests: XCTestCase {
         XCTAssertEqual(completed.completedOccurrenceDates.count, 3, "完成历史未写入持久化存储")
 
         // 改单次
-        CalendarService.shared.updateEventRecurrence(eventID: "conv-history", newRecurrenceType: .none)
+        try CalendarService.shared.updateEventRecurrence(eventID: "conv-history", newRecurrenceType: .none)
 
         let afterConversion = ModelContext(container)
         let converted = try XCTUnwrap(
@@ -164,7 +164,7 @@ final class RecurringConversionHistoryPersistenceTests: XCTestCase {
             reminderOffsets: nil,
             color: nil
         )
-        CalendarService.shared.updateEventRecurrence(eventID: "disk-conv", newRecurrenceType: .none)
+        try CalendarService.shared.updateEventRecurrence(eventID: "disk-conv", newRecurrenceType: .none)
 
         // 模拟应用重启：新容器打开同一磁盘文件
         let reopened = try ModelContainer(

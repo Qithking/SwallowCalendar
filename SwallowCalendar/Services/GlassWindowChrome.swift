@@ -42,23 +42,40 @@ enum GlassWindowChrome {
         return window
     }
 
-    /// 标题栏拖动区：只覆盖标题栏空白区（避开交通灯），单击拖动、双击缩放
+    /// 装配窗口内容：宿主视图与标题栏拖动区必须是**兄弟视图**，不能把拖动区
+    /// 加进 NSHostingView 的子视图（SwiftUI 明确不支持，会破坏视图层级并触发运行时警告）。
+    /// 结构：window.contentView（容器 NSView）→ [NSHostingView, TitlebarDragRegionView(最上层)]
+    ///
+    /// 返回拖动区，便于取证/调试读取实际 frame。
     @discardableResult
-    static func installDragRegion(on hostingView: NSView) -> TitlebarDragRegionView {
+    static func installContentView(
+        on window: NSWindow,
+        hostingView: NSView
+    ) -> TitlebarDragRegionView {
+        // 容器为非翻转坐标系（普通 NSView），落位函数会按 isFlipped=false 贴顶
+        let container = NSView(frame: hostingView.frame)
+        hostingView.frame = container.bounds
+        hostingView.autoresizingMask = [.width, .height]
+        container.addSubview(hostingView)
+
+        // 先让窗口接管容器，容器 bounds 才会等于实际内容尺寸，拖动区落位才准确
+        window.contentView = container
+
         let placement = dragRegionPlacement(
-            inBounds: hostingView.bounds,
-            isFlipped: hostingView.isFlipped,
+            inBounds: container.bounds,
+            isFlipped: container.isFlipped,
             leadingInset: dragRegionLeadingInset
         )
         let region = TitlebarDragRegionView(frame: placement.frame)
         region.autoresizingMask = placement.autoresizingMask
-        hostingView.addSubview(region)
+        // 追加在宿主视图之后 → 位于其上方；只覆盖标题栏空白区，不碰底部操作行
+        container.addSubview(region)
         return region
     }
 
     /// 标题栏拖动区落位：坐标系不同，贴顶写法相反。
-    /// - 翻转坐标系（NSHostingView）：贴顶 y = 0，弹性留白在底侧 → `.maxYMargin`
-    /// - 非翻转坐标系：贴顶 y = 高度 - 28，弹性留白在底侧 → `.minYMargin`
+    /// - 翻转坐标系（如 NSHostingView）：贴顶 y = 0，弹性留白在底侧 → `.maxYMargin`
+    /// - 非翻转坐标系（窗口内容容器）：贴顶 y = 高度 - 28，弹性留白在底侧 → `.minYMargin`
     /// 实测依据：翻转视图中 `.minYMargin` 会让拖动区随窗口变高下移（曾落到窗口底部按钮行）
     static func dragRegionPlacement(
         inBounds bounds: NSRect,

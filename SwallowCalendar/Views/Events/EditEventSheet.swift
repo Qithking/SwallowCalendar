@@ -64,7 +64,8 @@ struct EditEventSheet: View {
             predicate: #Predicate { $0.eventID == targetID }
         )
         descriptor.fetchLimit = 1
-        return try? context.fetch(descriptor).first
+        // 失败与「记录不存在」都返回 nil，但失败必须落日志，避免面板静默回填默认值（审计 M6）
+        return CacheFetch.optional(descriptor, in: context, operation: "编辑面板回填快照查询")?.first
     }
 
     /// BUG-06：展开实例（复合 ID）只允许改非时间字段——写回 startDate/endDate/isAllDay
@@ -418,7 +419,8 @@ struct EditEventSheet: View {
                 )
                 // 如果循环规则发生变化，写入 spec 真源并同步提醒 EK 规则
                 if taskSpec != originalSpec {
-                    calendarService.updateEventRecurrence(
+                    // M3：循环规则落库失败必须走 catch → 提示「保存失败」并保持窗口打开
+                    try calendarService.updateEventRecurrence(
                         eventID: event.id,
                         newSpec: taskSpec
                     )

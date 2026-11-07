@@ -75,7 +75,7 @@ final class RecurringToSingleConversionTests: XCTestCase {
         XCTAssertEqual(cached.completedOccurrenceDates, [d0, d1, d2])
         XCTAssertEqual(cached.startDate?.timeIntervalSince1970 ?? 0, d3.timeIntervalSince1970, accuracy: 0.001)
 
-        CalendarService.shared.updateEventRecurrence(eventID: "rec-3done", newRecurrenceType: .none)
+        try CalendarService.shared.updateEventRecurrence(eventID: "rec-3done", newRecurrenceType: .none)
 
         // 数据侧：历史保留、未来展开依据清除
         XCTAssertEqual(cached.recurrenceType, .none)
@@ -102,7 +102,7 @@ final class RecurringToSingleConversionTests: XCTestCase {
         let d0 = date(26)
         let cached = try insertRecurring(eventID: "rec-nodone", startDate: d0)
 
-        CalendarService.shared.updateEventRecurrence(eventID: "rec-nodone", newRecurrenceType: .none)
+        try CalendarService.shared.updateEventRecurrence(eventID: "rec-nodone", newRecurrenceType: .none)
 
         XCTAssertEqual(cached.recurrenceType, .none)
         XCTAssertNil(cached.completedOccurrenceDatesJSON)
@@ -129,7 +129,7 @@ final class RecurringToSingleConversionTests: XCTestCase {
         XCTAssertEqual(cached.completedOccurrenceDates, [d0, d2])
         XCTAssertEqual(cached.startDate?.timeIntervalSince1970 ?? 0, d3.timeIntervalSince1970, accuracy: 0.001)
 
-        CalendarService.shared.updateEventRecurrence(eventID: "rec-undo", newRecurrenceType: .none)
+        try CalendarService.shared.updateEventRecurrence(eventID: "rec-undo", newRecurrenceType: .none)
 
         XCTAssertEqual(cached.completedOccurrenceDates, [d0, d2], "撤销后的历史必须原样保留")
         let fullWindow = visibleEvents(from: d0, to: date(31))
@@ -146,7 +146,7 @@ final class RecurringToSingleConversionTests: XCTestCase {
 
         // 完成 1 期后转单次：游标推进到 d1，历史保留 d0
         await CalendarService.shared.toggleEventCompleted(eventID: occID("rec-convert-done", d0), isCompleted: true)
-        CalendarService.shared.updateEventRecurrence(eventID: "rec-convert-done", newRecurrenceType: .none)
+        try CalendarService.shared.updateEventRecurrence(eventID: "rec-convert-done", newRecurrenceType: .none)
         XCTAssertEqual(cached.recurrenceType, .none)
 
         XCTAssertTrue(

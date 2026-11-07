@@ -109,7 +109,7 @@ final class HolidaySkipCacheTests: XCTestCase {
         // 周四 11-05 零长休标识
         try insertEvent(id: "hol-1", title: "中秋假期日", start: day(5), end: day(5))
 
-        let candidates = ReminderAlertService.expiredCheckCandidates(
+        let candidates = try ReminderAlertService.expiredCheckCandidates(
             rawEvents: [],
             upperBound: day(9, hour: 12),
             context: context

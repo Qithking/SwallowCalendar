@@ -54,12 +54,10 @@ final class EditEventWindowManager: NSObject, NSWindowDelegate {
         )
         window.delegate = self
 
-        window.contentView = hostingView
-
-        // 标题栏拖动区：只叠在标题栏空白区（x=80 起避开左侧交通灯），随窗口高度变化贴顶。
-        // NSHostingView 是翻转坐标系，贴顶落位由共用装配按 isFlipped 处理，
-        // 避免拖动区落到窗口底部、盖住「取消/保存」按钮并吞掉点击。
-        GlassWindowChrome.installDragRegion(on: hostingView)
+        // 标题栏拖动区：只叠在标题栏空白区（x=80 起避开左侧交通灯），与宿主视图为兄弟视图。
+        // 不能把拖动区加进 NSHostingView（SwiftUI 不支持，会破坏层级）；
+        // 贴顶落位由共用装配按容器坐标系处理，避免拖动区落到窗口底部、盖住「取消/保存」按钮。
+        GlassWindowChrome.installContentView(on: window, hostingView: hostingView)
 
         window.center()
         window.makeKeyAndOrderFront(nil)

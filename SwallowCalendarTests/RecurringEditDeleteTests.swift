@@ -95,7 +95,7 @@ final class RecurringEditDeleteTests: XCTestCase {
         )
         cached.originStartDate = d0
 
-        calendarService.updateEventRecurrence(eventID: "rec-base", newRecurrenceType: .none)
+        try calendarService.updateEventRecurrence(eventID: "rec-base", newRecurrenceType: .none)
 
         XCTAssertFalse(cached.isCompleted)
         XCTAssertEqual(cached.completedOccurrenceDates, [d0], "改单次必须保留完成历史")
@@ -117,7 +117,7 @@ final class RecurringEditDeleteTests: XCTestCase {
             completionHistory: [d0]
         )
 
-        calendarService.updateEventRecurrence(eventID: "rec-base", newRecurrenceType: .weekly)
+        try calendarService.updateEventRecurrence(eventID: "rec-base", newRecurrenceType: .weekly)
 
         XCTAssertEqual(cached.recurrenceType, .weekly)
         XCTAssertEqual(cached.completedOccurrenceDates, [d0])
@@ -137,7 +137,7 @@ final class RecurringEditDeleteTests: XCTestCase {
             startDate: d0
         )
 
-        calendarService.updateEventRecurrence(eventID: occID("rec-base", d0), newRecurrenceType: .none)
+        try calendarService.updateEventRecurrence(eventID: occID("rec-base", d0), newRecurrenceType: .none)
 
         XCTAssertEqual(cached.recurrenceType, .none)
         XCTAssertEqual(cached.completedOccurrenceDates, [])

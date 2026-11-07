@@ -106,7 +106,7 @@ final class ReminderExpiredCandidatesTests: XCTestCase {
         let raw: [CachedEvent] = try context.fetch(FetchDescriptor<CachedEvent>())
         XCTAssertEqual(Set(raw.map(\.eventID)), ["base-morning", "single-wake"])
 
-        let candidates = ReminderAlertService.expiredCheckCandidates(
+        let candidates = try ReminderAlertService.expiredCheckCandidates(
             rawEvents: raw,
             upperBound: upperBound,
             context: context
@@ -150,7 +150,7 @@ final class ReminderExpiredCandidatesTests: XCTestCase {
 
         let upperBound = date(2026, 10, 28, 14, 0).addingTimeInterval(1440 * 60)
         let raw: [CachedEvent] = try context.fetch(FetchDescriptor<CachedEvent>())
-        let candidates = ReminderAlertService.expiredCheckCandidates(
+        let candidates = try ReminderAlertService.expiredCheckCandidates(
             rawEvents: raw,
             upperBound: upperBound,
             context: context
@@ -188,7 +188,7 @@ final class ReminderExpiredCandidatesTests: XCTestCase {
         ))
         XCTAssertTrue(raw.isEmpty, "粗筛滤掉已完成 base 行（复刻应用真实 fetch 结果）")
 
-        let candidates = ReminderAlertService.expiredCheckCandidates(
+        let candidates = try ReminderAlertService.expiredCheckCandidates(
             rawEvents: raw,
             upperBound: upperBound,
             context: context
@@ -260,7 +260,7 @@ final class ReminderExpiredCandidatesTests: XCTestCase {
 
         // 弹窗候选中的今日实例复合 ID（markAsCompleted 实际传入的 ID 形态）
         let todayID = CachedEvent.makeOccurrenceID(baseID: "base-sync", occurrence: date(2026, 10, 28, 9, 0))
-        let candidates = ReminderAlertService.expiredCheckCandidates(
+        let candidates = try ReminderAlertService.expiredCheckCandidates(
             rawEvents: [],
             upperBound: date(2026, 10, 28, 14, 0).addingTimeInterval(1440 * 60),
             context: context

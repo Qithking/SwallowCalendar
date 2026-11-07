@@ -48,7 +48,8 @@ final class CalendarService {
             ) { [weak self] _ in
                 // EK 通知可能后台线程投递，跳主线程再进入防抖
                 Task { @MainActor [weak self] in
-                    guard let self else { return }
+                    // 仅需确认服务仍存活（后续只调用共享单例，不再使用 self）
+                    guard self != nil else { return }
                     AppLogger.sync.info("EKEventStore.changed → 触发外部变更同步")
                     BackgroundSyncService.shared.syncOnExternalChange()
                 }
@@ -1414,33 +1415,54 @@ final class CalendarService {
         }
     }
     
+    /// 循环规则更新失败：必须让保存链路感知，不得静默当成「已保存」（审计 M3）
+    enum RecurrenceUpdateError: LocalizedError {
+        case cacheContextUnavailable
+        case eventNotFound(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .cacheContextUnavailable:
+                return "本地缓存尚未就绪，循环规则未保存"
+            case .eventNotFound(let id):
+                return "未找到要更新的事项（\(id)），循环规则未保存"
+            }
+        }
+    }
+
     /// 更新事件周期类型（单条化 plan step 7：编辑即改整条）
     /// - 周期→1次（BUG-21 用户口径）：保留已完成历史（已办列表可见），清未来展开依据；
     ///   `completedOccurrenceDatesJSON` 不再清空，`originStartDate` 置 nil 防止从远古锚点
     ///   展开出过去未完成行；游标 startDate 不动
     /// - 1次→周期 / 周期类型变更：仅更新类型，下一次 occurrence 由查询链从 startDate 以新周期推进
+    /// - Throws: 缓存上下文缺失、本体不存在或查询失败（M3：调用方须反馈给用户）
     @MainActor
-    func updateEventRecurrence(eventID: String, newRecurrenceType: RecurrenceType) {
+    func updateEventRecurrence(eventID: String, newRecurrenceType: RecurrenceType) throws {
         let baseID = CachedEvent.parseOccurrenceID(eventID)?.baseID ?? eventID
-        guard let cached = findCachedEvent(eventID: baseID) else { return }
+        guard let cached = try findCachedEventOrThrow(eventID: baseID) else {
+            throw RecurrenceUpdateError.eventNotFound(baseID)
+        }
         let spec = RecurrenceSpec.legacy(
             from: newRecurrenceType,
             anchor: cached.originStartDate ?? cached.startDate ?? Date(),
             isLunar: cached.isLunar
         )
-        updateEventRecurrence(eventID: baseID, newSpec: spec)
+        try updateEventRecurrence(eventID: baseID, newSpec: spec)
     }
 
     /// 更新循环规则（spec 真源）：本地缓存 + 提醒 EK 规则双向落定
     /// - 周期→1次：保留已完成历史，清未来展开依据与有效期
     /// - 每小时/农历：EK 无表达，不写规则并打本地标记（系统侧显示「永不」）
+    /// - Throws: 缓存上下文缺失、本体不存在或查询/落库失败（M3：调用方须反馈给用户）
     @MainActor
-    func updateEventRecurrence(eventID: String, newSpec: RecurrenceSpec?) {
+    func updateEventRecurrence(eventID: String, newSpec: RecurrenceSpec?) throws {
         // 列表行可能是 occurrence 虚拟展开行（复合 ID），编辑永远作用于本体记录
         let baseID = CachedEvent.parseOccurrenceID(eventID)?.baseID ?? eventID
-        guard let context = cacheService.context,
-              let cached = findCachedEvent(eventID: baseID) else {
-            return
+        guard let context = cacheService.context else {
+            throw RecurrenceUpdateError.cacheContextUnavailable
+        }
+        guard let cached = try findCachedEventOrThrow(eventID: baseID) else {
+            throw RecurrenceUpdateError.eventNotFound(baseID)
         }
 
         // 幂等防回环：规则未变直接返回，不再触发 EK 写入与广播
@@ -1469,6 +1491,8 @@ final class CalendarService {
             try context.save()
         } catch {
             AppLogger.sync.error("updateEventRecurrence 缓存保存失败: \(String(describing: error))")
+            // M3：落库失败必须让调用方感知，不得静默成功
+            throw error
         }
 
         // 提醒行同步 EK 规则（可表达档位写规则；每小时/农历打标记；改单次清规则）
@@ -1523,13 +1547,24 @@ final class CalendarService {
 
     // MARK: - Sync
 
-    /// 根据 eventID 查找缓存事件
+    /// 根据 eventID 查找缓存事件（读路径：查不到与查询失败都返回 nil，失败落日志）
     @MainActor
     private func findCachedEvent(eventID: String) -> CachedEvent? {
         guard let context = cacheService.context else { return nil }
         var descriptor = FetchDescriptor<CachedEvent>(predicate: #Predicate { $0.eventID == eventID })
         descriptor.fetchLimit = 1
-        return try? context.fetch(descriptor).first
+        return CacheFetch.optional(descriptor, in: context, operation: "缓存事件回查")?.first
+    }
+
+    /// 循环规则写路径专用：查询失败抛出，区分「本体不存在」与「查询失败」（审计 M3）
+    @MainActor
+    private func findCachedEventOrThrow(eventID: String) throws -> CachedEvent? {
+        guard let context = cacheService.context else {
+            throw RecurrenceUpdateError.cacheContextUnavailable
+        }
+        var descriptor = FetchDescriptor<CachedEvent>(predicate: #Predicate { $0.eventID == eventID })
+        descriptor.fetchLimit = 1
+        return try CacheFetch.throwing(descriptor, in: context, operation: "循环规则更新回查").first
     }
 
     /// 手动同步日历事件到本地缓存
