@@ -269,8 +269,9 @@ final class CachedEvent {
 
     // MARK: - 有效期判定（spec/task-validity-period AC-1；plan step 3）
 
-    /// occurrence 是否落在有效期区间内（闭区间；双端 nil = 不限制）
-    /// 前置约定：validStartDate/validEndDate 落库时已归一化（00:00:00 / 23:59:59）
+    /// occurrence 是否落在有效期区间内（闭区间含端点，精确到时分；双端 nil = 不限制）
+    /// 判定口径：occ >= validStart 且 occ <= validEnd——设开始 10:00 则 09:59 无效、10:00 有效；
+    /// 设结束 18:00 则 18:00 有效、18:01 无效
     func isWithinValidity(_ occurrence: Date) -> Bool {
         if let validStart = validStartDate, occurrence < validStart { return false }
         if let validEnd = validEndDate, occurrence > validEnd { return false }

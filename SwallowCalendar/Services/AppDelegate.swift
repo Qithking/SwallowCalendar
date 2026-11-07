@@ -50,8 +50,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 注意：BackgroundSyncService.start() 不在此处调用，
         // 改由 ContentView.task 注入 mainContext 后再启动，确保使用同一 ModelContext
         
-        // 检查更新
-        UpdateChecker.shared.checkOnStartup()
+        // 检查更新（预览取证态跳过启动检查，避免更新弹窗遮挡编辑窗口）
+        if ProcessInfo.processInfo.environment["SC_OPEN_EDIT_PREVIEW"] != "1" {
+            UpdateChecker.shared.checkOnStartup()
+        }
         UpdateChecker.shared.startPeriodicCheck()
         
         // 启动待办事项到期提醒服务
@@ -82,6 +84,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if ProcessInfo.processInfo.environment["SC_DIAG_WINDOW"] == "1" {
             DispatchQueue.main.async { [weak self] in
                 self?.panel?.open()
+            }
+        }
+
+        // 调试入口：SC_OPEN_EDIT_PREVIEW=1 时启动即打开「修改事项」窗口（填入示例数据），
+        // 供无 UI 自动化权限时用 screencapture 取证标题栏与玻璃外观；
+        // 仅在环境变量命中时生效，正常启动零影响
+        if ProcessInfo.processInfo.environment["SC_OPEN_EDIT_PREVIEW"] == "1" {
+            DispatchQueue.main.async {
+                EditEventWindowManager.shared.openEditWindow(
+                    event: Self.editPreviewEvent(),
+                    calendarService: CalendarService.shared,
+                    onDismiss: {},
+                    preview: Self.editPreviewState()
+                )
+            }
+            // 取证：主面板同时打开时，把编辑窗口摆到面板旁边，同屏对比透明度
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                guard let panel = self?.panel else { return }
+                EditEventWindowManager.shared.positionBeside(
+                    panelFrame: panel.frame,
+                    screen: panel.screen
+                )
             }
         }
 
@@ -168,6 +192,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = StatusBarIconManager.shared.currentIcon
     }
     
+    /// 调试预览态选择（SC_EDIT_PREVIEW_STATE=custom|validity|custom+validity），仅截图取证使用
+    private static func editPreviewState() -> EditPreviewState? {
+        switch ProcessInfo.processInfo.environment["SC_EDIT_PREVIEW_STATE"] {
+        case "custom": return EditPreviewState(customRecurrence: true)
+        case "validity": return EditPreviewState(validityOn: true)
+        case "custom+validity": return EditPreviewState(customRecurrence: true, validityOn: true)
+        default: return nil
+        }
+    }
+
+    /// 调试预览用示例事件（仅 SC_OPEN_EDIT_PREVIEW 入口使用，不写入缓存与日历）
+    private static func editPreviewEvent() -> CalendarEvent {
+        CalendarEvent(
+            id: "debug-edit-preview",
+            title: "示例事项",
+            startDate: Date(),
+            endDate: Date().addingTimeInterval(3600),
+            isAllDay: false,
+            calendarID: "debug-calendar",
+            calendarTitle: "示例日历",
+            calendarColorHex: "#007AFF",
+            category: .user,
+            isCompleted: false,
+            priority: 0,
+            isReminder: false,
+            recurrenceType: .none,
+            reminderMinutes: 0,
+            eventColorHex: nil
+        )
+    }
+
     /// 创建 ModelContainer
     private static func createModelContainer() -> ModelContainer {
         let schema = Schema([

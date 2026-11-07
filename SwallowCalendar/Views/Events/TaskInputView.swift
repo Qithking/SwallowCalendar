@@ -146,10 +146,24 @@ struct TaskInputView: View {
             // 执行一次并覆盖已重置的状态
             nlpTask?.cancel()
         }
+        .onAppear {
+            // 调试取证入口（SC_OPEN_TASK_EDITOR_PREVIEW=1）：直接展开新建表单，
+            // 供截图核对四张卡片等宽与各行右基准；正常启动不生效
+            guard ProcessInfo.processInfo.environment["SC_OPEN_TASK_EDITOR_PREVIEW"] == "1",
+                  inputText.isEmpty else { return }
+            inputText = "示例待办"
+            showAttributeEditor = true
+            isEditingAttributes = true
+            if ProcessInfo.processInfo.environment["SC_TASK_PREVIEW_VALIDITY"] == "1" {
+                taskValidityEnabled = true
+                taskValidityHasStart = true
+                taskValidityHasEnd = true
+            }
+        }
     }
 
     // MARK: - 属性编辑器
-    // 栅格化三分组（时间/属性/提醒）：标签列对齐、控件原生尺寸（不再 scaleEffect 缩放）
+    // 与编辑表单共用 FormSection/FormRow：标签左对齐固定列宽，控件起点与间距统一
 
     private var attributeEditor: some View {
         // 表单内滚动：布局锁定后仅当表单超出剩余空间时滚动，日历/工具栏不被挤压
@@ -159,22 +173,16 @@ struct TaskInputView: View {
     }
 
     private var attributeEditorContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Divider()
-
-            // 标题预览：与栅格标签列对齐
-            HStack(spacing: 8) {
-                GridLabel("标题")
-                Text(taskTitle.isEmpty ? "待办事项" : taskTitle)
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            }
-
-            AttributeGroup("时间") {
-                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
-                    GridRow {
-                        GridLabel("日期时间")
+        VStack(alignment: .leading, spacing: FormMetrics.sectionSpacing) {
+            FormSection("基本") {
+                VStack(alignment: .leading, spacing: FormMetrics.rowSpacing) {
+                    FormRow("标题") {
+                        Text(taskTitle.isEmpty ? "待办事项" : taskTitle)
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    FormRow("日期时间") {
                         DatePicker(
                             "",
                             selection: Binding(
@@ -184,32 +192,30 @@ struct TaskInputView: View {
                             displayedComponents: taskIsAllDay ? [.date] : [.date, .hourAndMinute]
                         )
                         .labelsHidden()
-                        .gridCellColumns(3)
+                        // 固有宽度 + FormRow 的 trailing 容器：右边缘与「全天」开关共线
+                        .formControlSizing()
                     }
-                    GridRow {
-                        GridLabel("全天")
+                    FormRow("全天") {
                         // V-16：显式"全天"开关替代时分==0 隐式推断，用户可控可感知
                         Toggle("", isOn: $taskIsAllDay)
                             .toggleStyle(.switch)
                             .labelsHidden()
-                        GridLabel("农历")
+                    }
+                    FormRow("农历") {
                         Toggle("", isOn: Binding(
                             get: { taskIsLunar },
                             set: { taskIsLunar = $0; manuallyEditedLunar = true }  // V-7：手选开关不被 NLP 覆盖
                         ))
-                            .toggleStyle(.switch)
-                            .labelsHidden()
+                        .toggleStyle(.switch)
+                        .labelsHidden()
                     }
                 }
             }
 
-            Divider()
-
             // 循环语义集中一处：周期/跳过节假日/限制有效期同属「重复」组（spec 定案）
-            AttributeGroup("重复") {
-                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
-                    GridRow {
-                        GridLabel("周期")
+            FormSection("重复") {
+                VStack(alignment: .leading, spacing: FormMetrics.rowSpacing) {
+                    FormRow("周期") {
                         RecurrencePickerView(
                             preset: Binding(
                                 get: { taskPreset },
@@ -224,15 +230,7 @@ struct TaskInputView: View {
                             isLunar: taskIsLunar
                         )
                     }
-                    GridRow {
-                        GridLabel("跳过节假日")
-                        // AC-7：勾选后 startDate 落休日顺延至下一个班日显示与提醒
-                        Toggle("", isOn: $taskSkipHolidays)
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                    }
-                    GridRow {
-                        GridLabel("限制有效期")
+                    FormRow("限制有效期") {
                         // spec/task-validity-period：开启时开始端默认勾选且日期=当前任务日期、结束端不勾选
                         Toggle("", isOn: Binding(
                             get: { taskValidityEnabled },
@@ -245,86 +243,66 @@ struct TaskInputView: View {
                                 }
                             }
                         ))
-                            .toggleStyle(.switch)
-                            .labelsHidden()
+                        .toggleStyle(.switch)
+                        .labelsHidden()
                     }
                     if taskValidityEnabled {
-                        GridRow {
-                            GridLabel("开始")
-                            Toggle("", isOn: $taskValidityHasStart)
-                                .toggleStyle(.switch)
-                                .labelsHidden()
-                            DatePicker("", selection: $taskValidityStart, displayedComponents: [.date])
-                                .labelsHidden()
-                                .disabled(!taskValidityHasStart)
+                        FormRow("有效期起") {
+                            HStack(spacing: 6) {
+                                Toggle("", isOn: $taskValidityHasStart)
+                                    .toggleStyle(.switch)
+                                    .labelsHidden()
+                                DatePicker("", selection: $taskValidityStart, displayedComponents: [.date, .hourAndMinute])
+                                    .labelsHidden()
+                                    .disabled(!taskValidityHasStart)
+                                    // 固有宽度：整行由 FormRow 右贴，日期右缘（箭头）落在统一基准线
+                                    .formControlSizing()
+                            }
                         }
-                        GridRow {
-                            GridLabel("结束")
-                            Toggle("", isOn: $taskValidityHasEnd)
-                                .toggleStyle(.switch)
-                                .labelsHidden()
-                            DatePicker("", selection: $taskValidityEnd, displayedComponents: [.date])
-                                .labelsHidden()
-                                .disabled(!taskValidityHasEnd)
+                        FormRow("有效期止") {
+                            HStack(spacing: 6) {
+                                Toggle("", isOn: $taskValidityHasEnd)
+                                    .toggleStyle(.switch)
+                                    .labelsHidden()
+                                DatePicker("", selection: $taskValidityEnd, displayedComponents: [.date, .hourAndMinute])
+                                    .labelsHidden()
+                                    .disabled(!taskValidityHasEnd)
+                                    .formControlSizing()
+                            }
                         }
+                        FormHint("有效期含起止端点，精确到时分（如 10:00 起、18:00 止）")
                     }
                 }
             }
 
-            Divider()
-
-            AttributeGroup("属性") {
-                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
-                    GridRow {
-                        GridLabel("颜色")
-                        HStack(spacing: 6) {
-                            ForEach(EventColor.allCases, id: \.self) { color in
-                                Circle()
-                                    .fill(Color(hex: color.rawValue))
-                                    .frame(width: 14, height: 14)
-                                    .overlay(
-                                        Circle().stroke(taskColor == color ? Color.primary : Color.clear, lineWidth: 1.5)
-                                    )
-                                    .onTapGesture {
-                                        taskColor = taskColor == color ? nil : color
-                                        manuallyEditedColor = true  // V-7：手选颜色不被 NLP 覆盖
-                                    }
-                            }
-                        }
-                        .gridCellColumns(3)
+            FormSection("属性") {
+                VStack(alignment: .leading, spacing: FormMetrics.rowSpacing) {
+                    FormRow("颜色") {
+                        FormColorSwatches(selection: Binding(
+                            get: { taskColor },
+                            set: { taskColor = $0; manuallyEditedColor = true }  // V-7：手选颜色不被 NLP 覆盖
+                        ))
                     }
-                    GridRow {
-                        GridLabel("优先级")
-                        Picker("", selection: Binding(
+                    FormRow("优先级") {
+                        FormPriorityPicker(selection: Binding(
                             get: { taskPriority },
                             set: { taskPriority = $0; manuallyEditedPriority = true }  // V-7：手选优先级不被 NLP 覆盖
-                        )) {
-                            ForEach(EventPriority.allCases, id: \.self) { p in
-                                Text(p.displayName).tag(p)
-                            }
-                        }
-                        .labelsHidden()
-                        .frame(width: 70)
+                        ))
                     }
                 }
             }
 
-            Divider()
-
-            AttributeGroup("提醒") {
-                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
-                    GridRow {
-                        GridLabel("提醒")
+            FormSection("提醒") {
+                VStack(alignment: .leading, spacing: FormMetrics.rowSpacing) {
+                    FormRow("提前提醒") {
                         ReminderLeadPickerView(
                             offsets: Binding(
                                 get: { taskReminderOffsets },
                                 set: { taskReminderOffsets = $0; manuallyEditedReminder = true }  // V-7：手选提醒不被 NLP 覆盖
                             )
                         )
-                        .gridCellColumns(3)
                     }
-                    GridRow {
-                        GridLabel("添加到提醒")
+                    FormRow("添加到提醒") {
                         Toggle("", isOn: $createAsReminder)
                             .toggleStyle(.switch)
                             .labelsHidden()
@@ -332,7 +310,7 @@ struct TaskInputView: View {
                 }
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 6)
         .padding(.vertical, 4)
     }
 
@@ -450,42 +428,4 @@ struct TaskInputView: View {
         manuallyEditedLunar = false
     }
 
-}
-
-// MARK: - 栅格化私有组件
-
-/// 栅格标签：右对齐保证同列标签对齐，minWidth 保证 2~4 字标签间距一致
-private struct GridLabel: View {
-    let text: String
-
-    init(_ text: String) {
-        self.text = text
-    }
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 11))
-            .foregroundColor(.secondary)
-            .frame(minWidth: 44, alignment: .trailing)
-    }
-}
-
-/// 属性小节分组：小节标题 + 内容（组间由 Divider 分隔）
-private struct AttributeGroup<Content: View>: View {
-    let title: String
-    let content: Content
-
-    init(_ title: String, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.secondary)
-            content
-        }
-    }
 }

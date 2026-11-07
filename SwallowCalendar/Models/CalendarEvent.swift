@@ -74,20 +74,11 @@ enum EventCategory: String, CaseIterable {
 // MARK: - ValidityPeriod（spec/task-validity-period AC-1~AC-6）
 
 /// 任务有效期区间（仅服务/UI 层载体，SwiftData 落库走 CachedEvent 双 Date? 字段）
-/// 双端可独立缺省：nil = 该端不限制；闭区间，天粒度归一化
+/// 双端可独立缺省：nil = 该端不限制；闭区间（含端点），精确到时分
+/// 存量数据落库值为 00:00:00 / 23:59:59（旧版按天归一化的结果），读取后语义不变
 struct ValidityPeriod: Equatable {
     var start: Date?
     var end: Date?
-
-    /// 开始端归一化为当天 00:00:00
-    var normalizedStartDate: Date? {
-        start.map { Calendar.current.startOfDay(for: $0) }
-    }
-
-    /// 结束端归一化为当天 23:59:59
-    var normalizedEndDate: Date? {
-        end.map { Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: $0) ?? $0 }
-    }
 }
 
 // MARK: - CalendarEvent

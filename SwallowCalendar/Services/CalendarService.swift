@@ -843,8 +843,8 @@ final class CalendarService {
                 eventColorHex: color?.rawValue,
                 skipHolidays: skipHolidays,
                 // 有效期归一化落库（spec AC-6，plan step 6）：nil = 该端不限制
-                validStartDate: validity?.normalizedStartDate,
-                validEndDate: validity?.normalizedEndDate
+                validStartDate: validity?.start,
+                validEndDate: validity?.end
             )
             // 多级提醒：经 setter 写入以维护硬不变量 reminderMinutes == offsets.max()
             if let offsets = reminderOffsets, !offsets.isEmpty {
@@ -929,8 +929,8 @@ final class CalendarService {
                 eventColorHex: color?.rawValue,
                 skipHolidays: skipHolidays,
                 // 有效期归一化落库（spec AC-6，plan step 6）：nil = 该端不限制
-                validStartDate: validity?.normalizedStartDate,
-                validEndDate: validity?.normalizedEndDate
+                validStartDate: validity?.start,
+                validEndDate: validity?.end
             )
             // 多级提醒：经 setter 写入以维护硬不变量 reminderMinutes == offsets.max()
             if let offsets = reminderOffsets, !offsets.isEmpty {
@@ -1399,10 +1399,10 @@ final class CalendarService {
             // 跳过节假日标记：仅显式传入时写回（nil = 保持原值）
             if let skipHolidays { cached.skipHolidays = skipHolidays }
             // 有效期三态写入（spec AC-6，plan step 7）：validity 为 ValidityPeriod??，
-            // 一层解包后内层 nil = 清除区间（链式取归一化得 nil），.some = 归一化落库
+            // 一层解包后内层 nil = 清除区间；.some = 原样落库（保留时分，不再按天归一化）
             if let validity {
-                cached.validStartDate = validity?.normalizedStartDate
-                cached.validEndDate = validity?.normalizedEndDate
+                cached.validStartDate = validity?.start
+                cached.validEndDate = validity?.end
             }
             cached.lastUpdated = Date()
             do {

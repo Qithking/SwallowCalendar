@@ -125,14 +125,6 @@ enum DesktopTodoPanelSort {
     }
 }
 
-// MARK: - 面板拖动
-
-/// 拖动起点信息（按下瞬间快照：窗口 origin + 全局鼠标位置，位移 = 两差值之和）
-private struct PanelDragStart {
-    let windowOrigin: CGPoint
-    let mouse: CGPoint
-}
-
 // MARK: - 面板内容视图
 
 /// 桌面常驻面板内容：四档筛选 + 仅用户待办（八轮）+ 用户待办可勾选完成
@@ -148,8 +140,6 @@ struct DesktopTodoPanelView: View {
     @State private var reloadAt: Date = Date()
     /// 置顶开关（UI 态；窗口层级由 Manager.setPinned 切换，会话内记忆）
     @State private var isPinned = false
-    /// 拖动起点快照（仅按下首帧与松开各写一次，拖动过程零状态更新 → 无逐帧重排）
-    @State private var dragStart: PanelDragStart?
 
     private let calendar = Calendar.current
 
@@ -215,28 +205,10 @@ struct DesktopTodoPanelView: View {
             .frame(maxHeight: .infinity, alignment: .top)
         }
         .background(.ultraThinMaterial)
-        // 面板拖动（七轮定稿）：列表区被 ScrollView 的 NSScrollView 桥接 view 覆盖，
-        // 六轮 performDrag 背景桥接 hitTest 永不命中而失效；DragGesture 恰好在筛选行/
-        // 空态区可达 = 标题栏拖动语义。minimumDistance 区分点击与拖动；onChanged 用
-        // NSEvent.mouseLocation 全局坐标绝对定位移窗（起点快照 + 差值，无累计误差），
-        // dragStart 仅起止各写一次 @State，拖动过程零 SwiftUI 重排
-        .gesture(
-            DragGesture(minimumDistance: 5)
-                .onChanged { _ in
-                    // 拖动回调时 currentEvent 即面板窗口的鼠标事件
-                    guard let window = NSApp.currentEvent?.window else { return }
-                    let mouse = NSEvent.mouseLocation
-                    if dragStart == nil {
-                        dragStart = PanelDragStart(windowOrigin: window.frame.origin, mouse: mouse)
-                    }
-                    guard let start = dragStart else { return }
-                    window.setFrameOrigin(
-                        CGPoint(x: start.windowOrigin.x + (mouse.x - start.mouse.x),
-                                y: start.windowOrigin.y + (mouse.y - start.mouse.y))
-                    )
-                }
-                .onEnded { _ in dragStart = nil }
-        )
+        // 面板拖动（七轮定稿 → 抽为共用 windowBackgroundDrag）：列表区被 ScrollView 的
+        // NSScrollView 桥接 view 覆盖，performDrag 背景桥接 hitTest 永不命中而失效；
+        // DragGesture 恰好在筛选行/空态区可达 = 标题栏拖动语义
+        .windowBackgroundDrag()
         .tint(Color(hex: appSettings.accentColorHex))
         .onAppear {
             // 初始档 = 应用设置「默认显示待办」（映射四档，「全部」回退本月）

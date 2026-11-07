@@ -8,6 +8,20 @@ import SwiftData
 import AppKit
 import os
 
+/// 调试预览状态：仅 SC_OPEN_EDIT_PREVIEW 截图取证使用（正常路径为 nil，不生效）
+struct EditPreviewState {
+    var customRecurrence = false
+    var validityOn = false
+}
+
+/// 内容自然高度测量值（用于窗口自适应高度）
+private struct ContentHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct EditEventSheet: View {
     let event: CalendarEvent
     let calendarService: CalendarService
@@ -34,6 +48,10 @@ struct EditEventSheet: View {
     @State private var taskSpec: RecurrenceSpec?
     @State private var taskReminderOffsets: [Int] = []
     @State private var isProcessing = false
+    /// 内容自然高度（供父视图驱动窗口尺寸，同时决定是否启用内部滚动）
+    @State private var contentHeight: CGFloat = 0
+    /// 内容高度变化回调（窗口管理器据此自适应高度）
+    var onContentHeightChange: ((CGFloat) -> Void)?
     
     /// 原始 spec 快照（幂等比较真源）
     private let originalSpec: RecurrenceSpec?
@@ -74,11 +92,12 @@ struct EditEventSheet: View {
         CachedEvent.parseOccurrenceID(event.id) != nil
     }
 
-    init(event: CalendarEvent, calendarService: CalendarService, onDismiss: (() -> Void)? = nil, onSave: (() -> Void)? = nil) {
+    init(event: CalendarEvent, calendarService: CalendarService, onDismiss: (() -> Void)? = nil, onSave: (() -> Void)? = nil, preview: EditPreviewState? = nil, onContentHeightChange: ((CGFloat) -> Void)? = nil) {
         self.event = event
         self.calendarService = calendarService
         self.onDismiss = onDismiss
         self.onSave = onSave
+        self.onContentHeightChange = onContentHeightChange
         _title = State(initialValue: event.title)
         _startDate = State(initialValue: event.startDate ?? Date())
         _isAllDay = State(initialValue: event.isAllDay)
@@ -126,242 +145,237 @@ struct EditEventSheet: View {
         self.originalSpec = snapshotSpec
         self.originalLunar = snapshotLunar
         self.originalValidity = snapshotValidity
+
+        // 调试预览态：仅供 SC_OPEN_EDIT_PREVIEW 截图取证（正常路径 preview 为 nil，不生效）
+        if let preview {
+            if preview.customRecurrence {
+                _taskPreset = State(initialValue: .custom)
+                _taskSpec = State(initialValue: RecurrenceSpec(frequency: .weekly, interval: 1))
+                _taskRecurrence = State(initialValue: .weekly)
+            }
+            if preview.validityOn {
+                // 有效期仅对循环任务显示：未指定自定义周期时补一个「每天」以呈现该组
+                if !preview.customRecurrence {
+                    _taskPreset = State(initialValue: .daily)
+                    _taskSpec = State(initialValue: RecurrenceSpec(frequency: .daily, interval: 1))
+                    _taskRecurrence = State(initialValue: .daily)
+                }
+                let base = event.startDate ?? Date()
+                _validityEnabled = State(initialValue: true)
+                _validityHasStart = State(initialValue: true)
+                _validityHasEnd = State(initialValue: true)
+                _validityStart = State(initialValue: base)
+                _validityEnd = State(initialValue: Calendar.current.date(byAdding: .month, value: 1, to: base) ?? base)
+            }
+        }
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            // 顶部标题栏：事件日历色点 + 标题 + 取消（Esc）
-            HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color(hex: event.eventColorHex ?? event.calendarColorHex))
-                    .frame(width: 4, height: 16)
-                Text("修改事件")
-                    .font(.system(size: 14, weight: .semibold))
-                Spacer()
-                Button("取消") {
-                    onDismiss?()
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.secondary)
-                .keyboardShortcut(.cancelAction)
+        // 与主界面 ContentView 完全同一套材质实现：同一 VisualEffectView 包装、
+        // 同一 material/blendingMode/state，靠 ignoresSafeArea 铺满整窗（含标题栏）
+        ZStack {
+            VisualEffectView()
+                .ignoresSafeArea()
+
+            // 内容高度由父视图驱动窗口尺寸；超过上限时才启用滚动，避免内容被裁
+            ScrollView(.vertical) {
+                contentBody
+                    .frame(width: 340)
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: ContentHeightPreferenceKey.self,
+                                value: proxy.size.height
+                            )
+                        }
+                    )
             }
+            .scrollDisabled(contentHeight <= Self.maxContentHeight)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onPreferenceChange(ContentHeightPreferenceKey.self) { height in
+            guard abs(height - contentHeight) > 0.5 else { return }
+            contentHeight = height
+            onContentHeightChange?(height)
+        }
+    }
+
+    /// 内容自适应的最大高度：常规展开态（下限 487，周期自定义/有效期约 +200）都能完整显示；
+    /// 仅当备注多行 + 面板全展开等极端情况超限时，窗口不再长高、内容改为内部滚动
+    static let maxContentHeight: CGFloat = 720
+
+    /// 内容区（分组顺序与控件保持原样）
+    private var contentBody: some View {
+        VStack(spacing: FormMetrics.sectionSpacing) {
 
             // 分组卡片：基本信息
-            FormCard(title: "基本信息") {
-                // 标题输入（多行 textarea 风格）：TextEditor 无原生 placeholder，空内容时叠加提示文字
-                ZStack(alignment: .topLeading) {
-                    if title.isEmpty {
-                        Text("事件标题")
+            FormSection("基本信息") {
+                VStack(alignment: .leading, spacing: FormMetrics.rowSpacing) {
+                    // 标题输入（多行 textarea 风格）：TextEditor 无原生 placeholder，空内容时叠加提示文字
+                    ZStack(alignment: .topLeading) {
+                        if title.isEmpty {
+                            Text("事件标题")
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary.opacity(0.5))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 8)
+                                .allowsHitTesting(false)
+                        }
+                        TextEditor(text: $title)
                             .font(.system(size: 13))
-                            .foregroundColor(.secondary.opacity(0.5))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 8)
-                            .allowsHitTesting(false)
+                            .frame(height: 56)
+                            .padding(2)
+                            // 隐藏 TextEditor 自带的实色文本背景，让半透明卡片材质透上来
+                            .scrollContentBackground(.hidden)
                     }
-                    TextEditor(text: $title)
-                        .font(.system(size: 13))
-                        .frame(height: 64)
-                        .padding(2)
-                }
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
-                )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
+                    )
 
-                FormRow(label: "全天") {
-                    Toggle("", isOn: $isAllDay)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                        // BUG-06：单期行不允许改时间，避免回拨整条序列游标
-                        .disabled(isOccurrenceInstance)
-                }
+                    FormRow("全天") {
+                        Toggle("", isOn: $isAllDay)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            // BUG-06：单期行不允许改时间，避免回拨整条序列游标
+                            .disabled(isOccurrenceInstance)
+                    }
 
-                FormRow(label: "日期") {
-                    DatePicker("", selection: $startDate, displayedComponents: isAllDay ? [.date] : [.date, .hourAndMinute])
-                        .labelsHidden()
-                        .disabled(isOccurrenceInstance)
-                }
+                    FormRow("日期") {
+                        DatePicker("", selection: $startDate, displayedComponents: isAllDay ? [.date] : [.date, .hourAndMinute])
+                            .labelsHidden()
+                            .disabled(isOccurrenceInstance)
+                            // 固有宽度 + FormRow 的 trailing 容器：右边缘与「全天」开关共线
+                            .formControlSizing()
+                    }
 
-                if isOccurrenceInstance {
-                    Text("当前为循环单期，时间修改请作用于整条系列")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if isOccurrenceInstance {
+                        FormHint("当前为循环单期，时间修改请作用于整条系列")
+                    }
                 }
             }
 
             // 分组卡片：重复（循环语义集中一处：周期/跳过节假日/限制有效期，spec 定案）
-            FormCard(title: "重复") {
-                FormRow(label: "周期") {
-                    RecurrencePickerView(
-                        preset: Binding(
-                            get: { taskPreset },
-                            set: { taskPreset = $0 }
-                        ),
-                        spec: Binding(
-                            get: { taskSpec },
-                            set: { taskSpec = $0; taskRecurrence = $0?.legacyType ?? .none }
-                        ),
-                        anchor: startDate,
-                        isLunar: originalLunar
-                    )
-                }
+            FormSection("重复") {
+                VStack(alignment: .leading, spacing: FormMetrics.rowSpacing) {
+                    FormRow("周期") {
+                        RecurrencePickerView(
+                            preset: Binding(
+                                get: { taskPreset },
+                                set: { taskPreset = $0 }
+                            ),
+                            spec: Binding(
+                                get: { taskSpec },
+                                set: { taskSpec = $0; taskRecurrence = $0?.legacyType ?? .none }
+                            ),
+                            anchor: startDate,
+                            isLunar: originalLunar
+                        )
+                    }
 
-                // 智能跳过节假日（AC-7）：勾选后 startDate 落休日顺延至下一个班日显示与提醒
-                FormRow(label: "跳过节假日") {
-                    Toggle("", isOn: $skipHolidays)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                }
+                    // 「跳过节假日」已从表单移除（周期预设「工作日」覆盖常见场景）；
+                    // 存量 skipHolidays==true 继续按原语义生效，此处只读呈现，避免"已开启却无处可看"
+                    if skipHolidays {
+                        FormRow("跳过节假日") {
+                            Text("已开启（保留原设置，不可在此修改）")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                    }
 
-                // 任务有效期（spec/task-validity-period）：仅循环任务显示
-                if taskRecurrence != .none {
-                    FormRow(label: "限制有效期") {
-                        // 开启时与新增任务同款默认：开始端勾选=事件开始日期、结束端不勾选
-                        Toggle("", isOn: Binding(
-                            get: { validityEnabled },
-                            set: {
-                                validityEnabled = $0
-                                if $0 {
-                                    validityHasStart = true
-                                    validityStart = startDate
-                                    validityHasEnd = false
+                    // 任务有效期（spec/task-validity-period）：仅循环任务显示
+                    if taskRecurrence != .none {
+                        FormRow("限制有效期") {
+                            // 开启时与新增任务同款默认：开始端勾选=事件开始日期、结束端不勾选
+                            Toggle("", isOn: Binding(
+                                get: { validityEnabled },
+                                set: {
+                                    validityEnabled = $0
+                                    if $0 {
+                                        validityHasStart = true
+                                        validityStart = startDate
+                                        validityHasEnd = false
+                                    }
                                 }
-                            }
-                        ))
+                            ))
                             .toggleStyle(.switch)
                             .labelsHidden()
-                    }
-                    if validityEnabled {
-                        FormRow(label: "有效期起") {
-                            HStack(spacing: 6) {
-                                Toggle("", isOn: $validityHasStart)
-                                    .toggleStyle(.switch)
-                                    .labelsHidden()
-                                DatePicker("", selection: $validityStart, displayedComponents: [.date])
-                                    .labelsHidden()
-                                    .disabled(!validityHasStart)
-                            }
                         }
-                        FormRow(label: "有效期止") {
-                            HStack(spacing: 6) {
-                                Toggle("", isOn: $validityHasEnd)
-                                    .toggleStyle(.switch)
-                                    .labelsHidden()
-                                DatePicker("", selection: $validityEnd, displayedComponents: [.date])
-                                    .labelsHidden()
-                                    .disabled(!validityHasEnd)
+                        if validityEnabled {
+                            FormRow("有效期起") {
+                                HStack(spacing: 6) {
+                                    Toggle("", isOn: $validityHasStart)
+                                        .toggleStyle(.switch)
+                                        .labelsHidden()
+                                    DatePicker("", selection: $validityStart, displayedComponents: [.date, .hourAndMinute])
+                                        .labelsHidden()
+                                        .disabled(!validityHasStart)
+                                        // 固有宽度：整行由 FormRow 右贴，日期右缘（箭头）落在统一基准线
+                                        .formControlSizing()
+                                }
                             }
+                            FormRow("有效期止") {
+                                HStack(spacing: 6) {
+                                    Toggle("", isOn: $validityHasEnd)
+                                        .toggleStyle(.switch)
+                                        .labelsHidden()
+                                    DatePicker("", selection: $validityEnd, displayedComponents: [.date, .hourAndMinute])
+                                        .labelsHidden()
+                                        .disabled(!validityHasEnd)
+                                        .formControlSizing()
+                                }
+                            }
+                            FormHint("有效期含起止端点，精确到时分（如 10:00 起、18:00 止）")
                         }
                     }
                 }
             }
 
             // 分组卡片：属性
-            FormCard(title: "属性") {
-                FormRow(label: "颜色") {
-                    HStack(spacing: 8) {
-                        ForEach(EventColor.allCases, id: \.self) { color in
-                            Button {
-                                taskColor = taskColor == color ? nil : color
-                            } label: {
-                                Circle()
-                                    .fill(Color(hex: color.rawValue))
-                                    .frame(width: 18, height: 18)
-                                    .overlay(
-                                        // 选中态：外圈描边环；未选中无描边
-                                        Circle()
-                                            .strokeBorder(Color.primary.opacity(0.85), lineWidth: 1.5)
-                                            .frame(width: 24, height: 24)
-                                            .opacity(taskColor == color ? 1 : 0)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
+            FormSection("属性") {
+                VStack(alignment: .leading, spacing: FormMetrics.rowSpacing) {
+                    FormRow("颜色") {
+                        FormColorSwatches(selection: $taskColor)
                     }
-                }
-
-                FormRow(label: "优先级") {
-                    Picker("", selection: $taskPriority) {
-                        ForEach(EventPriority.allCases, id: \.self) { p in
-                            Text(p.displayName).tag(p)
-                        }
+                    FormRow("优先级") {
+                        FormPriorityPicker(selection: $taskPriority)
                     }
-                    .labelsHidden()
-                    .frame(width: 110)
                 }
             }
 
             // 分组卡片：提醒（9 项预设 + 自定义，对齐提醒事项）
-            FormCard(title: "提醒") {
-                FormRow(label: "提前提醒") {
+            FormSection("提醒") {
+                FormRow("提前提醒") {
                     ReminderLeadPickerView(offsets: $taskReminderOffsets)
                 }
             }
 
-            // 保存（Cmd+Return）
-            Button {
-                saveEvent()
-            } label: {
-                if isProcessing {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                        .frame(maxWidth: .infinity)
-                } else {
-                    Text("保存")
-                        .frame(maxWidth: .infinity)
+            // 底部操作行：标题已在窗口标题栏，内容区不再重复；取消保留（红叉之外的第二入口）
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Button("取消") {
+                    onDismiss?()
                 }
+                .keyboardShortcut(.cancelAction)
+
+                Button {
+                    saveEvent()
+                } label: {
+                    if isProcessing {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                            .frame(width: 64)
+                    } else {
+                        Text("保存")
+                            .frame(width: 64)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(title.isEmpty || isProcessing)
             }
-            .buttonStyle(.borderedProminent)
-            .keyboardShortcut(.defaultAction)
-            .disabled(title.isEmpty || isProcessing)
         }
         .padding(14)
-        .frame(width: 340)
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    // MARK: - 分组卡片组件（仅本视图使用）
-
-    /// 分组卡片：小节标题 + 圆角容器（系统语义色，随深浅色模式）
-    private struct FormCard<Content: View>: View {
-        let title: String
-        @ViewBuilder let content: Content
-
-        var body: some View {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 10)
-                content
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 12)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-            )
-        }
-    }
-
-    /// 表单行：左标签右控件
-    private struct FormRow<Content: View>: View {
-        let label: String
-        @ViewBuilder let content: Content
-
-        var body: some View {
-            HStack {
-                Text(label)
-                    .font(.system(size: 12))
-                    .foregroundColor(.primary)
-                Spacer()
-                content
-            }
-            .padding(.vertical, 3)
-        }
     }
 
     private func saveEvent() {

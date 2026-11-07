@@ -3,8 +3,8 @@
 //  SwallowCalendarTests
 //
 //  任务有效期区间（spec/task-validity-period AC-1~AC-6）
-//  R1: ValidityPeriod 归一化 + CachedEvent.isWithinValidity 闭区间判定
-//  Source: plan/task-validity-period.md step 1/2/3
+//  R1: ValidityPeriod 保留时分（不再按天归一化）+ isWithinValidity 闭区间判定
+//  Source: plan/task-validity-period.md step 1/2/3；本轮改为日期时间粒度
 //
 //  日期锚点：2026-10-26 为周一
 //
@@ -77,23 +77,62 @@ final class ValidityPeriodTests: XCTestCase {
         CachedEvent.makeOccurrenceID(baseID: baseID, occurrence: occurrence)
     }
 
-    // MARK: - R1: ValidityPeriod 归一化（plan step 1）
+    // MARK: - R1: ValidityPeriod 保留时分（不再按天归一化）
 
-    func testNormalizedStartDateIsDayStart() {
-        // 任意时刻的 start 归一化为当天 00:00:00
-        let period = ValidityPeriod(start: date(2026, 10, 26, 15, 30, 20), end: nil)
-        XCTAssertEqual(period.normalizedStartDate, date(2026, 10, 26, 0, 0, 0))
-        XCTAssertNil(ValidityPeriod(start: nil, end: nil).normalizedStartDate)
-    }
-
-    func testNormalizedEndDateIsDayEnd() {
-        // 任意时刻的 end 归一化为当天 23:59:59
-        let period = ValidityPeriod(start: nil, end: date(2026, 10, 31, 8, 0, 0))
-        XCTAssertEqual(period.normalizedEndDate, date(2026, 10, 31, 23, 59, 59))
-        XCTAssertNil(ValidityPeriod(start: nil, end: nil).normalizedEndDate)
+    func testValidityPeriodKeepsTimeOfDay() {
+        // 日期时间粒度：落库前后不再截断到 00:00 / 23:59:59
+        let period = ValidityPeriod(start: date(2026, 10, 26, 15, 30, 20), end: date(2026, 10, 31, 8, 0, 0))
+        XCTAssertEqual(period.start, date(2026, 10, 26, 15, 30, 20))
+        XCTAssertEqual(period.end, date(2026, 10, 31, 8, 0, 0))
+        XCTAssertNil(ValidityPeriod(start: nil, end: nil).start)
+        XCTAssertNil(ValidityPeriod(start: nil, end: nil).end)
     }
 
     // MARK: - R1: isWithinValidity 闭区间判定（plan step 3）
+
+    /// 开始端含时分：09:59 无效、10:00 有效（闭区间含端点）
+    func testStartTimeBoundaryExactMinute() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let event = try insertRecurring(
+            into: context,
+            startDate: date(2026, 10, 26, 10, 0),
+            validStart: date(2026, 10, 26, 10, 0)
+        )
+        XCTAssertFalse(event.isWithinValidity(date(2026, 10, 26, 9, 59)))
+        XCTAssertTrue(event.isWithinValidity(date(2026, 10, 26, 10, 0)))
+        XCTAssertTrue(event.isWithinValidity(date(2026, 10, 26, 10, 1)))
+    }
+
+    /// 结束端含时分：18:00 有效、18:01 无效（闭区间含端点）
+    func testEndTimeBoundaryExactMinute() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let event = try insertRecurring(
+            into: context,
+            startDate: date(2026, 10, 26, 9, 0),
+            validEnd: date(2026, 10, 31, 18, 0)
+        )
+        XCTAssertTrue(event.isWithinValidity(date(2026, 10, 31, 18, 0)))
+        XCTAssertFalse(event.isWithinValidity(date(2026, 10, 31, 18, 1)))
+        XCTAssertFalse(event.isWithinValidity(date(2026, 11, 1, 9, 0)))
+    }
+
+    /// 存量数据（旧版按天归一化落库：00:00:00 / 23:59:59）升级后行为不变
+    func testLegacyDateOnlyValidityUnchanged() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let event = try insertRecurring(
+            into: context,
+            startDate: date(2026, 10, 26, 9, 0),
+            validStart: date(2026, 10, 26, 0, 0, 0),
+            validEnd: date(2026, 10, 31, 23, 59, 59)
+        )
+        XCTAssertTrue(event.isWithinValidity(date(2026, 10, 26, 0, 0, 0)))
+        XCTAssertTrue(event.isWithinValidity(date(2026, 10, 31, 23, 59, 59)))
+        XCTAssertFalse(event.isWithinValidity(date(2026, 10, 25, 23, 59, 59)))
+        XCTAssertFalse(event.isWithinValidity(date(2026, 11, 1, 0, 0, 0)))
+    }
 
     func testUnlimitedWhenBothNil() throws {
         // AC-1：双端未设置 = 不限制任务
@@ -173,8 +212,41 @@ final class ValidityPeriodTests: XCTestCase {
         XCTAssertEqual(occs, [date(2026, 10, 26, 9, 0), date(2026, 10, 27, 9, 0)])
     }
 
-    // MARK: - R3: 展开层历史行过滤（plan step 4①）
+    /// 展开按含时分起点过滤：validStart=10-26 10:00，当日 09:00 实例被排除
+    func testExpansionHonorsValidityTimeOfDayStart() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        EventCacheService.shared.configure(with: container)
+        _ = try insertRecurring(
+            into: context,
+            eventID: "v-time-start",
+            startDate: date(2026, 10, 26, 9, 0),
+            validStart: date(2026, 10, 26, 10, 0)
+        )
+        let (start, end) = dayWindow(2026, 10, 26, days: 2)
+        let events = EventCacheService.shared.getEvents(from: start, to: end)
+        let occs = events.compactMap { CachedEvent.parseOccurrenceID($0.eventID)?.occurrence }
+        XCTAssertEqual(occs, [date(2026, 10, 27, 9, 0)])
+    }
 
+    /// 展开按含时分终点过滤：validEnd=10-27 10:00，10-28 09:00 实例被排除
+    func testExpansionHonorsValidityTimeOfDayEnd() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        EventCacheService.shared.configure(with: container)
+        _ = try insertRecurring(
+            into: context,
+            eventID: "v-time-end",
+            startDate: date(2026, 10, 26, 9, 0),
+            validEnd: date(2026, 10, 27, 10, 0)
+        )
+        let (start, end) = dayWindow(2026, 10, 26, days: 3)
+        let events = EventCacheService.shared.getEvents(from: start, to: end)
+        let occs = events.compactMap { CachedEvent.parseOccurrenceID($0.eventID)?.occurrence }
+        XCTAssertEqual(occs, [date(2026, 10, 26, 9, 0), date(2026, 10, 27, 9, 0)])
+    }
+
+    // MARK: - R3: 展开层历史行过滤（plan step 4①）
     func testExpansionFiltersHistoryRowOutsideValidity() throws {
         // 已完成 occurrence 在有效期外 → 历史行不产出（10-26 完成记录为设置有效期前的遗留）
         let container = try makeContainer()

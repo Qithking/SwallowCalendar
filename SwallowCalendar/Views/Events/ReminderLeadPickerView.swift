@@ -142,23 +142,29 @@ struct ReminderLeadPickerView: View {
     }
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 5) {
+        VStack(alignment: .leading, spacing: FormMetrics.rowSpacing) {
             Picker("", selection: presetBinding) {
                 ForEach(ReminderLeadPreset.allCases) { preset in
                     Text(preset.title).tag(preset)
                 }
             }
             .labelsHidden()
-            .frame(width: 110)
+            // 控件右对齐基准：下拉按固有宽度贴右，与开关/日期共用同一条基准线
+            .formControlSizing()
+            .frame(maxWidth: .infinity, alignment: .trailing)
 
             // 自定义或多级档位：展示方向/数量/单位与现有档位
             if selectedPreset == .custom {
                 customEditor
+                    // 展开行同样贴齐右侧基准线
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 if !offsets.isEmpty {
                     offsetChips
                 }
             }
         }
+        // 展开态与收起态都占满控件列，保证展开不撑破整行
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onChange(of: offsets) { _, newValue in
             // 外部清空（如新建表单重置）时退出自定义态，避免下一条任务残留面板
             if newValue.isEmpty { isCustomMode = false }
@@ -168,19 +174,19 @@ struct ReminderLeadPickerView: View {
     // MARK: - 子视图
 
     private var customEditor: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             Picker("", selection: $customDirection) {
                 ForEach(ReminderLeadDirection.allCases) { direction in
                     Text(direction.title).tag(direction)
                 }
             }
             .labelsHidden()
-            .frame(width: 62)
+            .frame(width: 56)
 
             TextField("数量", text: $customCountText)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 11))
-                .frame(width: 40)
+                .frame(width: 34)
                 .multilineTextAlignment(.trailing)
 
             Picker("", selection: $customUnit) {
@@ -189,18 +195,25 @@ struct ReminderLeadPickerView: View {
                 }
             }
             .labelsHidden()
-            .frame(width: 58)
+            .frame(width: 52)
 
-            Button("添加", action: addCustomOffset)
-                .font(.system(size: 10))
-                .buttonStyle(.plain)
-                .foregroundColor(.accentColor)
-                .help("添加自定义提前/延后档位（上限 365 天）")
+            Button(action: addCustomOffset) {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.accentColor)
+            .help("添加自定义提前/延后档位（上限 365 天）")
         }
     }
 
     private var offsetChips: some View {
-        HStack(spacing: 4) {
+        // 自适应网格换行：多档位不会横向溢出撑破表单
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 54), spacing: 4, alignment: .leading)],
+            alignment: .leading,
+            spacing: 4
+        ) {
             ForEach(offsets.sorted(), id: \.self) { offset in
                 Button {
                     offsets.removeAll { $0 == offset }
