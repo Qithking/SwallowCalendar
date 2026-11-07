@@ -34,19 +34,19 @@ final class CachedEventReminderOffsetsTests: XCTestCase {
         XCTAssertEqual(event.reminderOffsets, [10])
     }
 
-    /// BUG-07：存量 JSON 中超过上限的 offset 读取时自动收敛到 1440
-    func testLegacyOffsetsOverLimitClampedOnRead() {
+    /// BUG-07 已解除：存量 JSON 中 2 天前等长提前量读取时原样保留（安全上限 365 天）
+    func testLegacyLongOffsetsPreservedOnRead() {
         let event = makeEvent()
         event.reminderOffsetsJSON = "[2880,0]"
-        XCTAssertEqual(event.reminderOffsets, [0, 1440])
+        XCTAssertEqual(event.reminderOffsets, [0, 2880])
     }
 
-    /// BUG-07：写入超上限 offset 时同样收敛，且 reminderMinutes 随之为 1440
-    func testOffsetsOverLimitClampedOnWrite() {
+    /// BUG-07 已解除：写入 2 天前不再被压成 1 天，reminderMinutes 随之为 2880
+    func testLongOffsetsPreservedOnWrite() {
         let event = makeEvent()
         event.reminderOffsets = [2880, 0]
-        XCTAssertEqual(event.reminderOffsets, [0, 1440])
-        XCTAssertEqual(event.reminderMinutes, 1440)
+        XCTAssertEqual(event.reminderOffsets, [0, 2880])
+        XCTAssertEqual(event.reminderMinutes, 2880)
     }
 
     func testCorruptJSONFallsBackToSingleLevel() {
@@ -98,15 +98,15 @@ final class CachedEventReminderOffsetsTests: XCTestCase {
 
     // MARK: - 清空语义
 
-    func testEmptyArrayClearsJSONKeepsMinutes() {
+    func testEmptyArrayClearsJSONAndMinutes() {
         let event = makeEvent()
         event.reminderMinutes = 20
         event.reminderOffsets = [5, 10]
         event.reminderOffsets = []
-        // 空数组：清空多级 JSON，回退单级语义；reminderMinutes 保持 setter 最后写入的 max
+        // 空数组 = 无提前提醒：清空 JSON 且 reminderMinutes 归零，getter 返回 []
         XCTAssertNil(event.reminderOffsetsJSON)
-        XCTAssertEqual(event.reminderMinutes, 10)
-        XCTAssertEqual(event.reminderOffsets, [10])
+        XCTAssertEqual(event.reminderMinutes, 0)
+        XCTAssertEqual(event.reminderOffsets, [])
     }
 
     // MARK: - EKAlarm 提取（步骤 7）
@@ -122,12 +122,13 @@ final class CachedEventReminderOffsetsTests: XCTestCase {
         XCTAssertEqual(CalendarService.extractReminderOffsets(from: alarms), [5, 10, 1440])
     }
 
-    func testExtractOffsetsIgnoresNonRelativeAlarms() {
-        // 仅有 absoluteDate 型 alarm / 零偏移 / 之后提醒时：无可换算提前量，返回 nil
+    func testExtractOffsetsAcceptsZeroAndAfter() {
+        // absolute 不反推；0=到点、正 relativeOffset=延后 均属于有符号偏移
         let absolute = EKAlarm(absoluteDate: Date().addingTimeInterval(3600))
         let zero = EKAlarm(relativeOffset: 0)
         let after = EKAlarm(relativeOffset: 60)
-        XCTAssertNil(CalendarService.extractReminderOffsets(from: [absolute, zero, after]))
+        XCTAssertEqual(CalendarService.extractReminderOffsets(from: [absolute, zero, after]), [-1, 0])
+        XCTAssertNil(CalendarService.extractReminderOffsets(from: [absolute]))
         XCTAssertNil(CalendarService.extractReminderOffsets(from: nil))
     }
 

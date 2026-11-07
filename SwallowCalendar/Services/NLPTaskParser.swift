@@ -669,15 +669,15 @@ struct NLPTaskParser {
 
     // MARK: - 提醒时间解析
 
-    /// BUG-07：提前量统一钳制到上限（1440 分钟）——原"提前 N 天"可产生 >1440 的
-    /// 分钟数，调度窗口上界仅 now+1440，导致该提醒永不触发
+    /// 提前量收敛到安全上限（±365 天），解除原 1440 分钟（1 天）业务钳制——
+    /// 2天前及以上档位可完整解析并进入调度窗口
     private static func parseReminder(from input: String) -> Int? {
         guard let raw = parseReminderUnclamped(from: input) else { return nil }
-        let clamped = min(max(raw, 0), CachedEvent.maxReminderLeadMinutes)
-        if clamped != raw {
-            AppLogger.reminder.warning("提醒提前量超上限已收敛 raw=\(raw) clamped=\(clamped)")
+        let capped = min(max(raw, 0), CachedEvent.maxReminderLeadMinutes)
+        if capped != raw {
+            AppLogger.reminder.warning("提醒提前量超安全上限已收敛 raw=\(raw) capped=\(capped)")
         }
-        return clamped
+        return capped
     }
 
     private static func parseReminderUnclamped(from input: String) -> Int? {

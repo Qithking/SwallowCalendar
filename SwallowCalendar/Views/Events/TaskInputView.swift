@@ -26,7 +26,8 @@ struct TaskInputView: View {
     /// 循环规则单一真源（12 项预设 + 自定义维度）
     @State private var taskPreset: RecurrencePreset = .never
     @State private var taskSpec: RecurrenceSpec?
-    @State private var taskReminderMinutes: Int = 10
+    /// 提前提醒档位（有符号分钟：正=提前、0=到点、负=延后；空=无提前提醒）
+    @State private var taskReminderOffsets: [Int] = []
     @State private var taskIsLunar = false
     @State private var showAttributeEditor = false
     // V-7：用户手动修改过的属性标记——NLP 解析只覆盖未手动修改的字段，避免覆盖用户手选值
@@ -314,19 +315,15 @@ struct TaskInputView: View {
                 Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
                     GridRow {
                         GridLabel("提醒")
-                        Picker("", selection: Binding(
-                            get: { taskReminderMinutes },
-                            set: { taskReminderMinutes = $0; manuallyEditedReminder = true }  // V-7：手选提醒不被 NLP 覆盖
-                        )) {
-                            Text("不提醒").tag(0)
-                            Text("5分钟前").tag(5)
-                            Text("10分钟前").tag(10)
-                            Text("30分钟前").tag(30)
-                            Text("1小时前").tag(60)
-                            Text("1天前").tag(1440)
-                        }
-                        .labelsHidden()
-                        .frame(width: 90)
+                        ReminderLeadPickerView(
+                            offsets: Binding(
+                                get: { taskReminderOffsets },
+                                set: { taskReminderOffsets = $0; manuallyEditedReminder = true }  // V-7：手选提醒不被 NLP 覆盖
+                            )
+                        )
+                        .gridCellColumns(3)
+                    }
+                    GridRow {
                         GridLabel("添加到提醒")
                         Toggle("", isOn: $createAsReminder)
                             .toggleStyle(.switch)
@@ -360,7 +357,13 @@ struct TaskInputView: View {
                 taskPreset = RecurrenceSpec.preset(for: spec, anchor: taskDate)
             }
         }
-        if !manuallyEditedReminder { taskReminderMinutes = parsed.reminderMinutes ?? 10 }
+        if !manuallyEditedReminder {
+            if let minutes = parsed.reminderMinutes, minutes > 0 {
+                taskReminderOffsets = [minutes]
+            } else {
+                taskReminderOffsets = []
+            }
+        }
         if !manuallyEditedLunar { taskIsLunar = parsed.isLunar }
     }
 
@@ -398,7 +401,7 @@ struct TaskInputView: View {
                     priority: taskPriority == .none ? nil : taskPriority,
                     recurrence: taskRecurrence,
                     recurrenceSpec: taskSpec,
-                    reminderMinutes: taskReminderMinutes > 0 ? taskReminderMinutes : nil,
+                    reminderOffsets: taskReminderOffsets.isEmpty ? nil : taskReminderOffsets,
                     category: .user,
                     asReminder: createAsReminder,
                     isLunar: taskIsLunar,
@@ -424,7 +427,7 @@ struct TaskInputView: View {
         taskRecurrence = .none
         taskPreset = .never
         taskSpec = nil
-        taskReminderMinutes = 10
+        taskReminderOffsets = []
         taskIsLunar = false
         taskIsAllDay = false
         createAsReminder = false

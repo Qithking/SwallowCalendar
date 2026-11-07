@@ -177,7 +177,7 @@ struct BatchAddView: View {
                         calendar: nil,
                         priority: line.parsed.priority,
                         recurrence: line.parsed.recurrence ?? RecurrenceType.none,
-                        reminderMinutes: line.parsed.reminderMinutes ?? 10,  // 与单条默认提醒一致
+                        reminderOffsets: line.parsed.reminderMinutes.map { [$0] },  // nil = 无提前提醒
                         category: .user,
                         asReminder: false,
                         isLunar: line.parsed.isLunar,

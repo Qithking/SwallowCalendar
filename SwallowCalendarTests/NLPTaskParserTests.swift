@@ -34,15 +34,15 @@ class NLPTaskParserTests: XCTestCase {
         XCTAssertEqual(result2.title, "体检")
         
         let result3 = NLPTaskParser.parse("后天晚上8点聚餐 2天前提醒")
-        // BUG-07：提前量上限收口到 1440 分钟（1 天），2 天不再产生 2880
-        XCTAssertEqual(result3.reminderMinutes, 1440)
+        // BUG-07 已解除：2 天前完整解析为 2880 分钟
+        XCTAssertEqual(result3.reminderMinutes, 2880)
         XCTAssertEqual(result3.title, "聚餐")
     }
 
-    /// BUG-07：触发条件本身——"提前 N 天"超过调度窗口上界时被钳制到 1440
-    func testParseReminderLeadOverLimitIsClamped() {
-        XCTAssertEqual(NLPTaskParser.parse("明天上午9点开会 提前3天").reminderMinutes, 1440)
-        XCTAssertEqual(NLPTaskParser.parse("明天上午9点开会 提前48小时").reminderMinutes, 1440)
+    /// BUG-07 已解除：3 天前 / 48 小时按真实分钟数返回，不再收敛到 1440
+    func testParseReminderLeadNoLongerClampedToOneDay() {
+        XCTAssertEqual(NLPTaskParser.parse("明天上午9点开会 提前3天").reminderMinutes, 4320)
+        XCTAssertEqual(NLPTaskParser.parse("明天上午9点开会 提前48小时").reminderMinutes, 2880)
     }
     
     func testParseColorsAndPriorities() {
@@ -173,7 +173,7 @@ class NLPTaskParserTests: XCTestCase {
             ("会议 45分钟前提醒", 45),
             ("聚餐 提前2小时", 120),
             ("活动 3小时前提醒", 180),
-            ("生日 提前7天", 1440)  // BUG-07：超过 1 天的提前量收敛到上限
+            ("生日 提前7天", 10080)  // BUG-07 已解除：7 天完整保留
         ]
         
         for (input, expectedMinutes) in inputs {

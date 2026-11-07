@@ -2,15 +2,12 @@
 //  ReminderAlarmAbsoluteTests.swift
 //  SwallowCalendarTests
 //
-//  bug: reminder-app-shows-advanced-time
-//  需求：应用创建「提醒 T + 提前 5 分钟」同步到系统提醒 app 后，
-//        系统 app 列表/详情显示的到期时间应为设定时间 T，而非 T-5min
-//  根因：应用向 EKReminder 写 relative(-offset) 相对闹钟，
-//        macOS 提醒 app 将其渲染为「提醒我 T-offset」单一告警
-//        （EventKit 读回实验证实：落库 due=21:38 + rel(-300) 正确，
-//         系统 app 显示 21:33；Apple 自建提醒用 due=T + absolute(T) 模式）
-//  修复：EKReminder 路径对齐 Apple 自家存储模式——系统侧写 absolute(due) 准点闹钟，
-//        提前提醒由应用内缓存 reminderOffsets 承担（缓存无 EK 回填覆盖点，不丢失）
+//  bug: reminder-app-shows-advanced-time（方案 B，2026-11-07 用户重申）
+//  需求：应用创建「提醒 T + 提前 N 分钟」同步到系统提醒 app 后，
+//        系统 app 显示的到期时间应为设定时间 T（准点），而非 T-offset
+//  方案 B：EKReminder 路径对齐 Apple 自家存储模式——系统侧写 absolute(due) 准点闹钟，
+//        提前提醒由应用内缓存 reminderOffsets 承担（ReminderAlertService 按 due-offset
+//        提前弹窗）；EKEvent 事件路径保持 relative 闹钟语义（执行文档编码要求）
 //
 
 import XCTest
@@ -24,15 +21,24 @@ final class ReminderAlarmAbsoluteTests: XCTestCase {
 
     // MARK: - EKReminder 路径（reminderDueDate 非空）
 
-    /// R-1: 提醒路径带多级提前量 → 系统侧唯一闹钟为 absolute(due) 准点，不再产生相对偏移
+    /// R-1: 提醒路径带多级提前量 → 系统侧唯一闹钟为 absolute(due) 准点
+    /// （防回归核心：带 offset 的事项写出的 EK 闹钟触发日期 == due 准点，offset 绝不写入 EK）
     func testReminderAlarmWithOffsetsUsesAbsoluteDue() {
         let alarms = CalendarService.makeAlarms(offsets: [5], minutes: nil, reminderDueDate: due)
         XCTAssertEqual(alarms.count, 1, "系统侧只保留一条准点闹钟")
-        XCTAssertEqual(alarms[0].absoluteDate, due, "闹钟应为 due 时刻的绝对闹钟")
-        XCTAssertEqual(alarms[0].relativeOffset, 0, "不应再写相对偏移（系统 app 会渲染为 T-offset）")
+        XCTAssertEqual(alarms[0].absoluteDate, due, "带 offset 写出的 EK 闹钟触发日期必须 == due 准点")
+        XCTAssertEqual(alarms[0].relativeOffset, 0, "不写相对偏移（系统 app 会渲染为 T-offset）")
     }
 
-    /// R-2: 提醒路径单级 minutes 兼容口径 → 同样写 absolute(due)
+    /// R-1b: 提醒路径延后档（负 offset）同样只写准点绝对闹钟，不得逐档写相对闹钟
+    func testReminderAlarmWithAfterOffsetStillAbsoluteDue() {
+        let alarms = CalendarService.makeAlarms(offsets: [-60], minutes: nil, reminderDueDate: due)
+        XCTAssertEqual(alarms.count, 1)
+        XCTAssertEqual(alarms[0].absoluteDate, due, "延后档同样只写准点绝对闹钟")
+        XCTAssertEqual(alarms[0].relativeOffset, 0)
+    }
+
+    /// R-2: 提醒路径单级 minutes 兼容口径 → 同样只写 absolute(due)
     func testReminderAlarmWithMinutesUsesAbsoluteDue() {
         let alarms = CalendarService.makeAlarms(offsets: nil, minutes: 10, reminderDueDate: due)
         XCTAssertEqual(alarms.count, 1)
@@ -40,18 +46,17 @@ final class ReminderAlarmAbsoluteTests: XCTestCase {
         XCTAssertEqual(alarms[0].relativeOffset, 0)
     }
 
-    /// R-3: 提醒路径未设置提前提醒 → 不写系统闹钟（保持原行为，不引入准点通知变化）
+    /// R-3: 提醒路径未设置提前提醒 → 不写系统提前闹钟
     func testReminderAlarmWithoutAdvanceKeepsEmpty() {
         let alarms = CalendarService.makeAlarms(offsets: nil, minutes: 0, reminderDueDate: due)
-        XCTAssertTrue(alarms.isEmpty, "无提前提醒时保持无系统闹钟")
+        XCTAssertTrue(alarms.isEmpty, "无提前提醒时保持无提前闹钟")
     }
 
-    /// R-5: 改造后提醒闹钟不再被读取侧识别为相对偏移
-    /// （应用内提前提醒的 source of truth 是缓存 reminderOffsets，非 EK 闹钟反推）
+    /// R-5: absolute 闹钟仍不被反推为相对档位（兼容 Apple 原生绝对闹钟回流）
     func testExtractOffsetsIgnoresAbsoluteAlarm() {
-        let alarms = CalendarService.makeAlarms(offsets: [5], minutes: nil, reminderDueDate: due)
+        let absoluteOnly = [EKAlarm(absoluteDate: due)]
         XCTAssertNil(
-            CalendarService.extractReminderOffsets(from: alarms),
+            CalendarService.extractReminderOffsets(from: absoluteOnly),
             "absolute 闹钟不应被反推为相对偏移档位"
         )
     }

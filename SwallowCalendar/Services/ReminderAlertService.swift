@@ -187,8 +187,18 @@ final class ReminderAlertService {
 
     // MARK: - 准点调度（bug: due-alert-punctual-scheduling）
 
+    /// 调度取数窗口：startDate 落入本区间的未完成事项才可能产生近期 alertTime。
+    /// alertTime = startDate - offset*60，offset ∈ [-cap, cap]：
+    /// - 提前档要求 startDate ≤ now + cap
+    /// - 延后档要求 startDate ≥ now - cap（开始已过、提醒仍在未来）
+    /// cap 取 365 天，覆盖 1 个月/6 个月预设与自定义上限
+    static func scheduleWindow(now: Date) -> (lower: Date, upper: Date) {
+        let span = TimeInterval(CachedEvent.maxReminderLeadMinutes * 60)
+        return (now.addingTimeInterval(-span), now.addingTimeInterval(span))
+    }
+
     /// 计算下一次应触发提醒的时刻（纯函数，语义由 ReminderAlertDynamicScheduleTests 锁定）
-    /// 候选：各事件各级 alertTime（offsets 与常规检查同口径，含隐式准点档）+ snooze fireDate，
+    /// 候选：各事件各级 alertTime（offsets 原样 + 隐式到点档）+ snooze fireDate，
     /// 均取严格晚于 now 的最早值；智能跳过与无开始时间事件剔除，已完成事件由调用方粗筛剔除。
     /// 无候选返回 nil（调用方不调度，60s 轮询兜底）
     static func nextTriggerTime(now: Date, events: [CachedEvent], snoozeRecords: [SnoozeRecord], context: ModelContext) -> Date? {
@@ -197,8 +207,9 @@ final class ReminderAlertService {
             guard !HolidaySkipResolver.isSkipped(of: event, context: context) else { continue }
             guard let startDate = event.startDate else { continue }
             var offsets = event.reminderOffsets
+            // 隐式到点档：无提前提醒也必须在到期时刻提醒（用户澄清「无」只指不设提前提醒）
             if !offsets.contains(0) { offsets.append(0) }
-            for offset in offsets where offset >= 0 {
+            for offset in offsets {
                 let t = startDate.addingTimeInterval(TimeInterval(-offset * 60))
                 if t > now { candidates.append(t) }
             }
@@ -215,11 +226,11 @@ final class ReminderAlertService {
         dynamicTimer = nil
         guard let context = EventCacheService.shared.context else { return }
         let now = Date()
-        // 粗筛口径与常规检查一致：alertTime=startDate-offset*60 ≤ startDate，
-        // 故未来档事件必要条件 startDate > now；上限 now+24h 覆盖 UI 上限 1440 分钟提前档
+        // 粗筛口径与常规检查一致：窗口按最大提前/延后量扩展，覆盖 1 个月/6 个月等长提前档
         let userCategory = EventCategory.user.rawValue
-        let lower = now
-        let upper = now.addingTimeInterval(TimeInterval(CachedEvent.maxReminderLeadMinutes * 60))
+        let window = Self.scheduleWindow(now: now)
+        let lower = window.lower
+        let upper = window.upper
         let distantPast = Date.distantPast
         let distantFuture = Date.distantFuture
         let descriptor = FetchDescriptor<CachedEvent>(
@@ -279,15 +290,17 @@ final class ReminderAlertService {
         let userCategory = "用户"
 
         // B-27：把提醒时间窗口换算为 startDate 窗口下沉到谓词粗筛，避免每分钟全表拉取。
-        // alertTime = startDate - reminderMinutes*60（reminderMinutes ≥ 0，UI 上限 1440 分钟），
-        // 因此 alertTime ∈ [windowLower, now] 的必要条件是
-        // startDate ∈ [windowLower, now + 1440 分钟]，精确判定仍由下方内存过滤完成。
-        // 常规检查下界为 B-14 的 lastCheckTime 窗口（无记录回退 90 秒）；
-        // includeExpired 需覆盖全部已过期提醒，下界放开
+        // alertTime = startDate - offset*60，offset ∈ [-cap, cap]（正=提前、负=延后），
+        // 因此 alertTime 命中窗口的必要条件是 startDate ∈ [cap 下界放宽, now + cap]，
+        // 精确判定仍由下方内存过滤完成。cap = 365 天，覆盖 1 个月/6 个月长提前档。
+        // 常规检查下界为 B-14 的 lastCheckTime 窗口（无记录回退 90 秒），并放宽到
+        // now - cap 以覆盖「开始已过、延后档提醒仍在未来」；includeExpired 下界放开
         let maxReminderLeadSeconds = TimeInterval(CachedEvent.maxReminderLeadMinutes * 60)
         let fetchUpperBound = now.addingTimeInterval(maxReminderLeadSeconds)
         let windowStart = lastCheckTime ?? calendar.date(byAdding: .second, value: -90, to: now)!
-        let fetchLowerBound = includeExpired ? Date.distantPast : windowStart
+        let fetchLowerBound = includeExpired
+            ? Date.distantPast
+            : min(windowStart, now.addingTimeInterval(-maxReminderLeadSeconds))
         // 哨兵日期用局部常量捕获：#Predicate 宏内直接写 Date.distantPast 会展开成
         // 静态成员 keypath（Value<Date.Type>），既不符合 StandardPredicateExpression，
         // 还会使复杂合取表达式的类型推断超时；局部常量捕获后转为 Value 表达式
@@ -367,7 +380,6 @@ final class ReminderAlertService {
                     var candidates = offsets
                     if !candidates.contains(0) { candidates.append(0) }
                     alertTimes = candidates.compactMap { offset in
-                        guard offset >= 0 else { return nil }
                         let t = startDate.addingTimeInterval(TimeInterval(-offset * 60))
                         return (t <= now && t >= windowStart) ? t : nil
                     }

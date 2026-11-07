@@ -68,30 +68,41 @@ final class CachedEvent {
     /// 注意：@Model 宏不保留 didSet（已探针实证），G1 反向重写由 setReminderMinutesRewritingMax 显式承担
     var reminderMinutes: Int = 0
 
-    /// BUG-07：提醒提前量上限（分钟）——调度窗口取数上界与 NLP 解析统一收口到一天，
-    /// 超过上限的提前量此前永不进入 [windowStart, now] 判定窗口，导致完全不提醒
-    static let maxReminderLeadMinutes = 1440
+    /// 提醒提前量安全上限（分钟，±365 天）——仅防 Int 溢出与异常数据，不再是业务档位；
+    /// 9 项预设最大 6 个月（259200 分钟），自定义与 NLP 均按本上限校验
+    static let maxReminderLeadMinutes = 525_600
+
+    /// 提前量归一化：允许有符号（正=提前、0=到点、负=延后），去重升序并收敛到 ±上限
+    static func normalizedReminderOffsets(_ values: [Int]) -> [Int] {
+        let cap = maxReminderLeadMinutes
+        return Array(Set(values.map { min(max($0, -cap), cap) })).sorted()
+    }
 
     /// G1 反向重写（原 didSet 联动，因 @Model 宏丢弃 didSet 而显式化）：
     /// 直赋单级 minutes 时把多级 offsets 最高档替换为新值并去重，
     /// 维护硬不变量 reminderMinutes == offsets.max()；直赋点必须调用本方法而非直接赋值
     func setReminderMinutesRewritingMax(_ value: Int) {
-        reminderMinutes = value
+        let capped = Self.normalizedReminderOffsets([value]).first ?? 0
         guard let json = reminderOffsetsJSON,
               let data = json.data(using: .utf8),
               var offsets = try? JSONDecoder().decode([Int].self, from: data),
               !offsets.isEmpty,
               let oldMax = offsets.max(),
-              value != oldMax else { return }
-        if let idx = offsets.firstIndex(of: oldMax) {
-            offsets[idx] = value
-        } else {
-            offsets.append(value)
+              capped != oldMax else {
+            reminderMinutes = capped
+            return
         }
-        let normalized = Array(Set(offsets)).sorted()
+        if let idx = offsets.firstIndex(of: oldMax) {
+            offsets[idx] = capped
+        } else {
+            offsets.append(capped)
+        }
+        let normalized = Self.normalizedReminderOffsets(offsets)
         if let data = try? JSONEncoder().encode(normalized) {
             reminderOffsetsJSON = String(data: data, encoding: .utf8)
         }
+        // 替换后旧 max 可能被更小值顶替（含 0/负值），重新维护硬不变量
+        reminderMinutes = normalized.max() ?? 0
     }
 
     /// 多级提醒提前分钟数（JSON 持久化，plan 步骤 6；nil = 未设置多级，回退单级）
@@ -147,29 +158,29 @@ final class CachedEvent {
         set { recurrenceSpecJSON = newValue?.jsonString }
     }
 
-    /// 多级提醒提前分钟数组（计算属性，真源为 reminderOffsetsJSON 镜像 EventKit 多 alarm）
-    /// 读取：解码 JSON，未设置/坏数据/空数组回退 [reminderMinutes]（单级语义）
+    /// 多级提醒偏移数组（计算属性，真源为 reminderOffsetsJSON 镜像 EventKit 多 alarm）
+    /// 读取：解码 JSON（有符号分钟）并归一化；未设置/坏数据回退单级 reminderMinutes；
+    ///       reminderMinutes == 0 且无 JSON = 无提前提醒（返回空数组）
     /// 写入：去重升序编码 JSON，并维护硬不变量 reminderMinutes == max
-    /// BUG-07：读写均钳制到 [0, maxReminderLeadMinutes]——存量 JSON 超上限值自动收敛
     var reminderOffsets: [Int] {
         get {
-            let offsets: [Int]
             if let json = reminderOffsetsJSON,
                let data = json.data(using: .utf8),
                let decoded = try? JSONDecoder().decode([Int].self, from: data),
                !decoded.isEmpty {
-                offsets = decoded
-            } else {
-                offsets = [reminderMinutes]
+                return Self.normalizedReminderOffsets(decoded)
             }
-            return Array(Set(offsets.map { min(max($0, 0), Self.maxReminderLeadMinutes) })).sorted()
+            if reminderMinutes != 0 {
+                return [reminderMinutes]
+            }
+            return []
         }
         set {
-            let clamped = newValue.map { min(max($0, 0), Self.maxReminderLeadMinutes) }
-            let normalized = Array(Set(clamped)).sorted()
+            let normalized = Self.normalizedReminderOffsets(newValue)
             guard !normalized.isEmpty else {
-                // 空数组：清空多级，回退单级语义（reminderMinutes 保持当前值）
+                // 空数组：清空多级/单级，进入「无提前提醒」语义
                 reminderOffsetsJSON = nil
+                reminderMinutes = 0
                 return
             }
             if let data = try? JSONEncoder().encode(normalized) {
