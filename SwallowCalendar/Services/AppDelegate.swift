@@ -50,8 +50,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 注意：BackgroundSyncService.start() 不在此处调用，
         // 改由 ContentView.task 注入 mainContext 后再启动，确保使用同一 ModelContext
         
-        // 检查更新（预览取证态跳过启动检查，避免更新弹窗遮挡编辑窗口）
-        if ProcessInfo.processInfo.environment["SC_OPEN_EDIT_PREVIEW"] != "1" {
+        // 检查更新（预览取证态跳过启动检查，避免更新弹窗遮挡编辑/批量添加窗口；
+        // 判断口径与下方调试入口一致：能解析出有效预览态（1/tall）才视为预览模式）
+        let isPreviewMode = ProcessInfo.processInfo.environment["SC_OPEN_EDIT_PREVIEW"] == "1"
+            || Self.batchAddPreviewState() != nil
+        if !isPreviewMode {
             UpdateChecker.shared.checkOnStartup()
         }
         UpdateChecker.shared.startPeriodicCheck()
@@ -105,6 +108,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 EditEventWindowManager.shared.positionBeside(
                     panelFrame: panel.frame,
                     screen: panel.screen
+                )
+            }
+        }
+
+        // 调试入口：SC_OPEN_BATCH_ADD_PREVIEW=1 启动即打开「批量添加」窗口（默认态）；
+        // =tall 时展示多条失败结果，用于验证内容增多后的高态与滚动上限。
+        // 仅环境变量命中时生效，正常启动零影响
+        if let preview = Self.batchAddPreviewState() {
+            DispatchQueue.main.async {
+                BatchAddWindowManager.shared.open(
+                    calendarService: CalendarService.shared,
+                    appSettings: AppSettings.shared,
+                    onTaskAdded: {},
+                    preview: preview
                 )
             }
         }
@@ -192,6 +209,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = StatusBarIconManager.shared.currentIcon
     }
     
+    /// 调试预览态选择（SC_OPEN_BATCH_ADD_PREVIEW=1|tall），仅截图取证使用
+    private static func batchAddPreviewState() -> BatchAddPreviewState? {
+        switch ProcessInfo.processInfo.environment["SC_OPEN_BATCH_ADD_PREVIEW"] {
+        case "1":
+            return BatchAddPreviewState(sampleText: Self.batchAddPreviewText)
+        case "tall":
+            // 16 条失败行：超出 maxContentHeight，用于验证封顶后的内部滚动
+            return BatchAddPreviewState(sampleText: Self.batchAddPreviewText, failureCount: 16)
+        default:
+            return nil
+        }
+    }
+
+    /// 调试预览用示例文本（仅 SC_OPEN_BATCH_ADD_PREVIEW 入口使用，不写入日历）
+    private static let batchAddPreviewText = """
+    明天下午3点开会 红色 重要
+    每天上午9点晨会 循环
+    每周五晚上8点复盘
+    """
+
     /// 调试预览态选择（SC_EDIT_PREVIEW_STATE=custom|validity|custom+validity），仅截图取证使用
     private static func editPreviewState() -> EditPreviewState? {
         switch ProcessInfo.processInfo.environment["SC_EDIT_PREVIEW_STATE"] {

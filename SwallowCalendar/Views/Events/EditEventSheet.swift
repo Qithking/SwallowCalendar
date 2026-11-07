@@ -14,13 +14,7 @@ struct EditPreviewState {
     var validityOn = false
 }
 
-/// 内容自然高度测量值（用于窗口自适应高度）
-private struct ContentHeightPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
+/// 内容自然高度测量值（ContentHeightPreferenceKey）定义在 FormLayout.swift，批量添加窗口共用
 
 struct EditEventSheet: View {
     let event: CalendarEvent

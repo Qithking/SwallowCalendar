@@ -9,6 +9,14 @@
 import SwiftUI
 import AppKit
 
+/// 内容自然高度测量值（表单弹窗自适应高度用；编辑与批量添加共用同一测量口径）
+struct ContentHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 /// 表单统一度量：新建与编辑表单只允许引用这一组取值
 enum FormMetrics {
     /// 标签列宽（左对齐固定列宽，保证所有行控件起点一致）

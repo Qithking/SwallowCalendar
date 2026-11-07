@@ -8,17 +8,57 @@
 import SwiftUI
 import os
 
+/// 截图取证用预览态：仅 SC_OPEN_BATCH_ADD_PREVIEW 入口使用（正常路径为 nil，不生效）
+struct BatchAddPreviewState {
+    var sampleText: String
+    /// >0 时首帧展示「部分失败」结果，用于验证内容增多后的高态
+    var failureCount: Int = 0
+}
+
 struct BatchAddView: View {
     @Environment(AppSettings.self) private var appSettings
     let calendarService: CalendarService
     var onClose: () -> Void
     var onTaskAdded: () -> Void
+    /// 内容自然高度回调：由窗口侧顶部锚定调整高度（与编辑窗口同一套做法）
+    var onContentHeightChange: ((CGFloat) -> Void)?
 
-    @State private var text = ""
+    @State private var text: String
     @State private var isProcessing = false
     @State private var result: BatchAddResult?
     // 智能跳过节假日（AC-7）：开关作用于全部行，逐行生效
     @State private var skipHolidays = false
+    /// 最近一次测量的内容自然高度（用于决定是否启用内部滚动）
+    @State private var contentHeight: CGFloat = 0
+
+    /// 窗口内容宽度（与编辑窗口一致：宽度固定，只有高度随内容变化）
+    static let contentWidth: CGFloat = 420
+    /// 编辑区固定高度：TextEditor 自身可滚动，窗口高度只随「编辑区 + 底部区」的自然高度变化
+    static let editorAreaHeight: CGFloat = 276
+    /// 内容自适应上限：超过后窗口不再长高，改为内部滚动（覆盖部分失败时的多条失败行）
+    static let maxContentHeight: CGFloat = 540
+
+    init(
+        calendarService: CalendarService,
+        onClose: @escaping () -> Void,
+        onTaskAdded: @escaping () -> Void,
+        preview: BatchAddPreviewState? = nil,
+        onContentHeightChange: ((CGFloat) -> Void)? = nil
+    ) {
+        self.calendarService = calendarService
+        self.onClose = onClose
+        self.onTaskAdded = onTaskAdded
+        self.onContentHeightChange = onContentHeightChange
+        if let failureCount = preview?.failureCount, failureCount > 0 {
+            let failures = (1...failureCount).map {
+                BatchAddFailure(rawText: "示例失败行 \($0)", reason: "写入日历失败")
+            }
+            _text = State(initialValue: failures.map(\.rawText).joined(separator: "\n"))
+            _result = State(initialValue: BatchAddResult(successCount: 5, failures: failures))
+        } else {
+            _text = State(initialValue: preview?.sampleText ?? "")
+        }
+    }
 
     private var validLineCount: Int {
         text
@@ -32,6 +72,34 @@ struct BatchAddView: View {
     private var isOverLimit: Bool { validLineCount > BatchAddParser.maxLines }
 
     var body: some View {
+        // 与「修改事项」/主界面同一套材质：同一 VisualEffectView 经 ignoresSafeArea 铺满整窗
+        ZStack {
+            VisualEffectView()
+                .ignoresSafeArea()
+
+            ScrollView(.vertical) {
+                contentBody
+                    .frame(width: Self.contentWidth)
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: ContentHeightPreferenceKey.self,
+                                value: proxy.size.height
+                            )
+                        }
+                    )
+            }
+            .scrollDisabled(contentHeight <= Self.maxContentHeight)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onPreferenceChange(ContentHeightPreferenceKey.self) { height in
+            guard abs(height - contentHeight) > 0.5 else { return }
+            contentHeight = height
+            onContentHeightChange?(height)
+        }
+    }
+
+    private var contentBody: some View {
         VStack(spacing: 0) {
             editorArea
 
@@ -52,7 +120,6 @@ struct BatchAddView: View {
                 actionBar
             }
         }
-        .frame(minWidth: 420, minHeight: 320)
     }
 
     // MARK: - 编辑区
@@ -72,6 +139,8 @@ struct BatchAddView: View {
                 .disabled(result != nil || isProcessing)
         }
         .padding(8)
+        // 编辑区取固定高度：TextEditor 自身滚动，窗口高度由「编辑区 + 底部区」的自然高度驱动
+        .frame(height: Self.editorAreaHeight)
     }
 
     // MARK: - 操作栏
