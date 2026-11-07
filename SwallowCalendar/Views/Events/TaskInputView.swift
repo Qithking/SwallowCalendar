@@ -23,6 +23,9 @@ struct TaskInputView: View {
     @State private var taskColor: EventColor?
     @State private var taskPriority: EventPriority = .none
     @State private var taskRecurrence: RecurrenceType = .none
+    /// 循环规则单一真源（12 项预设 + 自定义维度）
+    @State private var taskPreset: RecurrencePreset = .never
+    @State private var taskSpec: RecurrenceSpec?
     @State private var taskReminderMinutes: Int = 10
     @State private var taskIsLunar = false
     @State private var showAttributeEditor = false
@@ -206,19 +209,19 @@ struct TaskInputView: View {
                 Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
                     GridRow {
                         GridLabel("周期")
-                        Picker("", selection: Binding(
-                            get: { taskRecurrence },
-                            set: { taskRecurrence = $0; manuallyEditedRecurrence = true }  // V-7：手选周期不被 NLP 覆盖
-                        )) {
-                            Text("1次").tag(RecurrenceType.none)
-                            Text("不限").tag(RecurrenceType.unlimited)
-                            Text("每天").tag(RecurrenceType.daily)
-                            Text("每周").tag(RecurrenceType.weekly)
-                            Text("每月").tag(RecurrenceType.monthly)
-                            Text("每年").tag(RecurrenceType.yearly)
-                        }
-                        .labelsHidden()
-                        .frame(width: 70)
+                        RecurrencePickerView(
+                            preset: Binding(
+                                get: { taskPreset },
+                                // V-7：手选周期不被 NLP 覆盖
+                                set: { taskPreset = $0; manuallyEditedRecurrence = true }
+                            ),
+                            spec: Binding(
+                                get: { taskSpec },
+                                set: { taskSpec = $0; taskRecurrence = $0?.legacyType ?? .none }
+                            ),
+                            anchor: taskDate,
+                            isLunar: taskIsLunar
+                        )
                     }
                     GridRow {
                         GridLabel("跳过节假日")
@@ -348,7 +351,15 @@ struct TaskInputView: View {
         if !manuallyEditedDate { taskDate = parsed.date }
         if !manuallyEditedColor { taskColor = parsed.color }
         if !manuallyEditedPriority { taskPriority = parsed.priority ?? .none }
-        if !manuallyEditedRecurrence { taskRecurrence = parsed.recurrence ?? .none }
+        if !manuallyEditedRecurrence {
+            taskRecurrence = parsed.recurrence ?? .none
+            taskPreset = RecurrencePreset.legacy(parsed.recurrence ?? .none)
+            taskSpec = RecurrenceSpec.legacy(from: parsed.recurrence ?? .none, anchor: taskDate, isLunar: parsed.isLunar)
+            // 解析出每小时/工作日等细分档位时，界面精确对齐细分预设
+            if let spec = taskSpec {
+                taskPreset = RecurrenceSpec.preset(for: spec, anchor: taskDate)
+            }
+        }
         if !manuallyEditedReminder { taskReminderMinutes = parsed.reminderMinutes ?? 10 }
         if !manuallyEditedLunar { taskIsLunar = parsed.isLunar }
     }
@@ -386,6 +397,7 @@ struct TaskInputView: View {
                     calendar: nil,
                     priority: taskPriority == .none ? nil : taskPriority,
                     recurrence: taskRecurrence,
+                    recurrenceSpec: taskSpec,
                     reminderMinutes: taskReminderMinutes > 0 ? taskReminderMinutes : nil,
                     category: .user,
                     asReminder: createAsReminder,
@@ -410,6 +422,8 @@ struct TaskInputView: View {
         taskColor = nil
         taskPriority = .none
         taskRecurrence = .none
+        taskPreset = .never
+        taskSpec = nil
         taskReminderMinutes = 10
         taskIsLunar = false
         taskIsAllDay = false

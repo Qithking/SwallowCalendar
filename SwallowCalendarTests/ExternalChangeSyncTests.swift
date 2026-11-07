@@ -339,4 +339,25 @@ final class ExternalChangeSyncTests: XCTestCase {
         // Then: EK 映射档位优先
         XCTAssertEqual(existing.recurrenceType, .weekly, "EK 规则存在时应采纳映射档位")
     }
+
+    // MARK: - 提醒插入路径 spec 透传（bug: reminder-spec-dropped-on-insert）
+
+    /// 自定义循环（每 2 周）提醒首次入库：插入路径必须透传 recurrenceSpec（单一真源），
+    /// 否则只能按旧档位懒推导，间隔/多选星期等维度无法还原
+    func testInsertNewReminderCarriesRecurrenceSpec() {
+        // Given: 带自定义「每 2 周」spec 的 EK 回流映射行
+        let spec = RecurrenceSpec(frequency: .weekly, interval: 2)
+        var ek = makeEKReminderMap(recurrenceType: .weekly, notes: nil)
+        ek.recurrenceSpec = spec
+
+        // When: 走 syncReminders 插入路径构造缓存行
+        let row = EventCacheService.makeNewReminderRow(from: ek)
+
+        // Then: spec JSON 非空且 roundtrip 等值
+        XCTAssertNotNil(row.recurrenceSpecJSON, "插入新提醒必须透传 recurrenceSpec JSON")
+        XCTAssertEqual(
+            RecurrenceSpec.decode(row.recurrenceSpecJSON), spec,
+            "插入路径的 spec JSON roundtrip 必须等值"
+        )
+    }
 }

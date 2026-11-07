@@ -7,6 +7,7 @@
 //  Source: plan/recurring-task-single-record.md step 3
 
 import XCTest
+import SwiftData
 @testable import SwallowCalendar
 
 final class RecurrenceExpansionTests: XCTestCase {
@@ -34,30 +35,30 @@ final class RecurrenceExpansionTests: XCTestCase {
     }
 
     func testMonthlyAnchorsToMonthEnd() {
-        // BUG-05：传入锚点后月度回弹原锚点 1/31 → 2/28 → 3/31（不再随游标取整漂移）
+        // 口径变更（对齐提醒事项）：锚定 31 日遇小月无此日期 → 该月跳过，不回弹
         let origin = date(2026, 1, 31)
         let next = CalendarService.nextOccurrence(
             after: origin, recurrenceType: .monthly, isLunar: false, origin: origin)
-        XCTAssertEqual(next, date(2026, 2, 28))
-        let afterFeb = CalendarService.nextOccurrence(
+        XCTAssertEqual(next, date(2026, 3, 31))
+        let afterMar = CalendarService.nextOccurrence(
             after: next!, recurrenceType: .monthly, isLunar: false, origin: origin)
-        XCTAssertEqual(afterFeb, date(2026, 3, 31))
+        XCTAssertEqual(afterMar, date(2026, 5, 31))
     }
 
-    func testMonthlyWithoutOriginKeepsLegacyRounding() {
-        // 未传锚点（存量未回填/农历旁路）保持旧取整语义：1/31 → 2/28 → 3/28
+    func testMonthlyWithoutOriginSkipsMissingMonths() {
+        // 未传锚点时以游标日为锚：1/31 → 3/31 → 5/31（缺失日期一律跳过）
         let next = CalendarService.nextOccurrence(after: date(2026, 1, 31), recurrenceType: .monthly, isLunar: false)
-        XCTAssertEqual(next, date(2026, 2, 28))
-        let afterFeb = CalendarService.nextOccurrence(after: next!, recurrenceType: .monthly, isLunar: false)
-        XCTAssertEqual(afterFeb, date(2026, 3, 28))
+        XCTAssertEqual(next, date(2026, 3, 31))
+        let afterMar = CalendarService.nextOccurrence(after: next!, recurrenceType: .monthly, isLunar: false)
+        XCTAssertEqual(afterMar, date(2026, 5, 31))
     }
 
     func testYearlyLeapDayAnchorsBackToLeapYear() {
-        // BUG-05：2/29 非闰年落 2/28，闰年回弹 2/29
+        // 口径变更：2/29 在非闰年无此日期 → 跳过，直到下一个闰年
         let origin = date(2028, 2, 29)
         XCTAssertEqual(
             CalendarService.nextOccurrence(after: origin, recurrenceType: .yearly, isLunar: false, origin: origin),
-            date(2029, 2, 28))
+            date(2032, 2, 29))
         XCTAssertEqual(
             CalendarService.nextOccurrence(after: date(2031, 2, 28), recurrenceType: .yearly, isLunar: false, origin: origin),
             date(2032, 2, 29))
@@ -74,14 +75,14 @@ final class RecurrenceExpansionTests: XCTestCase {
     }
 
     func testMigrationRekeysDriftedCompletionDates() {
-        // BUG-05 存量迁移：[1/31, 2/28, 3/28] → [1/31, 2/28, 3/31]
+        // 口径变更：2/28 在锚定 31 日的序列中已不存在 → 迁移时丢弃；3/28 重定键为 3/31
         let origin = date(2026, 1, 31)
         let migrated = CachedEvent.migratedAnchorCompletionDates(
             [date(2026, 1, 31), date(2026, 2, 28), date(2026, 3, 28)],
             origin: origin,
             recurrenceType: .monthly
         )
-        XCTAssertEqual(migrated, [date(2026, 1, 31), date(2026, 2, 28), date(2026, 3, 31)])
+        XCTAssertEqual(migrated, [date(2026, 1, 31), date(2026, 3, 31)])
     }
 
     func testYearlyAdvancesOneYear() {
@@ -122,5 +123,48 @@ final class RecurrenceExpansionTests: XCTestCase {
         let base = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
         let advanced = CalendarService.advanceRecurrenceDate(base, recurrenceType: .custom)
         XCTAssertEqual(advanced.timeIntervalSince1970, base.timeIntervalSince1970, accuracy: 0.001)
+    }
+
+    /// 重叠循环跨窗口兜底（对齐后回退一个周期）：实例时长 > 周期 + 相位差时，
+    /// 窗口前缘落在某实例中间，比 aligned 更早一期的跨窗口实例
+    /// （occ < windowStart 但 instanceEnd > windowStart）也必须产出，
+    /// 否则窗口顶部少显示一行
+    @MainActor
+    func testExpansionStepsBackOnePeriodForOverlappingLongInstances() throws {
+        let container = try ModelContainer(
+            for: CachedEvent.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        EventCacheService.shared.configure(with: container)
+        let origin = date(2030, 5, 10, 9)  // 锚点 09:00
+        let event = CachedEvent(
+            eventID: "overlap-hourly",
+            title: "每小时长任务",
+            startDate: origin,
+            endDate: origin.addingTimeInterval(2 * 3600),  // 实例 2h > 周期 1h
+            isAllDay: false,
+            calendarID: "reminder",
+            calendarTitle: "提醒",
+            calendarColorHex: "#FF0000",
+            recurrenceType: .hourly
+        )
+        event.originStartDate = origin
+
+        // When: 窗口前缘 10:30 落在 10:00 实例（10:00-12:00）中间——
+        // 9:00 实例（9:00-11:00）同样跨窗口，必须随「回退一个周期」兜底产出
+        let windowStart = date(2030, 5, 10, 10).addingTimeInterval(30 * 60)
+        let windowEnd = date(2030, 5, 10, 12).addingTimeInterval(30 * 60)
+        let instances = EventCacheService.shared.expandOccurrences(
+            of: event, windowStart: windowStart, windowEnd: windowEnd,
+            context: container.mainContext
+        )
+
+        // Then: 9/10/11/12 时四行（当前缺 9:00 兜底行）
+        let starts = instances.compactMap(\.startDate).map { $0.timeIntervalSince1970 }
+        XCTAssertTrue(
+            starts.contains(origin.timeIntervalSince1970),
+            "9:00 跨窗口实例必须产出（对齐回退一个周期兜底），实际起点: \(starts)"
+        )
+        XCTAssertEqual(instances.count, 4, "应产出 9/10/11/12 时四行，实际 \(instances.count) 行")
     }
 }

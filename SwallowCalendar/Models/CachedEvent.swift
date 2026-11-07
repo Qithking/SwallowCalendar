@@ -60,6 +60,9 @@ final class CachedEvent {
     
     /// 是否农历
     var isLunar: Bool = false
+
+    /// 循环规则 JSON（RecurrenceSpec 单一真源；nil = 按旧 recurrenceType 懒推导，存量零变化）
+    var recurrenceSpecJSON: String? = nil
     
     /// 提醒提前分钟数（0=不提醒）；多级模式下恒等于 reminderOffsets 的最大值（硬不变量，G1）
     /// 注意：@Model 宏不保留 didSet（已探针实证），G1 反向重写由 setReminderMinutesRewritingMax 显式承担
@@ -127,6 +130,21 @@ final class CachedEvent {
     var recurrenceType: RecurrenceType {
         get { RecurrenceType(rawValue: recurrenceTypeRaw ?? RecurrenceType.none.rawValue) ?? .none }
         set { recurrenceTypeRaw = newValue.rawValue }
+    }
+
+    /// 循环规则真源：JSON 优先，nil 时按旧档位推导（.custom 旧行保持不可展开）
+    var recurrenceSpec: RecurrenceSpec? {
+        get {
+            if let json = recurrenceSpecJSON, let spec = RecurrenceSpec.decode(json) {
+                return spec
+            }
+            return RecurrenceSpec.legacy(
+                from: recurrenceType,
+                anchor: originStartDate ?? startDate ?? Date(),
+                isLunar: isLunar
+            )
+        }
+        set { recurrenceSpecJSON = newValue?.jsonString }
     }
 
     /// 多级提醒提前分钟数组（计算属性，真源为 reminderOffsetsJSON 镜像 EventKit 多 alarm）
@@ -269,6 +287,7 @@ final class CachedEvent {
         groupIndex: Int = -1,
         recurrenceType: RecurrenceType = .none,
         isLunar: Bool = false,
+        recurrenceSpecJSON: String? = nil,
         reminderMinutes: Int = 0,
         reminderOffsetsJSON: String? = nil,
         eventColorHex: String? = nil,
@@ -293,6 +312,7 @@ final class CachedEvent {
         self.groupIndex = groupIndex
         self.recurrenceTypeRaw = recurrenceType.rawValue
         self.isLunar = isLunar
+        self.recurrenceSpecJSON = recurrenceSpecJSON
         self.reminderMinutes = reminderMinutes
         self.reminderOffsetsJSON = reminderOffsetsJSON
         self.eventColorHex = eventColorHex
@@ -500,20 +520,20 @@ final class EventCacheService {
         // 序列起点取历史锚点 originStartDate 与游标 startDate 的较早者（bug:
         // recurring-past-occurrence-invisible）——完成推进把 startDate 当游标前移，
         // 若序列跟随游标，被越过的历史未完成实例将永久不可见；min 兜底异常数据
-        // （originStart 晚于游标）不产生空档；nil（存量未回填）回退游标展开
-        var occ = min(base.originStartDate ?? baseStart, baseStart)
-        // BUG-05：序列锚点用于 monthly/yearly 的锚定构造（1/31 → 2/28 → 3/31），
-        // 与游标 occ 解耦，避免推进过程中被取整带偏
-        let sequenceOrigin = occ
-        // 起点对齐（bug: reminder-starved-by-badge-expansion）：日加法族（每天/每周）
-        // 从锚点逐次推进到窗口的迭代数与锚点年龄成正比，全部为无产出的空转——
-        // 用整除跳转直接落到 ≤ windowStart 的最近相位再回退一个周期；回退保证
-        // 「occ < windowStart 但 instanceEnd > windowStart」的跨窗口长实例不遗漏
-        // （回退点之前的实例其 instanceEnd 必 ≤ windowStart，本就无产出）。
-        // 月/年（取整累积）/农历/锚点贴近窗口时不对齐，保持逐次推进行为零变化
-        if let aligned = CalendarService.alignedExpansionStart(
-            origin: occ, recurrenceType: base.recurrenceType, isLunar: base.isLunar, windowStart: windowStart),
-           let steppedBack = CalendarService.previousOccurrence(before: aligned, recurrenceType: base.recurrenceType, isLunar: base.isLunar),
+        // （originStart 晚于游标）不产生空档；nil（存量未回填）回退游标展开。
+        // 展开与完成推进统一走 RecurrenceSpec（间隔/多选星期/第 N 个周几/结束条件唯一真源）
+        guard let spec = base.recurrenceSpec else { return result }
+        let sequenceOrigin = min(base.originStartDate ?? baseStart, baseStart)
+        // 首期对齐：origin 可能不匹配多选星期/每月日期（编辑改规则时保留原日期），
+        // 展开必须从首个匹配日产出，不能把不匹配的 origin 当成一期
+        var occ = spec.firstOccurrence(from: sequenceOrigin, isLunar: base.isLunar) ?? sequenceOrigin
+        // 起点对齐：直接跳到 ≤ windowStart 的最近相位，避免从远古锚点逐次空转；
+        // 对齐后回退一个周期兜底：实例时长 > 周期 + 相位差时窗口前缘落在某实例中间，
+        // aligned 之前一期仍与窗口重叠（occ < windowStart 但 instanceEnd > windowStart），
+        // 不回退会在窗口顶部少显示一行（回退点之前的实例 instanceEnd 必 ≤ windowStart）
+        if let aligned = spec.alignedOccurrence(before: windowStart, origin: sequenceOrigin, isLunar: base.isLunar),
+           aligned >= occ,
+           let steppedBack = spec.previous(before: aligned, origin: sequenceOrigin, isLunar: base.isLunar),
            steppedBack >= occ {
             occ = steppedBack
         }
@@ -521,6 +541,9 @@ final class EventCacheService {
         while occ < windowEnd {
             // 有效期结束端之外（闭区间端点之后）全部越界，提前退出
             if let validEnd = base.validEndDate, occ > validEnd { break }
+            // 结束重复（于日期 / 次数）之外的期次不再产出
+            let currentIndex = spec.index(of: occ, origin: sequenceOrigin, isLunar: base.isLunar) ?? 0
+            guard spec.allows(index: currentIndex, origin: sequenceOrigin, isLunar: base.isLunar) else { break }
             let done = completedSet.contains(occ.timeIntervalSince1970)
             // 已完成 occurrence 的展示行由 ① 独家产出，② 不追加，避免冻结场景重复行
             if !done, base.isWithinValidity(occ) {
@@ -536,12 +559,7 @@ final class EventCacheService {
                     }
                 }
             }
-            guard let next = CalendarService.nextOccurrence(
-                after: occ,
-                recurrenceType: base.recurrenceType,
-                isLunar: base.isLunar,
-                origin: sequenceOrigin
-            ) else { break }
+            guard let next = spec.next(after: occ, origin: sequenceOrigin, isLunar: base.isLunar) else { break }
             occ = next
             iterations += 1
             if iterations >= 4000 {
@@ -607,6 +625,7 @@ final class EventCacheService {
             priority: base.priority,
             recurrenceType: base.recurrenceType,
             isLunar: base.isLunar,
+            recurrenceSpecJSON: base.recurrenceSpecJSON,
             reminderMinutes: base.reminderMinutes,
             reminderOffsetsJSON: base.reminderOffsetsJSON,
             eventColorHex: base.eventColorHex,
@@ -1009,6 +1028,34 @@ final class EventCacheService {
     /// updateEventRecurrence 改循环时写入 EKReminder.notes，syncReminders 回流据此保留档位
     static let localRecurrenceMarker = "[SC_RECURRENCE_LOCAL]"
 
+    /// syncReminders 插入分支：EK 回流新提醒 → 缓存行（抽为纯函数便于单测，
+    /// 同 mergeReminderUpdate 先例）
+    @discardableResult
+    static func makeNewReminderRow(from reminder: CalendarEvent) -> CachedEvent {
+        CachedEvent(
+            eventID: reminder.id,
+            title: reminder.title,
+            startDate: reminder.startDate,
+            endDate: reminder.endDate,
+            isAllDay: reminder.isAllDay,
+            calendarID: "reminder",
+            calendarTitle: "提醒",
+            calendarColorHex: reminder.calendarColorHex,
+            category: .user,
+            isReminder: true,
+            isCompleted: reminder.isCompleted,
+            priority: 0,
+            // bug: ek-recurrence-materialization-mirror——同步写入 EK 映射档位，
+            // 系统侧「每小时」不再显示「1次」
+            recurrenceType: reminder.recurrenceType,
+            // bug: reminder-spec-dropped-on-insert——循环规则单一真源随插入透传，
+            // 防止自定义循环（每 2 周/多选星期/第 N 个周几）首次入库丢 spec
+            recurrenceSpecJSON: reminder.recurrenceSpec?.jsonString,
+            reminderMinutes: reminder.reminderMinutes,
+            reminderOffsetsJSON: CachedEvent.encodeOffsetsJSON(reminder.reminderOffsets)
+        )
+    }
+
     /// syncReminders 更新分支：将 EK 回流映射值合并进既有缓存行，返回是否发生变更
     /// bug: reminder-offsets-wiped-by-sync——任务 E 模式下应用为 EKReminder 写
     /// absolute(due) 准点闹钟，EK 侧不含提前量，提前提醒真源为缓存 reminderOffsets：
@@ -1027,18 +1074,32 @@ final class EventCacheService {
         let offsetsChanged = adoptReminder && existing.reminderOffsetsJSON != newOffsetsJSON
         let minutesChanged = adoptReminder && existing.reminderMinutes != newReminderMinutes
         // bug: reminder-rule-deletion-swallowed——EK 无规则时分流：
-        // notes 带本地循环标记 = 应用内设置的循环档位（EK 侧刻意不写规则），保留缓存现值；
+        // notes 带本地循环标记 = 应用内设置的循环档位（EK 侧刻意不写规则，如每小时/农历），保留缓存现值；
         // 无标记 = 系统原生循环提醒的规则已被外部删除，采纳 .none（否则档位永久滞留）
         let newRecurrence: RecurrenceType
-        if ek.recurrenceType != .none {
+        let newSpecJSON: String?
+        if let ekSpec = ek.recurrenceSpec {
+            newSpecJSON = ekSpec.jsonString
+            newRecurrence = ekSpec.legacyType
+        } else if ek.recurrenceType != .none {
+            // 兼容未携带 spec 的事件载体：档位非 none 即规则存在，按旧档位推导 spec
+            let derived = RecurrenceSpec.legacy(
+                from: ek.recurrenceType,
+                anchor: ek.startDate ?? existing.originStartDate ?? existing.startDate ?? Date(),
+                isLunar: false
+            )
+            newSpecJSON = derived?.jsonString ?? existing.recurrenceSpecJSON
             newRecurrence = ek.recurrenceType
         } else if ek.notes?.contains(Self.localRecurrenceMarker) == true {
+            newSpecJSON = existing.recurrenceSpecJSON
             newRecurrence = existing.recurrenceType
         } else {
+            newSpecJSON = nil
             newRecurrence = .none
         }
+        let specChanged = !RecurrenceSpec.jsonEquals(existing.recurrenceSpecJSON, newSpecJSON)
         // 有变更才更新，避免不必要的写入（recurrenceType：档位可能随物化历史出现而推断变化）
-        if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || minutesChanged || offsetsChanged || existing.recurrenceType != newRecurrence {
+        if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || minutesChanged || offsetsChanged || existing.recurrenceType != newRecurrence || specChanged {
             if existing.isCompleted != newIsCompleted {
                 AppLogger.cache.warning("syncReminders isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID)")
             }
@@ -1054,6 +1115,7 @@ final class EventCacheService {
             // bug: ek-recurrence-materialization-mirror——系统循环提醒档位以 EK 映射为准；
             // EK 无规则时按上方分流：本地标记保留 / 无标记采纳 .none
             existing.recurrenceType = newRecurrence
+            existing.recurrenceSpecJSON = newSpecJSON
             existing.lastUpdated = Date()
             return true
         }
@@ -1122,25 +1184,7 @@ final class EventCacheService {
                 }
             } else {
                 // 插入新提醒（支持无到期时间的提醒）
-                let cached = CachedEvent(
-                    eventID: reminder.id,
-                    title: reminder.title,
-                    startDate: reminder.startDate,
-                    endDate: reminder.endDate,
-                    isAllDay: reminder.isAllDay,
-                    calendarID: "reminder",
-                    calendarTitle: "提醒",
-                    calendarColorHex: reminder.calendarColorHex,
-                    category: .user,
-                    isReminder: true,
-                    isCompleted: reminder.isCompleted,
-                    priority: 0,
-                    // bug: ek-recurrence-materialization-mirror——同步写入 EK 映射档位，
-                    // 系统侧「每小时」不再显示「1次」
-                    recurrenceType: reminder.recurrenceType,
-                    reminderMinutes: reminder.reminderMinutes,
-                    reminderOffsetsJSON: CachedEvent.encodeOffsetsJSON(reminder.reminderOffsets)
-                )
+                let cached = Self.makeNewReminderRow(from: reminder)
                 context.insert(cached)
             }
         }

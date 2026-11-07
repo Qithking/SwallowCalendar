@@ -114,6 +114,8 @@ struct CalendarEvent: Identifiable {
     let isReminder: Bool
     /// 周期类型
     let recurrenceType: RecurrenceType
+    /// 循环规则单一真源（nil = 旧档位按 recurrenceType 推导；每小时/农历仅本地）
+    var recurrenceSpec: RecurrenceSpec? = nil
     /// 提醒提前分钟数（0=不提醒）
     let reminderMinutes: Int
     /// 多级提醒提前分钟数组（plan 步骤 7，nil = EK 侧无多级 alarm；与 reminderMinutes.max 同源）

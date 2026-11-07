@@ -282,8 +282,10 @@ private struct EventRowPopoverContent: View {
                 infoRow(label: "优先级", value: priority.displayName)
             }
 
-            // 周期类型（不重复不显示）
-            if event.recurrenceType != .none {
+            // 周期描述（spec 渲染，与 12 项预设/自定义维度一致；不重复不显示）
+            if let spec = event.recurrenceSpec {
+                infoRow(label: "重复", value: spec.displayDescription)
+            } else if event.recurrenceType != .none {
                 infoRow(label: "重复", value: event.recurrenceType.rawValue)
             }
 

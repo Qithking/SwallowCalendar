@@ -29,15 +29,19 @@ struct EditEventSheet: View {
     @State private var taskColor: EventColor?
     @State private var taskPriority: EventPriority = .none
     @State private var taskRecurrence: RecurrenceType = .none
+    /// 循环规则单一真源与界面预设（12 项对齐提醒事项）
+    @State private var taskPreset: RecurrencePreset = .never
+    @State private var taskSpec: RecurrenceSpec?
     @State private var taskReminderOffsets: [Int] = []
     @State private var showCustomReminderInput: Bool = false
     @State private var customReminderText: String = ""
     @State private var isProcessing = false
     
-    // 保存原始周期类型，用于检测变更
-    private let originalRecurrence: RecurrenceType
+    /// 原始 spec 快照（幂等比较真源）
+    private let originalSpec: RecurrenceSpec?
     // 有效期初值快照（spec AC-6，plan step 12）：saveEvent 与当前控件态比较判定触碰
     private let originalValidity: ValidityPeriod?
+    private let originalLunar: Bool
 
     /// 编辑面板回填快照：从缓存读取本体记录（bug: recurring-edit-sheet-mismatch——
     /// 列表行可能是 occurrence 虚拟展开行（复合 ID），用复合 ID 查主表必落空导致
@@ -81,12 +85,21 @@ struct EditEventSheet: View {
         _startDate = State(initialValue: event.startDate ?? Date())
         _isAllDay = State(initialValue: event.isAllDay)
 
-        // 获取原始周期类型（从缓存读取本体记录，occurrence 虚拟行复合 ID 已在快照查询内解析）
-        var originalRec = RecurrenceType.none
+        // 获取原始周期（从缓存读取本体记录，occurrence 虚拟行复合 ID 已在快照查询内解析）
         var snapshotValidity: ValidityPeriod? = nil
+        // spec 初值：缓存优先（含旧档位推导），缓存缺失回退事件载体
+        var snapshotSpec = event.recurrenceSpec
+        var snapshotLunar = false
         if let cached = Self.backfillSnapshot(for: event.id) {
-            originalRec = cached.recurrenceType
             _taskRecurrence = State(initialValue: cached.recurrenceType)
+            snapshotSpec = cached.recurrenceSpec
+            snapshotLunar = cached.isLunar
+            // 界面预设按 spec 反推（旧档位 monthly/yearly 的锚点用缓存起始日）
+            _taskPreset = State(initialValue: RecurrenceSpec.preset(
+                for: cached.recurrenceSpec,
+                anchor: cached.originStartDate ?? cached.startDate ?? event.startDate ?? Date()
+            ))
+            _taskSpec = State(initialValue: cached.recurrenceSpec)
             _taskPriority = State(initialValue: EventPriority(rawValue: cached.priority) ?? .none)
             // 多级提醒 chips 初始选中：过滤 0 档（0 = 不提醒，即无选中态）
             _taskReminderOffsets = State(initialValue: cached.reminderOffsets.filter { $0 > 0 })
@@ -106,8 +119,14 @@ struct EditEventSheet: View {
                 if let s = cached.validStartDate { _validityStart = State(initialValue: s) }
                 if let e = cached.validEndDate { _validityEnd = State(initialValue: e) }
             }
+        } else if let spec = snapshotSpec {
+            // 缓存缺失时按事件载体回填，避免编辑面板周期显示为「永不」
+            _taskSpec = State(initialValue: spec)
+            _taskRecurrence = State(initialValue: spec.legacyType)
+            _taskPreset = State(initialValue: RecurrenceSpec.preset(for: spec, anchor: event.startDate ?? Date()))
         }
-        self.originalRecurrence = originalRec
+        self.originalSpec = snapshotSpec
+        self.originalLunar = snapshotLunar
         self.originalValidity = snapshotValidity
     }
 
@@ -176,16 +195,18 @@ struct EditEventSheet: View {
             // 分组卡片：重复（循环语义集中一处：周期/跳过节假日/限制有效期，spec 定案）
             FormCard(title: "重复") {
                 FormRow(label: "周期") {
-                    Picker("", selection: $taskRecurrence) {
-                        Text("1次").tag(RecurrenceType.none)
-                        Text("不限").tag(RecurrenceType.unlimited)
-                        Text("每天").tag(RecurrenceType.daily)
-                        Text("每周").tag(RecurrenceType.weekly)
-                        Text("每月").tag(RecurrenceType.monthly)
-                        Text("每年").tag(RecurrenceType.yearly)
-                    }
-                    .labelsHidden()
-                    .frame(width: 110)
+                    RecurrencePickerView(
+                        preset: Binding(
+                            get: { taskPreset },
+                            set: { taskPreset = $0 }
+                        ),
+                        spec: Binding(
+                            get: { taskSpec },
+                            set: { taskSpec = $0; taskRecurrence = $0?.legacyType ?? .none }
+                        ),
+                        anchor: startDate,
+                        isLunar: originalLunar
+                    )
                 }
 
                 // 智能跳过节假日（AC-7）：勾选后 startDate 落休日顺延至下一个班日显示与提醒
@@ -487,11 +508,11 @@ struct EditEventSheet: View {
                     skipHolidays: skipHolidays,
                     validity: validityParam
                 )
-                // 如果周期类型发生变化，处理周期任务逻辑
-                if taskRecurrence != originalRecurrence {
+                // 如果循环规则发生变化，写入 spec 真源并同步提醒 EK 规则
+                if taskSpec != originalSpec {
                     calendarService.updateEventRecurrence(
                         eventID: event.id,
-                        newRecurrenceType: taskRecurrence
+                        newSpec: taskSpec
                     )
                 }
 
