@@ -119,6 +119,20 @@ enum ReminderLeadPreset: String, CaseIterable, Identifiable {
 
 /// 提前提醒选择器：9 项预设下拉 + 自定义面板 + 已有多级档位
 struct ReminderLeadPickerView: View {
+    /// 自定义行控件度量：方向/单位按固有宽度（13pt「提前/分钟」+ 下拉箭头约 65.5pt），
+    /// 数量框容纳 5-6 位数字；最窄控件列（桌面面板 300pt → 188pt）下合计 65.5+54+65.5+2×4 = 193pt，
+    /// 数量框可压到 44pt，实际最小需求 183pt，仍有 5pt 余量，不溢出卡片
+    private enum LeadMetrics {
+        /// 数量框最小宽度（11pt 下 6 位数字含圆角边框约 53.5pt，44pt 可完整显示 5 位）
+        static let countMinWidth: CGFloat = 44
+        /// 数量框常规宽度（表单更宽时不再额外拉伸）
+        static let countWidth: CGFloat = 54
+        /// 同一行控件间距
+        static let controlSpacing: CGFloat = 4
+        /// 数量行与添加按钮行间距
+        static let lineSpacing: CGFloat = 4
+    }
+
     @Binding var offsets: [Int]
 
     @State private var customDirection: ReminderLeadDirection = .before
@@ -174,29 +188,35 @@ struct ReminderLeadPickerView: View {
     // MARK: - 子视图
 
     private var customEditor: some View {
-        HStack(spacing: 6) {
-            Picker("", selection: $customDirection) {
-                ForEach(ReminderLeadDirection.allCases) { direction in
-                    Text(direction.title).tag(direction)
+        VStack(alignment: .trailing, spacing: LeadMetrics.lineSpacing) {
+            HStack(spacing: LeadMetrics.controlSpacing) {
+                // 方向/单位按固有宽度绘制，避免固定宽度裁掉「提前/分钟」+ 下拉箭头
+                Picker("", selection: $customDirection) {
+                    ForEach(ReminderLeadDirection.allCases) { direction in
+                        Text(direction.title).tag(direction)
+                    }
                 }
-            }
-            .labelsHidden()
-            .frame(width: 56)
+                .labelsHidden()
+                .formControlSizing()
 
-            TextField("数量", text: $customCountText)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 11))
-                .frame(width: 34)
-                .multilineTextAlignment(.trailing)
+                TextField("数量", text: $customCountText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+                    .frame(minWidth: LeadMetrics.countMinWidth,
+                           idealWidth: LeadMetrics.countWidth,
+                           maxWidth: LeadMetrics.countWidth)
+                    .multilineTextAlignment(.trailing)
 
-            Picker("", selection: $customUnit) {
-                ForEach(ReminderLeadUnit.allCases) { unit in
-                    Text(unit.title).tag(unit)
+                Picker("", selection: $customUnit) {
+                    ForEach(ReminderLeadUnit.allCases) { unit in
+                        Text(unit.title).tag(unit)
+                    }
                 }
+                .labelsHidden()
+                .formControlSizing()
             }
-            .labelsHidden()
-            .frame(width: 52)
 
+            // 添加按钮独占第二行并贴右：三项控件已占满最窄控件列，再加按钮会横向溢出
             Button(action: addCustomOffset) {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 12))
@@ -204,7 +224,10 @@ struct ReminderLeadPickerView: View {
             .buttonStyle(.plain)
             .foregroundColor(.accentColor)
             .help("添加自定义提前/延后档位（上限 365 天）")
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
+        // 整块贴右，与预设下拉/时间等行共用控件列右基准线
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private var offsetChips: some View {

@@ -110,16 +110,19 @@ struct RecurrencePickerView: View {
 
             endEditor(binding)
         }
-        .padding(8)
+        // 子面板占满整个控件列：左侧留 8pt 内缩，右侧不留，子控件才能与外层控件列同一右基准线
+        .padding(.leading, 8)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
     }
 
-    /// 自定义面板内的行：统一 44pt 标签列，右侧控件不越出面板宽度
+    /// 自定义面板内的行：统一 44pt 标签列，子控件贴齐面板右缘（即外层控件列的右基准线）
     private func innerRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
         HStack(spacing: FormMetrics.labelControlGap) {
             FormLabel(label, width: FormMetrics.innerLabelWidth)
             content()
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -167,6 +170,8 @@ struct RecurrencePickerView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            // 等分控件占满子面板可用宽度即可保证右缘与基准线一致
+            .frame(maxWidth: .infinity)
 
             if let nth = binding.wrappedValue.nthWeekday {
                 HStack(spacing: 6) {
@@ -181,8 +186,8 @@ struct RecurrencePickerView: View {
                         Text("最后一个").tag(-1)
                     }
                     .labelsHidden()
-                    // 自定义面板内可用宽度有限，用 maxWidth 让控件可收缩，避免撑出卡片破坏右基准
-                    .frame(maxWidth: 84)
+                    // 13pt 下「最后一个」固有宽约 91.5pt，留 4pt 余量避免出现「最后…」截断
+                    .frame(maxWidth: 96)
                     Picker("", selection: Binding(
                         get: { nth.weekday },
                         set: { binding.wrappedValue.nthWeekday?.weekday = $0 }
@@ -191,8 +196,11 @@ struct RecurrencePickerView: View {
                         ForEach(1...7, id: \.self) { Text(names[$0 - 1]).tag($0) }
                     }
                     .labelsHidden()
-                    .frame(maxWidth: 62)
+                    // 「周五」固有宽约 65.5pt
+                    .frame(maxWidth: 70)
                 }
+                // 两个下拉整体贴右，与其它子行共用同一条右基准线
+                .frame(maxWidth: .infinity, alignment: .trailing)
             } else {
                 innerRow("日期") {
                     Picker("", selection: Binding(
@@ -202,7 +210,8 @@ struct RecurrencePickerView: View {
                         ForEach(1...31, id: \.self) { Text("\($0)日").tag($0) }
                     }
                     .labelsHidden()
-                    .frame(width: 70)
+                    // 「31日」固有宽约 69.5pt，留余量避免末位被裁
+                    .frame(width: 76)
                 }
                 FormHint("（当月无此日则跳过）")
             }
@@ -241,6 +250,8 @@ struct RecurrencePickerView: View {
                 ), displayedComponents: [.date])
                     .labelsHidden()
                     .formControlSizing()
+                    // 结束日期同样贴右，与「结束重复」下拉共用右基准线
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             case .count:
                 Stepper("共 \(binding.wrappedValue.end.count ?? 1) 次",
                         value: Binding(
@@ -248,6 +259,7 @@ struct RecurrencePickerView: View {
                             set: { binding.wrappedValue.end.count = $0 }
                         ), in: 1...999)
                     .controlSize(.small)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
     }
