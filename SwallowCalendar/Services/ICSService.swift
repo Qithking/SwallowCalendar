@@ -123,7 +123,7 @@ final class ICSService {
             guard isReadingEvent, var event = currentEvent else { continue }
 
             if trimmed.hasPrefix("SUMMARY:") {
-                event.summary = String(trimmed.dropFirst(8))
+                event.summary = Self.unescapeText(String(trimmed.dropFirst(8)))
             } else if trimmed.hasPrefix("DTSTART") {
                 event.startDate = parseICSDate(trimmed, formatter: formatter)
                 // B-11/B-20：值区取最后一个冒号之后——部分生成器 TZID 参数含冒号
@@ -135,13 +135,56 @@ final class ICSService {
             } else if trimmed.hasPrefix("DTEND") {
                 event.endDate = parseICSDate(trimmed, formatter: formatter)
             } else if trimmed.hasPrefix("UID:") {
-                event.uid = String(trimmed.dropFirst(4))
+                event.uid = Self.unescapeText(String(trimmed.dropFirst(4)))
             }
 
             currentEvent = event
         }
 
         return events
+    }
+
+    // MARK: - ICS TEXT Unescaping
+
+    /// RFC5545 TEXT 反转义（解析侧唯一入口）：
+    /// `\\`→`\`、`\,`→`,`、`\;`→`;`、`\n`/`\N`→换行；
+    /// 未知序列（如 `\q`）与末尾孤立 `\` 原样保留，不吞反斜杠。
+    /// 仅用于属性值（SUMMARY/UID 等），不得用于 TZID/DTSTART 等带参数的结构值。
+    static func unescapeText(_ value: String) -> String {
+        // 绝大多数事件无转义，直接返回避免无谓的逐字符重建
+        guard value.contains("\\") else { return value }
+
+        var result = ""
+        result.reserveCapacity(value.count)
+        var index = value.startIndex
+        while index < value.endIndex {
+            let character = value[index]
+            guard character == "\\" else {
+                result.append(character)
+                index = value.index(after: index)
+                continue
+            }
+
+            let next = value.index(after: index)
+            guard next < value.endIndex else {
+                // 末尾孤立反斜杠：保留
+                result.append("\\")
+                break
+            }
+
+            switch value[next] {
+            case "n", "N": result.append("\n")
+            case "\\": result.append("\\")
+            case ",": result.append(",")
+            case ";": result.append(";")
+            default:
+                // 未知转义：保留反斜杠与后续字符
+                result.append("\\")
+                result.append(value[next])
+            }
+            index = value.index(after: next)
+        }
+        return result
     }
 
     // MARK: - Cache Management
