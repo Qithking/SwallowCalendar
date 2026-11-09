@@ -25,7 +25,7 @@ enum EventPriority: Int, CaseIterable {
 
 // MARK: - Recurrence Type
 
-/// 循环类型：rawValue 是持久化键（体检 P1-#3 完整解耦），显示一律用 displayName；
+/// 循环类型：rawValue 是持久化键（与显示解耦），显示一律用 displayName；
 /// 历史版本曾用中文文案作键，存量行由 EventCacheService 启动迁移改写为英文稳定键，
 /// init?(rawValue:) 保留中文回落兜底（迁移失败/未迁移的旧库仍可读）
 enum RecurrenceType: String, CaseIterable {
@@ -105,7 +105,7 @@ enum EventCategory: String, CaseIterable {
     case user = "用户"         // 用户创建的事件
 }
 
-// MARK: - ValidityPeriod（spec/task-validity-period AC-1~AC-6）
+// MARK: - ValidityPeriod
 
 /// 任务有效期区间（仅服务/UI 层载体，SwiftData 落库走 CachedEvent 双 Date? 字段）
 /// 双端可独立缺省：nil = 该端不限制；闭区间（含端点），精确到时分
@@ -124,7 +124,7 @@ struct CalendarEvent: Identifiable {
     let startDate: Date?
     let endDate: Date?
     let isAllDay: Bool
-    /// 所属日历的 EK identifier（B-9：同步插入时按 identifier 匹配日历，
+    /// 所属日历的 EK identifier（同步插入时按 identifier 匹配日历，
     /// 避免 title 同名/本地化差异取错日历）
     let calendarID: String
     let calendarTitle: String
@@ -143,20 +143,20 @@ struct CalendarEvent: Identifiable {
     var recurrenceSpec: RecurrenceSpec? = nil
     /// 提醒提前分钟数（0=不提醒）
     let reminderMinutes: Int
-    /// 多级提醒提前分钟数组（plan 步骤 7，nil = EK 侧无多级 alarm；与 reminderMinutes.max 同源）
+    /// 多级提醒提前分钟数组（nil = EK 侧无多级 alarm；与 reminderMinutes.max 同源）
     var reminderOffsets: [Int]? = nil
-    /// EK 侧闹钟是否为 absolute（绝对时刻）型：任务 E 模式（bug: reminder-app-shows-advanced-time）
+    /// EK 侧闹钟是否为 absolute（绝对时刻）型：
     /// 应用为 EKReminder 写准点 absolute(due) 闹钟，EK 侧不携带提前量，
-    /// 提前提醒真源为缓存 reminderOffsets（bug: reminder-offsets-wiped-by-sync）
+    /// 提前提醒真源为缓存 reminderOffsets
     var reminderAlarmIsAbsolute: Bool = false
     /// 用户选择的事件颜色（nil 时使用 calendarColorHex）
     let eventColorHex: String?
-    /// B-25：EK 事件备注（仅系统日历同步拉取时填充，供 syncEvents 判分类/完成标记，
+    /// EK 事件备注（仅系统日历同步拉取时填充，供 syncEvents 判分类/完成标记，
     /// 避免循环内逐条 eventStore.event(withIdentifier:) 跨进程查询；其余路径为 nil）
     var notes: String? = nil
-    /// 智能跳过节假日标记（plan 步骤①，cachedToCalendarEvent 从缓存透传）
+    /// 智能跳过节假日标记（cachedToCalendarEvent 从缓存透传）
     var skipHolidays: Bool = false
-    /// 任务有效期区间（spec/task-validity-period AC-6，cachedToCalendarEvent 透传；
+    /// 任务有效期区间（cachedToCalendarEvent 透传；
     /// 仅循环任务有周期语义，两端可独立缺省，nil = 该端不限制）
     var validity: ValidityPeriod? = nil
 

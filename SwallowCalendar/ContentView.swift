@@ -18,9 +18,9 @@ struct ContentView: View {
     @Query private var calendarPreferences: [CalendarPreference]
 
     @State private var selectedDate = Date()
-    // V-32：CalendarService.shared 是单例引用，语义为常量依赖，用 let 而非 @State（@State 用于值语义状态）
+    // CalendarService.shared 是单例引用，语义为常量依赖，用 let 而非 @State（@State 用于值语义状态）
     private let calendarService = CalendarService.shared
-    @State private var eventsChangedSyncTask: Task<Void, Never>?  // V-1：事件变更防抖同步任务
+    @State private var eventsChangedSyncTask: Task<Void, Never>?  // 事件变更防抖同步任务
     @State private var syncState: SyncFeedbackState = .idle  // 同步按钮反馈状态
 
     // 同步按钮反馈三态：同步中菊花 / 成功绿勾 / 失败红 X（附弹窗），终态 2 秒后复原
@@ -31,7 +31,7 @@ struct ContentView: View {
         case failure(String)
     }
     
-    // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
+    // 直接读 appSettings 主题色，无需 @State 复制 + onChange 同步
     private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
 
     var body: some View {
@@ -59,7 +59,7 @@ struct ContentView: View {
                     calendarService: calendarService,
                     calendarPreferences: calendarPreferences,
                     onEventsChanged: {
-                        // V-1：连续增删改（批量完成/删除等）会触发多次全量同步，
+                        // 连续增删改（批量完成/删除等）会触发多次全量同步，
                         // 先取消上一个防抖任务，静默 2 秒无新变更后只执行一次同步，避免同步风暴
                         eventsChangedSyncTask?.cancel()
                         eventsChangedSyncTask = Task {
@@ -96,7 +96,7 @@ struct ContentView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("CalendarCacheCleared"))) { _ in
-            // V-6：缓存被清空后重新全量同步，恢复本地数据
+            // 缓存被清空后重新全量同步，恢复本地数据
             Task {
                 await BackgroundSyncService.shared.syncOnce()
             }
@@ -210,7 +210,7 @@ struct ContentView: View {
         // 将环境 ModelContext 注入服务层，确保服务写入与 @Query 读取使用同一上下文
         EventCacheService.shared.setMainContext(modelContext)
 
-        // 请求日历权限（S-7：按需拆分——提醒同步默认关闭，关闭时仅请求日历权限，
+        // 请求日历权限（按需拆分——提醒同步默认关闭，关闭时仅请求日历权限，
         // 不无条件索要提醒 fullAccess）
         let syncReminders = appSettings.syncSystemReminders
         var reminderGranted = calendarService.reminderAuthorizationStatus == .fullAccess
@@ -236,8 +236,8 @@ struct ContentView: View {
         calendarService.loadCalendars()
 
         // 初始化默认自定义日历
-        // N-5：默认订阅源仅首次启动插入一次（UserDefaults 标记）——原 isEmpty 判断会在
-        // 用户删光全部订阅源后重启时复活默认源，导致删除无法持久生效
+        // 默认订阅源仅首次启动插入一次（UserDefaults 标记），
+        // 用户删光全部订阅源后重启时不会复活默认源，删除可持久生效
         let seedKey = "hasSeededDefaultCalendarSource"
         if !UserDefaults.standard.bool(forKey: seedKey) {
             let defaultSource = CustomCalendarSource(
