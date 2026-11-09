@@ -146,7 +146,7 @@ struct DataExportSettingsView: View {
 
                 // 获取所有启用的日历（modelContext 限主线程访问，数据收集保留在此处）
                 let descriptor = FetchDescriptor<CalendarPreference>()
-                // 偏好缺失时按未过滤（全部启用）导出，保证导出不中断；失败落日志（审计 M6）
+                // 偏好缺失时按未过滤（全部启用）导出，保证导出不中断；失败落日志
                 let preferences = CacheFetch.degradeToEmpty(
                     descriptor,
                     in: modelContext,
@@ -155,10 +155,10 @@ struct DataExportSettingsView: View {
                 )
                 let enabledCals = calendarService.enabledCalendars(preferences: preferences)
 
-                // V-4：导出范围改为全部时间——原"现在~+2 年"会漏掉历史与远期事项
+                // 导出范围为全部时间——有界区间会漏掉历史与远期事项
                 let events = calendarService.fetchEvents(from: .distantPast, to: .distantFuture, calendars: enabledCals)
 
-                // V-4：ICS 生成与写盘是纯 CPU/IO 操作，移到后台线程执行，避免大量事件时卡顿主线程
+                // ICS 生成与写盘是纯 CPU/IO 操作，移到后台线程执行，避免大量事件时卡顿主线程
                 try await Task.detached(priority: .userInitiated) {
                     let icsContent = Self.generateICS(events: events)
 
@@ -189,10 +189,10 @@ struct DataExportSettingsView: View {
         
         Task {
             do {
-                // 100ms 延迟让用户看到进度；clearCache 已 async（见下方 R-21），sleep 仅保留进度反馈
+                // 100ms 延迟让用户看到进度；clearCache 已 async（见下方），sleep 仅保留进度反馈
                 try await Task.sleep(nanoseconds: 100_000_000)
                 
-                // R-21：clearCache 改 async（逐行 delete 让出 runloop），await 等待完成
+                // clearCache 为 async（逐行 delete 让出 runloop），await 等待完成
                 await EventCacheService.shared.clearCache()
                 ICSService.shared.clearCache()
 
@@ -202,7 +202,7 @@ struct DataExportSettingsView: View {
                 await MainActor.run {
                     isClearing = false
                     clearStatus = .success
-                    // R-21：清除后刷新统计区——原仅 onAppear 加载，清除后「本地事项数」仍显示旧值
+                    // 清除后刷新统计区——仅 onAppear 加载的话，清除后「本地事项数」仍显示旧值
                     loadEventCount()
                     
                     // 5 秒后自动清除状态（sleep 失败直接跳过，无需上抛）
@@ -313,7 +313,7 @@ struct DataExportSettingsView: View {
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: ",", with: "\\,")
             .replacingOccurrences(of: ";", with: "\\;")
-            // V-34：RFC5545 文本中裸 CR 非法，\r 通常伴随 \n 出现（\n 已转义），
+            // RFC5545 文本中裸 CR 非法，\r 通常伴随 \n 出现（\n 已转义），
             // 残余的单独 \r 直接移除
             .replacingOccurrences(of: "\r", with: "")
             .replacingOccurrences(of: "\n", with: "\\n")

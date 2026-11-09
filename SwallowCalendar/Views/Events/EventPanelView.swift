@@ -19,7 +19,7 @@ struct EventPanelView: View {
     // 父 onAppear 同值赋值幂等不触发二刷；设置变更仍由下方 onChange 兜底
     @State private var filterMode: EventFilterMode = AppSettings.shared.defaultFilterModeEnum
     @State private var refreshTrigger = false
-    // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
+    // 直接读 appSettings 主题色，无需 @State 复制与 onChange 同步
     private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
     @State private var todoExpanded = true
     @State private var completedExpanded = false
@@ -80,7 +80,7 @@ struct EventPanelView: View {
                     },
                     onCompleteEvent: { event in
                         Task {
-                            // V-2：先 await 数据变更完成，再触发刷新，避免列表回显旧状态
+                            // 先 await 数据变更完成，再触发刷新，避免列表回显旧状态
                             await calendarService.toggleEventCompleted(eventID: event.id, isCompleted: true, isReminder: event.isReminder)
                             // D2/G7v2：完成路径广播缓存变更（徽标即时刷新）
                             NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
@@ -122,7 +122,7 @@ struct EventPanelView: View {
                     },
                     onUncompleteEvent: { event in
                         Task {
-                            // V-2：先 await 数据变更完成，再触发刷新，避免列表回显旧状态
+                            // 先 await 数据变更完成，再触发刷新，避免列表回显旧状态
                             await calendarService.toggleEventCompleted(eventID: event.id, isCompleted: false, isReminder: event.isReminder)
                             // D2/G7v2：取消完成同样改变未完成集合，广播缓存变更（徽标即时刷新）
                             NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
@@ -142,7 +142,7 @@ struct EventPanelView: View {
             }
         }
         .animation(.easeInOut(duration: 0.15), value: isEditingAttributes)
-        // V-36：通知/设置监听从 EmptyView hacky 写法迁移到根视图修饰符（语义等价、写法正规）
+        // 通知/设置监听挂在根视图修饰符
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SystemCalendarPreferencesChanged"))) { _ in
             refreshTrigger.toggle()
         }
@@ -150,7 +150,7 @@ struct EventPanelView: View {
             refreshTrigger.toggle()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("CalendarCacheCleared"))) { _ in
-            // V-6：缓存被清空后立即刷新列表，避免展示已删除的旧数据
+            // 缓存被清空后立即刷新列表，避免展示已删除的旧数据
             refreshTrigger.toggle()
         }
         .onChange(of: appSettings.syncSystemReminders) { _, _ in
@@ -169,7 +169,7 @@ struct EventPanelView: View {
 
     @MainActor
     private func showDeleteConfirmation(event: CalendarEvent) {
-        // 单条化 plan step 8：循环任务只存一条，不再依赖 groupId 判定
+        // 单条化：循环任务只存一条，不再依赖 groupId 判定
         let isRecurring = event.recurrenceType != .none
 
         let alert = NSAlert()
@@ -245,8 +245,8 @@ enum EventFilterMode: String, CaseIterable, Codable {
             let end = cal.date(byAdding: .year, value: 1, to: start)!
             return (start, end)
         case .all:
-            // V-22："全部"语义修正为真全部（与 ICS 导出语义一致），
-            // 不再隐含 ±5 年窗口，避免用户 5 年前/后的历史事项在"全部"视图不可见
+            // "全部"为真全部（与 ICS 导出语义一致），
+            // 不隐含 ±5 年窗口，避免用户 5 年前/后的历史事项在"全部"视图不可见
             return (.distantPast, .distantFuture)
         }
     }

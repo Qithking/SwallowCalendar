@@ -8,10 +8,10 @@ import SwiftData
 import EventKit
 import AppKit
 
-// MARK: - Hover 弹窗自管窗口（替代 NSPopover）
+// MARK: - Hover 弹窗自管窗口
 
 /// NSPopover 在屏幕右缘空间不足时会被系统强制 reposition（弹窗整体左移、
-/// 箭头仍指锚点格子），观感为"错位一格以上"。改为自管 borderless 窗口：
+/// 箭头仍指锚点格子），观感为"错位一格以上"。用自管 borderless 窗口：
 /// 优先在锚点左侧、垂直居中显示（弹窗主体位于主面板外侧，箭头在右缘指向锚点），
 /// 左侧空间不足时 fallback 到垂直布局（悬停锚点上方、放不下翻转到下方）。
 /// 窗口忽略鼠标事件：点击全部穿透到主面板，hover 离开自然驱动关闭（等效 transient）。
@@ -354,7 +354,7 @@ struct CalendarGridView: View {
     // MARK: - Date Grid
 
     private var dateGrid: some View {
-        // V-9：@Query 下沉到子视图并以展示月为查询窗口（视图随 currentMonth 重建时
+        // @Query 下沉到子视图并以展示月为查询窗口（视图随 currentMonth 重建时
         // 谓词同步更新），避免全表加载后在 30+ 个日期格内重复过滤
         MonthEventGrid(
             month: currentMonth,
@@ -412,7 +412,7 @@ struct CalendarGridView: View {
     }
 }
 
-// MARK: - 月度事件网格（V-9：@Query 携带展示月窗口谓词）
+// MARK: - 月度事件网格（@Query 携带展示月窗口谓词）
 
 /// 承载月视图日期网格与事件查询的子视图。
 /// @Query 谓词在 init 中按 month 构建视图窗口（视图随 currentMonth 变化重建时谓词同步更新），
@@ -460,7 +460,7 @@ private struct MonthEventGrid: View {
 
     var body: some View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
-        // 循环任务展开合并（bug: calendar-grid-recurring-invisible）：@Query 直查主表
+        // 循环任务展开合并：@Query 直查主表
         // 只能看到 base 行（过去首实例），未来 occurrence 未落库——按月窗口展开合并，
         // 休日实例保留（includeHolidaySkipped）供「已智能跳过」标识机制识别
         let events = EventCacheService.shared.mergedDisplayEvents(
@@ -596,8 +596,8 @@ private struct MonthEventGrid: View {
         let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
         return events.filter { event in
             guard let start = event.startDate, let end = event.endDate else { return false }
-            // B-1 零长事件（start==end，如全天任务/仅日期提醒映射产物 00:00）视为覆盖开始当天：
-            // 原判定 end > startOfDay 对 00:00 实例恒为 false，全天循环实例永远进不了日期格
+            // 零长事件（start==end，如全天任务/仅日期提醒映射产物 00:00）视为覆盖开始当天：
+            // end > startOfDay 对 00:00 实例恒为 false，全天循环实例会永远进不了日期格
             if start == end {
                 guard start >= startOfDay && start < endOfDay else { return false }
             } else {

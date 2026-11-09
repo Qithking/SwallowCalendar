@@ -79,7 +79,7 @@ struct GeneralSettingsView: View {
                                 )
                                 .onTapGesture {
                                     settings.accentColorHex = colorHex
-                                    // R-19：同步回写 @State——原只写 settings，ColorPicker
+                                    // 同步回写 @State——只写 settings 的话，ColorPicker
                                     // 仍持旧 customAccentColor 为基线，轻点即以旧值覆写刚选的预设色
                                     customAccentColor = Color(hex: colorHex)
                                 }
@@ -119,7 +119,7 @@ struct GeneralSettingsView: View {
                 Toggle("显示农历", isOn: $settings.showLunarCalendar)
                     .toggleStyle(.switch)
 
-                // 显示待办面板（需求：四态下拉，顺序按需求原话——菜单栏图标控制
+                // 显示待办面板：四态下拉（菜单栏图标控制
                 // hover 弹层，桌面面板控制常驻面板，两者=现有逻辑）
                 Picker("显示待办面板", selection: $settings.todoPanelDisplayMode) {
                     ForEach([AppSettings.TodoPanelDisplayMode.none,
@@ -136,7 +136,7 @@ struct GeneralSettingsView: View {
     }
 
     // 预览格式化器缓存：格式未变化时复用（body 每次求值都会调用本计算属性）
-    // V-25：标注 @MainActor 隔离——View 是 struct，非隔离 static var 在并发下有数据竞争；
+    // @MainActor 隔离——View 是 struct，非隔离 static var 在并发下有数据竞争；
     // 访问方 body 与预览计算均在主线程，隔离到 MainActor 即可
     @MainActor
     private static var previewFormatCache: (format: String, formatter: DateFormatter)?

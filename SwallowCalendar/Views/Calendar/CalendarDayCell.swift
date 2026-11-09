@@ -56,7 +56,7 @@ struct CalendarDayCell: View {
     /// 进出格子只重渲染该格自身，不再触发父视图 42 格全网格重算（性能修复）
     @State private var isHovered = false
 
-    // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
+    // 直接读 appSettings 主题色，无需 @State 复制与 onChange 同步
     private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
 
     /// 计算属性：判断是否有系统日历事件（非订阅、非用户）
@@ -76,7 +76,7 @@ struct CalendarDayCell: View {
 
     // MARK: - Holiday/Work Marks
 
-    /// V-35：休/班标记判定改用 HolidaySkipResolver 公共匹配器（关键词单一真源，
+    /// 休/班标记判定用 HolidaySkipResolver 公共匹配器（关键词单一真源，
     /// 与智能跳过节假日共用口径，防两处漂移）
     private var showRestMark: Bool {
         eventItems.contains { HolidaySkipResolver.isRestTitle($0.title) }

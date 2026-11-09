@@ -34,16 +34,14 @@ struct EventItemRow: View {
 
     /// 行内操作统一入口：先复位 hover 再执行动作。
     /// 鼠标悬停在行内点击按钮时 onHover(false) 不会触发，弹窗会残留
-    /// （bug: popover-leftover-on-row-complete——重复任务完成后事件本体保留
-    ///   （startDate 推进式序列），行不移除、dismantle 兜底不存在，
-    ///   视图更新期间移出事件偶发丢失时 isHovered 卡 true，弹窗悬空；
-    ///   编辑按钮历史修复 popover-not-dismissed-on-edit 同型缺口）
+    /// （重复任务完成后事件本体保留（startDate 推进式序列），行不移除、dismantle 兜底不存在，
+    ///   视图更新期间移出事件偶发丢失时 isHovered 卡 true，弹窗悬空）
     static func performRowAction(isHovered: Binding<Bool>, action: () -> Void) {
         isHovered.wrappedValue = false
         action()
     }
 
-    /// 时间徽标分流（bug: completed-row-overdue-capsule——已完成历史行不渲染倒计时/
+    /// 时间徽标分流（已完成历史行不渲染倒计时/
     /// 「已过期」标识：CountdownTextView 仅收 startDate 无完成态信息，过去 startDate
     /// 的完成历史行会在内部归零渲染「已过期」白字彩底胶囊，须行级提前分流；
     /// 口径对齐桌面面板 DesktopTodoPanelView 的 !isCompleted 守卫）
@@ -104,7 +102,7 @@ struct EventItemRow: View {
                             .foregroundColor(.secondary)
 
                         if !Self.showsTimeBadge(isCompleted: event.isCompleted, isOverdue: isOverdue) {
-                            // bug: completed-row-overdue-capsule——已完成历史行不渲染时间徽标
+                            // 已完成历史行不渲染时间徽标
                         } else if isOverdue {
                             Text("已过期")
                                 .font(.system(size: 10, weight: .medium))
@@ -119,7 +117,7 @@ struct EventItemRow: View {
                             .foregroundColor(.secondary)
 
                         if !Self.showsTimeBadge(isCompleted: event.isCompleted, isOverdue: isOverdue) {
-                            // bug: completed-row-overdue-capsule——已完成历史行不渲染时间徽标
+                            // 已完成历史行不渲染时间徽标
                         } else if isOverdue {
                             Text("已过期")
                                 .font(.system(size: 10, weight: .medium))
@@ -360,7 +358,7 @@ private struct EventRowPopoverContent: View {
         return dateTimeWithYearFormatter.string(from: date)
     }
 
-    /// 有效期展示文本（spec AC-6）：「yyyy/M/d ~ yyyy/M/d」，缺省端显示「不限」
+    /// 有效期展示文本：「yyyy/M/d ~ yyyy/M/d」，缺省端显示「不限」
     private static func validityText(_ validity: ValidityPeriod) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")

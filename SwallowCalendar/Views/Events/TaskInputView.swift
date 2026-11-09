@@ -30,7 +30,7 @@ struct TaskInputView: View {
     @State private var taskReminderOffsets: [Int] = []
     @State private var taskIsLunar = false
     @State private var showAttributeEditor = false
-    // V-7：用户手动修改过的属性标记——NLP 解析只覆盖未手动修改的字段，避免覆盖用户手选值
+    // 用户手动修改过的属性标记——NLP 解析只覆盖未手动修改的字段，避免覆盖用户手选值
     @State private var manuallyEditedDate = false
     @State private var manuallyEditedColor = false
     @State private var manuallyEditedPriority = false
@@ -38,9 +38,9 @@ struct TaskInputView: View {
     @State private var manuallyEditedReminder = false
     @State private var manuallyEditedLunar = false
     @State private var createAsReminder = false  // 是否创建为系统提醒
-    // V-16：全天由用户显式控制，NLP"明天"解析为 00:00 不再被隐式误判为全天
+    // 全天由用户显式控制，NLP"明天"解析为 00:00 不再被隐式误判为全天
     @State private var taskIsAllDay = false
-    // 智能跳过节假日（AC-7）：勾选后 startDate 落休日顺延至下一个班日显示与提醒
+    // 智能跳过节假日：勾选后 startDate 落休日顺延至下一个班日显示与提醒
     @State private var taskSkipHolidays = false
     // 任务有效期（spec/task-validity-period）：总开关默认关；开启后开始端默认勾选=任务日期、结束端不勾选
     @State private var taskValidityEnabled = false
@@ -50,7 +50,7 @@ struct TaskInputView: View {
     @State private var taskValidityEnd = Date()
     @State private var nlpTask: Task<Void, Never>?
 
-    // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
+    // 直接读 appSettings 主题色，无需 @State 复制与 onChange 同步
     private var themeAccent: Color { Color(hex: appSettings.accentColorHex) }
 
     var body: some View {
@@ -78,9 +78,9 @@ struct TaskInputView: View {
                                 updateFromNLP(newValue)
                             }
                         } else {
-                            // bug: task-input-clear-attribute-leak——清空输入不提交时，
+                            // 清空输入不提交时，
                             // 上次编辑的属性与 manuallyEdited 标记残留泄漏到下一条任务
-                            // （V-7 标记残留使 NLP 不覆盖用户上次手选字段）；
+                            // （标记残留使 NLP 不覆盖用户上次手选字段）；
                             // 提交路径复位在 addTask→resetTaskAttributes，此处为清空路径对称复位
                             resetTaskAttributes()
                         }
@@ -142,7 +142,7 @@ struct TaskInputView: View {
             }
         }
         .onDisappear {
-            // V-15：面板关闭时取消残留的 NLP 防抖任务——200ms 后解析仍会
+            // 面板关闭时取消残留的 NLP 防抖任务——200ms 后解析仍会
             // 执行一次并覆盖已重置的状态
             nlpTask?.cancel()
         }
@@ -187,7 +187,7 @@ struct TaskInputView: View {
                             "",
                             selection: Binding(
                                 get: { taskDate },
-                                set: { taskDate = $0; manuallyEditedDate = true }  // V-7：手选日期不被 NLP 覆盖
+                                set: { taskDate = $0; manuallyEditedDate = true }  // 手选日期不被 NLP 覆盖
                             ),
                             displayedComponents: taskIsAllDay ? [.date] : [.date, .hourAndMinute]
                         )
@@ -196,7 +196,7 @@ struct TaskInputView: View {
                         .formControlSizing()
                     }
                     FormRow("全天") {
-                        // V-16：显式"全天"开关替代时分==0 隐式推断，用户可控可感知
+                        // 显式"全天"开关，不按时分==0 隐式推断，用户可控可感知
                         Toggle("", isOn: $taskIsAllDay)
                             .toggleStyle(.switch)
                             .labelsHidden()
@@ -205,7 +205,7 @@ struct TaskInputView: View {
                     FormRow("农历") {
                         Toggle("", isOn: Binding(
                             get: { taskIsLunar },
-                            set: { taskIsLunar = $0; manuallyEditedLunar = true }  // V-7：手选开关不被 NLP 覆盖
+                            set: { taskIsLunar = $0; manuallyEditedLunar = true }  // 手选开关不被 NLP 覆盖
                         ))
                         .toggleStyle(.switch)
                         .labelsHidden()
@@ -226,7 +226,7 @@ struct TaskInputView: View {
                         RecurrencePickerView(
                             preset: Binding(
                                 get: { taskPreset },
-                                // V-7：手选周期不被 NLP 覆盖
+                                // 手选周期不被 NLP 覆盖
                                 set: { taskPreset = $0; manuallyEditedRecurrence = true }
                             ),
                             spec: Binding(
@@ -290,13 +290,13 @@ struct TaskInputView: View {
                     FormRow("颜色") {
                         FormColorSwatches(selection: Binding(
                             get: { taskColor },
-                            set: { taskColor = $0; manuallyEditedColor = true }  // V-7：手选颜色不被 NLP 覆盖
+                            set: { taskColor = $0; manuallyEditedColor = true }  // 手选颜色不被 NLP 覆盖
                         ))
                     }
                     FormRow("优先级") {
                         FormPriorityPicker(selection: Binding(
                             get: { taskPriority },
-                            set: { taskPriority = $0; manuallyEditedPriority = true }  // V-7：手选优先级不被 NLP 覆盖
+                            set: { taskPriority = $0; manuallyEditedPriority = true }  // 手选优先级不被 NLP 覆盖
                         ))
                     }
                 }
@@ -308,7 +308,7 @@ struct TaskInputView: View {
                         ReminderLeadPickerView(
                             offsets: Binding(
                                 get: { taskReminderOffsets },
-                                set: { taskReminderOffsets = $0; manuallyEditedReminder = true }  // V-7：手选提醒不被 NLP 覆盖
+                                set: { taskReminderOffsets = $0; manuallyEditedReminder = true }  // 手选提醒不被 NLP 覆盖
                             )
                         )
                     }
@@ -333,7 +333,7 @@ struct TaskInputView: View {
         }
         let parsed = NLPTaskParser.parse(text)
         taskTitle = parsed.title
-        // V-7：仅覆盖用户未手动修改的字段，手选值不被 NLP 解析结果覆盖
+        // 仅覆盖用户未手动修改的字段，手选值不被 NLP 解析结果覆盖
         if !manuallyEditedDate { taskDate = parsed.date }
         if !manuallyEditedColor { taskColor = parsed.color }
         if !manuallyEditedPriority { taskPriority = parsed.priority ?? .none }
@@ -360,19 +360,19 @@ struct TaskInputView: View {
         let text = inputText.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
 
-        // R-8：冲刷 200ms NLP 防抖——输入后 200ms 内回车时防抖任务尚未执行，
+        // 冲刷 200ms NLP 防抖——输入后 200ms 内回车时防抖任务尚未执行，
         // taskTitle 仍是旧值/空值，落库「待办事项」且用户文本被清空丢弃。
-        // 取消挂起任务并按当前输入框文本同步重解析（V-7 手动修改标记仍生效）
+        // 取消挂起任务并按当前输入框文本同步重解析（手动修改标记仍生效）
         nlpTask?.cancel()
         updateFromNLP(inputText)
 
         isProcessing = true
 
-        // V-16：全天由用户开关决定——原"时分均为 0"推断会把 NLP 解析的
+        // 全天由用户开关决定——按"时分均为 0"推断会把 NLP 解析的
         // "明天"（00:00）误判为全天事件，用户无感知
         let isAllDay = taskIsAllDay
 
-        // 有效期组装（spec AC-6，plan step 11）：开关关 = nil 不限制；开 = 按两端勾选组装
+        // 有效期组装：开关关 = nil 不限制；开 = 按两端勾选组装
         // （归一化落库由 createEvent 内完成）
         let validity: ValidityPeriod? = taskValidityEnabled ? ValidityPeriod(
             start: taskValidityHasStart ? taskValidityStart : nil,
@@ -430,7 +430,7 @@ struct TaskInputView: View {
         showAttributeEditor = false
         // 同步父视图编辑态：提交/重置后恢复下方模块显示
         isEditingAttributes = false
-        // V-7：重置手动修改标记，下一条任务的 NLP 解析恢复全字段覆盖
+        // 重置手动修改标记，下一条任务的 NLP 解析恢复全字段覆盖
         manuallyEditedDate = false
         manuallyEditedColor = false
         manuallyEditedPriority = false

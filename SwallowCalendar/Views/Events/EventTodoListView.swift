@@ -43,7 +43,7 @@ struct EventTodoListView: View {
     }
 
     // 首刷（onAppear）同步立即查询：查询仅毫秒级，先于 .task 全量同步占用主线程执行，
-    // 消除重开面板时列表空窗（此前首刷排在全量同步与月历渲染之后，空窗约 300ms）
+    // 避免重开面板时列表空窗（排在全量同步与月历渲染之后再首刷会空窗约 300ms）
     private func refreshImmediately() {
         refreshTask?.cancel()
         refreshCachedEvents()
@@ -207,7 +207,7 @@ struct EventTodoListView: View {
         .onChange(of: appSettings.sortOrder) { _, _ in
             debouncedRefresh()
         }
-        // 4 视图同步（bug: four-view-todo-sync）：别处（桌面面板/菜单弹层/过期弹窗）
+        // 4 视图同步：别处（桌面面板/菜单弹层/过期弹窗）
         // 完成或编辑后经 .cachedEventsChanged 广播触发重载，与 pop/桌面面板同款链路
         .onReceive(NotificationCenter.default.publisher(for: .cachedEventsChanged)) { _ in
             debouncedRefresh()

@@ -24,7 +24,7 @@ struct VisualEffectView: NSViewRepresentable {
     
     func updateNSView(_ view: NSView, context: Context) {
         if #available(macOS 26.0, *), view is NSGlassEffectView {
-            // N-12：glass 分支无 material/blendingMode 对应属性（样式由 style 固定），
+            // glass 分支无 material/blendingMode 对应属性（样式由 style 固定），
             // 参数变化时无可更新项，与 classic 分支的参数回写区分开
         } else if let visualView = view as? NSVisualEffectView {
             // macOS 15 及以下: 更新 Visual Effect View

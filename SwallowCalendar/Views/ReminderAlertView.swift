@@ -10,7 +10,7 @@ import SwiftUI
 
 // MARK: - 提醒弹窗窗口（borderless 圆角，支持成为 key 窗口以响应键盘）
 
-// E-12：NSWindow 本身主线程隔离，显式标注对齐类型系统保证
+// NSWindow 本身主线程隔离，显式标注对齐类型系统保证
 @MainActor
 final class ReminderAlertWindow: NSWindow {
     override var canBecomeKey: Bool { true }
@@ -81,8 +81,8 @@ final class ReminderAlertWindowController {
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.contentView = hostingView
 
-        // 定位到屏幕右上角（与原 NSAlert 逻辑一致：上边距 20、右边距 20）
-        // V-26：固定用主屏——keyWindow 可能是即将关闭的弹窗自身，会导致定位漂移
+        // 定位到屏幕右上角：上边距 20、右边距 20
+        // 固定用主屏——keyWindow 可能是即将关闭的弹窗自身，会导致定位漂移
         let screen = NSScreen.main ?? NSScreen.screens.first
         if let visibleFrame = screen?.visibleFrame {
             window.setFrameOrigin(NSPoint(
@@ -114,9 +114,9 @@ struct ReminderAlertView: View {
     let hiddenCount: Int
     let onDismiss: () -> Void
     let onCompleteAll: () -> Void
-    /// C2：单条完成回调（eventID）
+    /// 单条完成回调（eventID）
     let onEventComplete: (String) -> Void
-    /// C2：稍后提醒回调（eventID, minutes）
+    /// 稍后提醒回调（eventID, minutes）
     let onSnooze: (String, Int) -> Void
 
     /// 单条完成/稍后提醒后从弹窗移除该行（其余保留，全部移除后自动关闭）
@@ -145,7 +145,7 @@ struct ReminderAlertView: View {
         })
     }
 
-    // V-18：直接读共享设置的主题色（弹窗为独立窗口，无 appSettings 环境可注入）
+    // 直接读共享设置的主题色（弹窗为独立窗口，无 appSettings 环境可注入）
     private var accentColor: Color { Color(hex: AppSettings.shared.accentColorHex) }
 
     private static let dateFormatter: DateFormatter = {
@@ -271,7 +271,7 @@ struct ReminderAlertView: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("稍后提醒")
-            // 单条完成：事项变已办并从弹窗移除，其余保留（AC-4）
+            // 单条完成：事项变已办并从弹窗移除，其余保留
             Button {
                 removeRow(event)
                 onEventComplete(event.eventID)

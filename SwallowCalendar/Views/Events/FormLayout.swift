@@ -100,7 +100,7 @@ struct FormSection<Content: View>: View {
         .padding(.vertical, FormMetrics.cardPaddingVertical)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            // 半透明材质替代原 controlBackgroundColor 实色（浅色下不再是一块纯白），
+            // 半透明材质（浅色下不是一块纯白），
             // 与桌面面板 DesktopTodoPanelView 使用同一类 SwiftUI Material
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(.thinMaterial)
@@ -114,7 +114,7 @@ struct FormSection<Content: View>: View {
 }
 
 extension View {
-    /// 表单行控件统一尺寸：取消逐控件固定宽度，改为按自身固有宽度布局。
+    /// 表单行控件统一尺寸：按自身固有宽度布局，不用逐控件固定宽度。
     /// 右边缘由 FormRow 的 trailing 容器统一贴齐，所以日期选择器（以其最右侧上下箭头为准）、
     /// 开关、下拉、色点的右边缘都落在同一条基准线上
     func formControlSizing() -> some View {

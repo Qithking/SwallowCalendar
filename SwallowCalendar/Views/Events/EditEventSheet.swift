@@ -25,7 +25,7 @@ struct EditEventSheet: View {
     @State private var title: String
     @State private var startDate: Date
     @State private var isAllDay: Bool
-    // 智能跳过节假日（AC-7）：初始值从缓存读取，保存时写回
+    // 智能跳过节假日：初始值从缓存读取，保存时写回
     @State private var skipHolidays = false
     // 任务有效期（spec/task-validity-period）：控件态从缓存读初值；
     // originalValidity 保存 init 快照，saveEvent 比较判定三态触碰（Equatable 精确相等）
@@ -51,11 +51,11 @@ struct EditEventSheet: View {
     
     /// 原始 spec 快照（幂等比较真源）
     private let originalSpec: RecurrenceSpec?
-    // 有效期初值快照（spec AC-6，plan step 12）：saveEvent 与当前控件态比较判定触碰
+    // 有效期初值快照：saveEvent 与当前控件态比较判定触碰
     private let originalValidity: ValidityPeriod?
     private let originalLunar: Bool
 
-    /// 编辑面板回填快照：从缓存读取本体记录（bug: recurring-edit-sheet-mismatch——
+    /// 编辑面板回填快照：从缓存读取本体记录（
     /// 列表行可能是 occurrence 虚拟展开行（复合 ID），用复合 ID 查主表必落空导致
     /// 周期/属性全部回填默认值，须按全项目唯一入口 parseOccurrenceID 回查本体）
     @MainActor
@@ -66,11 +66,11 @@ struct EditEventSheet: View {
             predicate: #Predicate { $0.eventID == targetID }
         )
         descriptor.fetchLimit = 1
-        // 失败与「记录不存在」都返回 nil，但失败必须落日志，避免面板静默回填默认值（审计 M6）
+        // 失败与「记录不存在」都返回 nil，但失败必须落日志，避免面板静默回填默认值
         return CacheFetch.optional(descriptor, in: context, operation: "编辑面板回填快照查询")?.first
     }
 
-    /// BUG-06：展开实例（复合 ID）只允许改非时间字段——写回 startDate/endDate/isAllDay
+    /// 展开实例（复合 ID）只允许改非时间字段——写回 startDate/endDate/isAllDay
     /// 会把整条循环序列的游标回拨到该期；非实例行原样透传
     static func sanitizedTimeParams(
         for eventID: String,
@@ -135,9 +135,9 @@ struct EditEventSheet: View {
             if let hex = cached.eventColorHex {
                 _taskColor = State(initialValue: EventColor(rawValue: hex))
             }
-            // 智能跳过节假日初始值（AC-7：编辑面板可修改并保存）
+            // 智能跳过节假日初始值（编辑面板可修改并保存）
             _skipHolidays = State(initialValue: cached.skipHolidays)
-            // 有效期初值（spec AC-6，plan step 12）：任一端存在即视为已设置，控件态按端读取
+            // 有效期初值：任一端存在即视为已设置，控件态按端读取
             if cached.validStartDate != nil || cached.validEndDate != nil {
                 let period = ValidityPeriod(start: cached.validStartDate, end: cached.validEndDate)
                 snapshotValidity = period
@@ -251,7 +251,7 @@ struct EditEventSheet: View {
                             .toggleStyle(.switch)
                             .labelsHidden()
                             .formToggleSizing()
-                            // BUG-06：单期行不允许改时间，避免回拨整条序列游标
+                            // 单期行不允许改时间，避免回拨整条序列游标
                             .disabled(isOccurrenceInstance)
                     }
 
@@ -427,7 +427,7 @@ struct EditEventSheet: View {
                 } else {
                     newEndDate = startDate.addingTimeInterval(3600)
                 }
-                // 有效期三态（spec AC-6，plan step 12）：与 init 快照比较——
+                // 有效期三态：与 init 快照比较——
                 // 相等 = 未触碰传 nil 保持原值；不等 = .some(currentValidity)
                 // （开关关 = 内层 nil 清除；开关开 = 按两端勾选组装，归一化落库由服务层完成）
                 let currentValidity: ValidityPeriod? = validityEnabled ? ValidityPeriod(
@@ -435,7 +435,7 @@ struct EditEventSheet: View {
                     end: validityHasEnd ? validityEnd : nil
                 ) : nil
                 let validityParam: ValidityPeriod?? = currentValidity == originalValidity ? nil : .some(currentValidity)
-                // BUG-06：展开实例传 nil 时间参数，服务层也会二次丢弃（双保险）
+                // 展开实例传 nil 时间参数，服务层也会二次丢弃（双保险）
                 let timeParams = Self.sanitizedTimeParams(
                     for: event.id,
                     startDate: startDate,
@@ -468,7 +468,7 @@ struct EditEventSheet: View {
                     )
                 }
 
-                // BUG-16：广播必须晚于周期更新——原实现先广播再改周期，列表按旧序列渲染且不再刷新
+                // 广播必须晚于周期更新——先广播再改周期时，列表按旧序列渲染且不再刷新
                 NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
                 
                 // 通知外部刷新
@@ -477,7 +477,7 @@ struct EditEventSheet: View {
                 onDismiss?()
             } catch {
                 AppLogger.ui.error("更新事件失败: \(String(describing: error))")
-                // V-23：保存失败需用户可见——原实现仅写日志，窗口无反馈停留
+                // 保存失败需用户可见，不能仅写日志
                 // （失败时不 onDismiss，保持弹窗打开供用户修改后重试）
                 let alert = NSAlert()
                 alert.messageText = "保存失败"

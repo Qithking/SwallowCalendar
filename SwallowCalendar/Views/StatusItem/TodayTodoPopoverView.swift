@@ -2,9 +2,9 @@
 //  TodayTodoPopoverView.swift
 //  SwallowCalendar
 //
-//  hover 弹层内容：今天待办列表（plan step 2）
+//  hover 弹层内容：今天待办列表
 //  数据 = 用户分类 + 无时间或今天内（含已完成，置灰置底）；
-//  智能跳过节假日（语义 v3）：勾选任务 startDate 落休日/周末当天静默跳过，不显示
+//  智能跳过节假日：勾选任务 startDate 落休日/周末当天静默跳过，不显示
 //  谓词粗筛 + TodayTodoSorter 精确判定与排序（排序行为单测覆盖）
 //
 
@@ -18,7 +18,7 @@ struct TodayTodoPopoverView: View {
     @State private var todos: [CachedEvent] = []
     /// 超时判定基准时刻（reload 时更新；弹层显示期间时间推移不自动刷新，弹层生命短暂可接受）
     @State private var reloadAt: Date = Date()
-    /// 过滤档位（bug: status-views-filter-default：今天/本周/本月/本年，面板同款四档；
+    /// 过滤档位（今天/本周/本月/本年，面板同款四档；
     /// 初始档为应用设置「默认显示待办」，onAppear 时赋值——@State 默认值不能引用环境）
     @State private var mode: EventFilterMode = .thisMonth
     /// 主题色（倒计时胶囊用）；环境由 AppDelegate 弹层挂载处注入（主面板同款）
@@ -60,8 +60,8 @@ struct TodayTodoPopoverView: View {
         .frame(width: 300)
         .onAppear {
             // 初始档 = 应用设置「默认显示待办」（映射四档，「全部」回退本月）
-            // R-18：与 A-22 面板同修——改档后由 onChange(mode) 链路 reload，
-            // 原无条件 reload + 改档触发 onChange 再 reload 造成挂载双查库
+            // 与桌面面板一致——改档后由 onChange(mode) 链路 reload，
+            // 无条件 reload + 改档触发 onChange 再 reload 会造成挂载双查库
             let initialMode = DesktopTodoPanelFilter.defaultMode(from: appSettings.defaultFilterModeEnum)
             if initialMode == mode {
                 reload()
@@ -126,7 +126,7 @@ struct TodayTodoPopoverView: View {
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.red)
                     } else if !event.isCompleted {
-                        // 未过期倒计时胶囊，对齐主界面 EventItemRow（bug: status-views-countdown-missing）
+                        // 未过期倒计时胶囊，对齐主界面 EventItemRow
                         CountdownTextView(
                             startDate: event.startDate,
                             accentColorHex: appSettings.accentColorHex,
@@ -139,7 +139,7 @@ struct TodayTodoPopoverView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .contentShape(Rectangle())
-        // AC-6：点击条目文字打开主面板
+        // 点击条目文字打开主面板
         .onTapGesture { onOpenMainPanel() }
     }
 
@@ -160,7 +160,7 @@ struct TodayTodoPopoverView: View {
     private func reload(now: Date = Date()) {
         // 更新超时判定基准时刻
         reloadAt = now
-        // 候选加载/节假日过滤/档位精判抽共享（体检 P1-#7）；弹层排序（升序）为本视图专属
+        // 候选加载/节假日过滤/档位精判抽共享；弹层排序（升序）为本视图专属
         todos = TodayTodoSorter.sort(
             TodoListLoader.loadCandidates(mode: mode, now: now),
             now: now,

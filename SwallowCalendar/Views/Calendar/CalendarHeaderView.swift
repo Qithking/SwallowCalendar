@@ -11,7 +11,7 @@ struct CalendarHeaderView: View {
     @Binding var selectedDate: Date
 
     @State private var showMonthPicker = false
-    // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
+    // 直接读 appSettings 主题色，无需 @State 复制与 onChange 同步
     private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
 
     private let calendar = Calendar.current
@@ -75,7 +75,7 @@ struct CalendarHeaderView: View {
         .padding(.vertical, 6)
     }
 
-    // V-21：monthTitle 每次求值都新建 DateFormatter 开销大，提为静态缓存（仅主线程 body 使用）
+    // monthTitle 用静态缓存 DateFormatter——每次求值新建开销大（仅主线程 body 使用）
     private static let monthTitleFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
@@ -101,7 +101,7 @@ struct MonthYearPickerView: View {
     @State private var selectedYear: Int
     @State private var selectedMonth: Int
     @State private var yearText: String = ""
-    // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
+    // 直接读 appSettings 主题色，无需 @State 复制与 onChange 同步
     private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
 
     init(currentMonth: Binding<Date>, selectedDate: Binding<Date>) {

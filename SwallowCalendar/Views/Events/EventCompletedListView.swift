@@ -45,7 +45,7 @@ struct EventCompletedListView: View {
     }
 
     // 首刷（onAppear）同步立即查询：查询仅毫秒级，先于 .task 全量同步占用主线程执行，
-    // 消除重开面板时列表空窗（此前首刷排在全量同步与月历渲染之后，空窗约 300ms）
+    // 避免重开面板时列表空窗（排在全量同步与月历渲染之后再首刷会空窗约 300ms）
     private func refreshImmediately() {
         refreshTask?.cancel()
         refreshCachedEvents()
@@ -73,8 +73,8 @@ struct EventCompletedListView: View {
         
         switch appSettings.sortMode {
         case .default:
-            // R-20：与待办列表（EventTodoListView）口径统一——日期为主键、优先级为次键；
-            // 原两列表同档位主次键相反，同档位设置下待办与已办顺序观感矛盾
+            // 与待办列表（EventTodoListView）口径统一：日期为主键、优先级为次键；
+            // 两列表主次键不一致时，同档位设置下待办与已办顺序观感矛盾
             sorted.sort {
                 let date0 = $0.startDate ?? .distantPast
                 let date1 = $1.startDate ?? .distantPast
@@ -190,7 +190,7 @@ struct EventCompletedListView: View {
         .onChange(of: appSettings.sortOrder) { _, _ in
             debouncedRefresh()
         }
-        // R-7：对照 EventTodoListView 补广播监听——别处（桌面面板/菜单弹层/过期弹窗）
+        // 与 EventTodoListView 一致的广播监听——别处（桌面面板/菜单弹层/过期弹窗）
         // 完成或取消完成后经 .cachedEventsChanged 广播，已办列表与头部计数同步重载；
         // 倒计时归零重建行（countdown-overdue-color-sync）同样适用
         .onReceive(NotificationCenter.default.publisher(for: .cachedEventsChanged)) { _ in

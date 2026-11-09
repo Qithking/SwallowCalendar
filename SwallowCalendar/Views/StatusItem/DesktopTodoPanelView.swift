@@ -3,7 +3,7 @@
 //  SwallowCalendar
 //
 //  桌面常驻待办面板内容视图（spec: desktop-todo-panel）
-//  四档筛选（下拉）+ 状态筛选（全部/待办/已办）+ 仅用户待办（八轮）+ 用户待办可勾选
+//  四档筛选（下拉）+ 状态筛选（全部/待办/已办）+ 仅用户待办 + 用户待办可勾选
 //
 
 import AppKit
@@ -13,14 +13,14 @@ import SwiftData
 // MARK: - 四档筛选纯函数
 
 /// 桌面面板筛选口径（DesktopTodoPanelFilterTests 覆盖）：
-/// - 仅用户待办（八轮需求：霜降等节气/节假日来自系统/订阅日历，排除；口径对齐弹层/状态栏/提醒服务）
+/// - 仅用户待办（霜降等节气/节假日来自系统/订阅日历，排除；口径对齐弹层/状态栏/提醒服务）
 /// - 无日期待办无到期语义，四档恒显示
 /// - 有日期按 EventFilterMode.dateRange 左闭右开区间判定（周起始日由 AppSettings 决定）
 enum DesktopTodoPanelFilter {
     /// 面板固定四档（复用 EventFilterMode 但不含 .all——spec 明确不设「全部」档）
     static let modes: [EventFilterMode] = [.today, .thisWeek, .thisMonth, .thisYear]
 
-    /// 设置「默认显示待办」映射到面板/弹层四档（bug: status-views-filter-default）：
+    /// 设置「默认显示待办」映射到面板/弹层四档：
     /// 主界面独有「全部」档 → 回退本月（与 AppSettings defaultFilterModeEnum fallback 一致）；
     /// 四档原样保留。面板/弹层初始档与设置联动共用本函数（PanelFilterModeClampTests 覆盖）
     static func defaultMode(from settingsMode: EventFilterMode) -> EventFilterMode {
@@ -32,7 +32,7 @@ enum DesktopTodoPanelFilter {
         mode: EventFilterMode,
         now: Date
     ) -> Bool {
-        // 八轮需求：仅用户分类收录，系统/订阅日历内容不显示
+        // 仅用户分类收录，系统/订阅日历内容不显示
         guard event.category == .user else { return false }
         guard let start = event.startDate else { return true }
         let range = mode.dateRange(from: now)
@@ -71,7 +71,7 @@ enum DesktopTodoPanelTimeText {
         now: Date,
         calendar: Calendar
     ) -> String {
-        // 今天：保持原有紧凑时刻显示
+        // 今天：紧凑时刻显示
         if calendar.isDate(date, inSameDayAs: now) {
             return isAllDay ? "全天" : timeFormatter.string(from: date)
         }
@@ -125,17 +125,17 @@ enum DesktopTodoPanelSort {
     }
 }
 
-// MARK: - 待办列表共享加载（体检 P1-#7）
+// MARK: - 待办列表共享加载
 
-/// 弹层与桌面面板共用的 reload 前半段与完成链路（原两处逐行复制，同 bug 两处各修一次）：
-/// 展开链路候选（循环任务实例可见，bug: status-popover-panel-recurring-invisible）→
-/// 节假日跳过过滤（语义 v3）→ 档位精判（候选方法已限定用户分类，八轮口径）；
+/// 弹层与桌面面板共用的 reload 前半段与完成链路（两处共用，避免逐行复制漂移）：
+/// 展开链路候选（循环任务实例可见）→
+/// 节假日跳过过滤 → 档位精判（候选方法已限定用户分类）；
 /// 排序与状态筛选两处口径不同，留在各自视图
 enum TodoListLoader {
     /// 两调用方（SwiftUI 视图 reload）均在主线程；候选方法 MainActor 隔离，需显式标注
     @MainActor
     static func loadCandidates(mode: EventFilterMode, now: Date) -> [CachedEvent] {
-        // A-22/R-18：单次 guard-let 取上下文，禁止闭包内强解包
+        // 单次 guard-let 取上下文，禁止闭包内强解包
         guard let context = EventCacheService.shared.context else { return [] }
         let range = mode.dateRange(from: now)
         let fetched = EventCacheService.shared.userTodoCandidates(from: range.start, to: range.end)
@@ -162,7 +162,7 @@ enum TodoListLoader {
 
 // MARK: - 面板内容视图
 
-/// 桌面常驻面板内容：四档筛选 + 仅用户待办（八轮）+ 用户待办可勾选完成
+/// 桌面常驻面板内容：四档筛选 + 仅用户待办 + 用户待办可勾选完成
 /// （行 UI 参照 TodayTodoPopoverView；无点击唤起、无超时标签——spec Out of scope）
 struct DesktopTodoPanelView: View {
     @Environment(AppSettings.self) private var appSettings
@@ -180,8 +180,7 @@ struct DesktopTodoPanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 筛选行（六轮需求：四档改下拉 + 状态下拉 + 置顶并入本行最右；
-            // 八轮需求：行首应用名改应用图标）
+            // 筛选行：四档下拉 + 状态下拉 + 置顶并入本行最右，行首为应用图标
             HStack(spacing: 6) {
                 // 应用图标（与下拉行高匹配的 16pt 固定尺寸）
                 Image(nsImage: NSApp.applicationIconImage)
@@ -247,8 +246,7 @@ struct DesktopTodoPanelView: View {
         .tint(Color(hex: appSettings.accentColorHex))
         .onAppear {
             // 初始档 = 应用设置「默认显示待办」（映射四档，「全部」回退本月）
-            // ——原硬编码 .today（bug: status-views-filter-default）
-            // A-22：改档后由 onChange(mode) 链路 reload，原无条件 reload 造成挂载双查库
+            // 改档后由 onChange(mode) 链路 reload，无条件 reload 会造成挂载双查库
             let initialMode = DesktopTodoPanelFilter.defaultMode(from: appSettings.defaultFilterModeEnum)
             if initialMode == mode {
                 reload()
@@ -257,7 +255,7 @@ struct DesktopTodoPanelView: View {
             }
         }
         // 勾选完成走 .cachedEventsChanged 广播（主面板同款链路），面板即时刷新
-        // bug: desktop-panel-hidden-reload——orderOut 后视图不销毁，隐藏期间跳过 reload 查库
+        // orderOut 后视图不销毁，隐藏期间跳过 reload 查库
         .onReceive(NotificationCenter.default.publisher(for: .cachedEventsChanged)) { _ in
             guard DesktopTodoPanelManager.shared.isPanelVisible else { return }
             reload()
@@ -333,7 +331,7 @@ struct DesktopTodoPanelView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-                // 过期红字 + 未过期倒计时胶囊，对齐主界面 EventItemRow（bug: status-views-countdown-missing）
+                // 过期红字 + 未过期倒计时胶囊，对齐主界面 EventItemRow
                 if TodayTodoSorter.isOverdue(event, now: reloadAt) {
                     Text("已过期")
                         .font(.caption.weight(.medium))
@@ -369,7 +367,7 @@ struct DesktopTodoPanelView: View {
 
     private func reload(now: Date = Date()) {
         reloadAt = now
-        // 候选加载/节假日过滤/档位精判抽共享（体检 P1-#7）；状态筛选与面板排序为本视图专属
+        // 候选加载/节假日过滤/档位精判抽共享；状态筛选与面板排序为本视图专属
         todos = DesktopTodoPanelSort.sort(
             TodoListLoader.loadCandidates(mode: mode, now: now)
                 .filter { statusFilter.includes(isCompleted: $0.isCompleted) }

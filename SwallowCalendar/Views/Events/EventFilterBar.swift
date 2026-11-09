@@ -8,7 +8,7 @@ import SwiftUI
 struct EventFilterBar: View {
     @Environment(AppSettings.self) private var appSettings
     @Binding var selectedFilter: EventFilterMode
-    // V-18：直接读 appSettings 主题色，替代 @State 复制 + onChange 同步
+    // 直接读 appSettings 主题色，无需 @State 复制与 onChange 同步
     private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
 
     var body: some View {
@@ -42,7 +42,7 @@ struct EventFilterBar: View {
             
             Spacer()
             
-            // 右侧：排序菜单（改用系统 NSMenu 承载：macOS 26 上 NSPopover 的
+            // 右侧：排序菜单（用系统 NSMenu 承载：macOS 26 上 NSPopover 的
             // Liquid Glass 材质呈现时内存跳升明显——用户实测仅排序弹框异常、
             // 自研窗口弹窗正常；系统菜单无该开销且更符合菜单栏应用规范）
             Menu {

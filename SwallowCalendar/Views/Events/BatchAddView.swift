@@ -26,7 +26,7 @@ struct BatchAddView: View {
     @State private var text: String
     @State private var isProcessing = false
     @State private var result: BatchAddResult?
-    // 智能跳过节假日（AC-7）：开关作用于全部行，逐行生效
+    // 智能跳过节假日：开关作用于全部行，逐行生效
     @State private var skipHolidays = false
     /// 最近一次测量的内容自然高度（用于决定是否启用内部滚动）
     @State private var contentHeight: CGFloat = 0
@@ -62,7 +62,7 @@ struct BatchAddView: View {
 
     private var validLineCount: Int {
         text
-            // R-11：与 prepareLines 同口径——CRLF 的 \r\n 是单个 Character，必须
+            // 与 prepareLines 同口径——CRLF 的 \r\n 是单个 Character，必须
             // whereSeparator 拆行，split(separator: "\n") 对 CRLF 文本整个不拆
             .split(whereSeparator: { $0.isNewline })
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -153,7 +153,7 @@ struct BatchAddView: View {
 
             Spacer()
 
-            // 智能跳过节假日（AC-7）：作用于本次批量全部行
+            // 智能跳过节假日：作用于本次批量全部行
             HStack(spacing: 4) {
                 Text("跳过节假日")
                     .font(.system(size: 10))
@@ -242,7 +242,7 @@ struct BatchAddView: View {
                         title: line.parsed.title,
                         startDate: line.parsed.date,
                         endDate: line.parsed.date.addingTimeInterval(3600),  // 非全天默认结束 = 开始 +1h
-                        isAllDay: false,                                     // 批量无全天开关，沿用 V-16 不隐式判全天
+                        isAllDay: false,                                     // 批量无全天开关，不隐式判全天
                         calendar: nil,
                         priority: line.parsed.priority,
                         recurrence: line.parsed.recurrence ?? RecurrenceType.none,
@@ -258,7 +258,7 @@ struct BatchAddView: View {
                     AppLogger.ui.error("批量添加失败: \(String(describing: error))")
                     failures.append(BatchAddFailure(rawText: line.rawText, reason: "写入日历失败"))
                 }
-                // bug: batch-add-main-thread-freeze——createEvent 为 @MainActor 同步
+                // createEvent 为 @MainActor 同步
                 // EK 写 + 缓存写，最多 100 次循环独占主线程冻结 UI；每条让出一轮
                 // runloop，isProcessing 动画与交互可穿插响应（总量不变，消除冻结）
                 await Task.yield()
