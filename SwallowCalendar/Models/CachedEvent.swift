@@ -72,6 +72,12 @@ final class CachedEvent {
     /// 9 项预设最大 6 个月（259200 分钟），自定义与 NLP 均按本上限校验
     static let maxReminderLeadMinutes = 525_600
 
+    /// 跨进程 notes 协议标记（写读两侧唯一真源，禁止散落字面量；与下方 localRecurrenceMarker 同族）：
+    /// - userOriginMarker：用户分类事件写入 EK notes，同步回流据此恢复 .user 分类（B-5/B-8）
+    /// - completedMarker：完成时写入 EK notes，同步回流据此恢复完成状态（自愈历史已办）
+    static let userOriginMarker = "此事项来自SwallowCalendar应用"
+    static let completedMarker = "[SC_COMPLETED]"
+
     /// 提前量归一化：允许有符号（正=提前、0=到点、负=延后），去重升序并收敛到 ±上限
     static func normalizedReminderOffsets(_ values: [Int]) -> [Int] {
         let cap = maxReminderLeadMinutes
@@ -152,10 +158,15 @@ final class CachedEvent {
     }
 
     /// 循环规则真源：JSON 优先，nil 时按旧档位推导（.custom 旧行保持不可展开）
+    /// - Note: 损坏 JSON 降级旧档位是「尽力显示」兜底（与镜像侧 .corrupt 保守不动口径不同），
+    ///         但必须落日志——静默降级会让 custom 行未来实例消失且无迹可循（体检 P1-2）
     var recurrenceSpec: RecurrenceSpec? {
         get {
-            if let json = recurrenceSpecJSON, let spec = RecurrenceSpec.decode(json) {
-                return spec
+            if let json = recurrenceSpecJSON {
+                if let spec = RecurrenceSpec.decode(json) {
+                    return spec
+                }
+                AppLogger.cache.warning("循环规则 JSON 解码失败，降级旧档位推导 id=\(self.eventID, privacy: .public)")
             }
             return RecurrenceSpec.legacy(
                 from: recurrenceType,
@@ -475,8 +486,38 @@ final class EventCacheService {
     }
     
     /// 设置主上下文（由 ContentView 注入环境 ModelContext，确保 @Query 能响应变更）
+    /// 注入即执行存量中文循环键迁移（体检 P1-#3）：先于一切 #Predicate 查询——
+    /// SQLite 层字符串比较认英文稳定键，未迁移的中文行会被月历/提醒谓词漏掉
     func setMainContext(_ context: ModelContext) {
         self.mainContext = context
+        Self.migrateLegacyChineseRecurrenceKeys(in: context)
+    }
+
+    /// 存量中文循环键迁移：历史版本用中文文案作 recurrenceTypeRaw 持久化键，
+    /// 全量扫描改写为英文稳定键；幂等（英文行/脏数据原样保留），可重复执行
+    static func migrateLegacyChineseRecurrenceKeys(in context: ModelContext) {
+        let descriptor = FetchDescriptor<CachedEvent>(
+            predicate: #Predicate { $0.recurrenceTypeRaw != nil }
+        )
+        guard let rows = try? context.fetch(descriptor) else {
+            AppLogger.cache.warning("循环键迁移：存量扫描失败，跳过本次迁移")
+            return
+        }
+        var migrated = 0
+        for row in rows {
+            guard let raw = row.recurrenceTypeRaw,
+                  let legacy = RecurrenceType(rawValue: raw),
+                  legacy.rawValue != raw else { continue }
+            row.recurrenceTypeRaw = legacy.rawValue
+            migrated += 1
+        }
+        guard migrated > 0 else { return }
+        do {
+            try context.save()
+            AppLogger.cache.info("循环键迁移完成：\(migrated) 行中文键改写为英文稳定键")
+        } catch {
+            AppLogger.cache.warning("循环键迁移落库失败：\(error.localizedDescription)")
+        }
     }
     
     /// 统一获取上下文：优先使用 mainContext（与 @Query 共享），否则使用容器的 mainContext
@@ -857,14 +898,14 @@ final class EventCacheService {
                 // B-25：notes 随 fetchEvents 一并带出，不再逐条 getEvent 跨进程查询；
                 // notes 为空串等价于原 EKEvent.notes 为 nil（无任何标记）
                 let notes = event.notes ?? ""
-                if notes.contains("[SC_COMPLETED]") {
+                if notes.contains(CachedEvent.completedMarker) {
                     newIsCompleted = true
                 } else if newIsCompleted {
                     // 缓存已完成但 EK 无标记（历史已办）：补写标记到系统日历，
                     // 让系统日历成为完成状态真源，清缓存/换设备重新同步也能恢复完成状态
                     CalendarService.shared.ensureCompletedMarker(for: event.id)
                 }
-                if notes.contains("此事项来自SwallowCalendar应用") {
+                if notes.contains(CachedEvent.userOriginMarker) {
                     newCategory = .user
                 }
                 // 有变更才更新，避免不必要的写入
@@ -924,10 +965,10 @@ final class EventCacheService {
                 var isCompletedFromNotes = false
                 // B-25：notes 随 fetchEvents 一并带出，不再逐条 getEvent 跨进程查询
                 let notes = event.notes ?? ""
-                if notes.contains("此事项来自SwallowCalendar应用") {
+                if notes.contains(CachedEvent.userOriginMarker) {
                     category = .user
                 }
-                if notes.contains("[SC_COMPLETED]") {
+                if notes.contains(CachedEvent.completedMarker) {
                     isCompletedFromNotes = true
                 }
                 
@@ -1389,13 +1430,17 @@ final class EventCacheService {
 
         for source in enabledSources {
             let events: [ICSEvent]
-            if let cached = icsService.loadCached(url: source.icsURL) {
+            // 体检 P1-#4：缓存带 30 分钟 TTL——超龄视为未命中走网络刷新（原实现
+            // 有缓存即永不联网，内容最长滞后 7 天）；maxAge 用 cacheMaxAge 常量
+            if let cached = icsService.loadCached(url: source.icsURL, maxAge: ICSService.cacheMaxAge) {
                 events = cached
             } else {
                 do {
                     events = try await icsService.fetchAndParse(url: source.icsURL)
                 } catch {
-                    // 获取失败，跳过该源（保留其旧数据不被删除）
+                    // 体检 P1-#5：单源失败必须落日志（多源场景静默 continue 让失败无感知）；
+                    // 不进 fetchedSourceURLs，该源旧事件由下方差集机制保留不删除
+                    AppLogger.cache.warning("订阅源获取失败，保留旧数据 url=\(source.icsURL) error=\(error.localizedDescription)")
                     continue
                 }
             }

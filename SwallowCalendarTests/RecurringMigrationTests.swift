@@ -204,4 +204,72 @@ final class RecurringMigrationTests: XCTestCase {
         XCTAssertEqual(keeper.recurrenceType, .daily, "周期规则不被同步清除")
         XCTAssertNil(keeper.groupId, "迁移标记不因同步回退")
     }
+
+    // MARK: - 中文循环键迁移（体检 P1-#3 完整解耦）
+
+    /// 中文存量行改写英文稳定键、英文行与脏数据原样保留（幂等）
+    func testLegacyChineseRecurrenceKeyMigration() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let legacy = CachedEvent(
+            eventID: "legacy-cn",
+            title: "中文键",
+            startDate: date(2026, 1, 1, 9),
+            endDate: date(2026, 1, 1, 9),
+            isAllDay: false,
+            calendarID: "c",
+            calendarTitle: "日历",
+            calendarColorHex: "#000",
+            recurrenceType: .daily
+        )
+        legacy.recurrenceTypeRaw = "每天"  // 模拟历史版本落库
+        context.insert(legacy)
+        let modern = CachedEvent(
+            eventID: "modern-en",
+            title: "英文键",
+            startDate: date(2026, 1, 1, 9),
+            endDate: date(2026, 1, 1, 9),
+            isAllDay: false,
+            calendarID: "c",
+            calendarTitle: "日历",
+            calendarColorHex: "#000",
+            recurrenceType: .monthly
+        )
+        context.insert(modern)
+        try context.save()
+
+        EventCacheService.migrateLegacyChineseRecurrenceKeys(in: context)
+
+        XCTAssertEqual(legacy.recurrenceTypeRaw, "daily", "中文键改写为英文稳定键")
+        XCTAssertEqual(modern.recurrenceTypeRaw, "monthly", "英文行原样保留")
+        // 幂等：重复执行不再变化
+        EventCacheService.migrateLegacyChineseRecurrenceKeys(in: context)
+        XCTAssertEqual(legacy.recurrenceTypeRaw, "daily")
+    }
+
+    /// rawValue 是持久化键（体检 P1-#3 防回归锁定）：改动即破坏存量数据匹配，测试即红
+    func testRecurrenceTypeRawValuesAreStablePersistedKeys() {
+        XCTAssertEqual(RecurrenceType.none.rawValue, "once")
+        XCTAssertEqual(RecurrenceType.unlimited.rawValue, "unlimited")
+        XCTAssertEqual(RecurrenceType.hourly.rawValue, "hourly")
+        XCTAssertEqual(RecurrenceType.daily.rawValue, "daily")
+        XCTAssertEqual(RecurrenceType.weekly.rawValue, "weekly")
+        XCTAssertEqual(RecurrenceType.monthly.rawValue, "monthly")
+        XCTAssertEqual(RecurrenceType.yearly.rawValue, "yearly")
+        XCTAssertEqual(RecurrenceType.custom.rawValue, "custom")
+    }
+
+    /// init?(rawValue:) 中文存量键回落：迁移失败/未迁移的旧库仍可读
+    func testRecurrenceTypeLegacyChineseKeysFallback() {
+        // Note: 用显式类型 RecurrenceType.none——裸 .none 在断言泛型语境被推断为 Optional.none（nil）
+        XCTAssertEqual(RecurrenceType(rawValue: "1次"), RecurrenceType.none)
+        XCTAssertEqual(RecurrenceType(rawValue: "不限"), .unlimited)
+        XCTAssertEqual(RecurrenceType(rawValue: "每小时"), .hourly)
+        XCTAssertEqual(RecurrenceType(rawValue: "每天"), .daily)
+        XCTAssertEqual(RecurrenceType(rawValue: "每周"), .weekly)
+        XCTAssertEqual(RecurrenceType(rawValue: "每月"), .monthly)
+        XCTAssertEqual(RecurrenceType(rawValue: "每年"), .yearly)
+        XCTAssertEqual(RecurrenceType(rawValue: "自定义"), .custom)
+        XCTAssertNil(RecurrenceType(rawValue: "乱写的"))
+    }
 }

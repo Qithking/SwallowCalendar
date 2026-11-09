@@ -309,6 +309,24 @@ final class RecurrenceSpecTests: XCTestCase {
         XCTAssertFalse(RecurrenceSpec.jsonEquals(encoded, RecurrenceSpec(frequency: .monthly).jsonString))
     }
 
+    /// 体检 P1-2：缺键容错——Codable 合成不采用属性默认值，未来新增字段时
+    /// 存量 JSON 缺新键必须回落默认值而非整体解码失败（向前兼容）
+    func testSpecJSONDecodeToleratesMissingKeys() {
+        // 仅 frequency 单键（未来加字段后旧 JSON 的形态）：可选键全回落默认值
+        let minimal = RecurrenceSpec.decode(#"{"frequency":"weekly"}"#)
+        XCTAssertEqual(minimal, RecurrenceSpec(frequency: .weekly))
+        // 缺 end 键
+        let noEnd = RecurrenceSpec.decode(#"{"frequency":"daily","interval":2}"#)
+        XCTAssertEqual(noEnd, RecurrenceSpec(frequency: .daily, interval: 2))
+        // end 内部缺 mode 视为 .never 并忽略矛盾载荷（mode 是唯一判别式，不产生不一致中间态）
+        let noMode = RecurrenceSpec.decode(#"{"frequency":"daily","end":{"count":5}}"#)
+        XCTAssertEqual(noMode, RecurrenceSpec(frequency: .daily))
+        // 真损坏（非法 JSON）仍判失败，不因容错而吞掉
+        XCTAssertNil(RecurrenceSpec.decode("{broken"))
+        // 未知 frequency 无可靠猜测，仍判失败
+        XCTAssertNil(RecurrenceSpec.decode(#"{"frequency":"quarterly"}"#))
+    }
+
     // MARK: - Helpers
 
     private func makeEvent(spec: RecurrenceSpec?, type: RecurrenceType, notes: String?) -> CalendarEvent {

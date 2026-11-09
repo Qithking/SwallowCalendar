@@ -18,7 +18,6 @@ final class CalendarService {
     /// 测试注入：抑制「同步失败」模态弹窗（生产默认 false，避免单测被 runModal 阻塞）
     var suppressesSyncFailureAlert = false
     var calendars: [EKCalendar] = []
-    var isLoading = false
 
     /// 事件缓存服务
     let cacheService = EventCacheService.shared
@@ -209,16 +208,6 @@ final class CalendarService {
     func fetchCachedEvents(for date: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CalendarEvent] {
         let cached = cacheService.getEvents(for: date, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
         return cached.map { cachedToCalendarEvent($0) }
-    }
-
-    /// 从缓存获取全天事件
-    /// - Note: 包含无到期时间的系统提醒（用于待办列表）
-    @MainActor
-    func fetchCachedAllDayEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil) -> [CalendarEvent] {
-        var events = fetchCachedEvents(from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: true)
-        events = events.filter(\.isAllDay)
-        events.sort { $0.startDate ?? .distantFuture < $1.startDate ?? .distantFuture }
-        return events
     }
 
     // MARK: - Reminders
@@ -664,7 +653,7 @@ final class CalendarService {
         // 原因：事件总是写入系统日历，若不打标记，清缓存后 syncEvents 会将其
         // 误归为 .system，系统日历侧删除时缓存会被连带误删（.user 本应跳过）。
         if category == .user {
-            event.notes = "此事项来自SwallowCalendar应用"
+            event.notes = CachedEvent.userOriginMarker
         }
         
         try eventStore.save(event, span: .thisEvent)
@@ -830,7 +819,7 @@ final class CalendarService {
         // B-5：与 createCalendarEvent 一致，用户分类事件统一打来源标记，
         // 避免清缓存重同步后被误归为 .system 而遭连带删除
         if category == .user {
-            event.notes = "此事项来自SwallowCalendar应用"
+            event.notes = CachedEvent.userOriginMarker
         }
 
         try eventStore.save(event, span: .thisEvent)
@@ -1054,7 +1043,7 @@ final class CalendarService {
     @MainActor
     @discardableResult
     func ensureCompletedMarker(for eventID: String) -> Bool {
-        let completedMarker = "[SC_COMPLETED]"
+        let completedMarker = CachedEvent.completedMarker
         guard let event = eventStore.event(withIdentifier: eventID) else {
             AppLogger.sync.warning("ensureCompletedMarker EKEvent NOT-FOUND id=\(eventID)")
             return false
@@ -1142,7 +1131,7 @@ final class CalendarService {
         } else {
             // 日历事件：在 EKEvent 的 notes 中追加完成标记，确保同步后能恢复完成状态
             if let event = eventStore.event(withIdentifier: eventID) {
-                let completedMarker = "[SC_COMPLETED]"
+                let completedMarker = CachedEvent.completedMarker
                 if isCompleted {
                     // 追加完成标记（避免重复添加）
                     if let notes = event.notes, !notes.contains(completedMarker) {

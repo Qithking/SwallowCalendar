@@ -160,38 +160,16 @@ struct TodayTodoPopoverView: View {
     private func reload(now: Date = Date()) {
         // 更新超时判定基准时刻
         reloadAt = now
-        // R-18：单次 guard-let 取上下文——原 nil 检查后又在下方过滤闭包内 context! 强解包（A-22 同型）
-        guard let context = EventCacheService.shared.context else {
-            todos = []
-            return
-        }
-        // bug: status-popover-panel-recurring-invisible：改走展开链路候选（循环任务
-        // 实例可见），无日期行由候选方法补查保留；窗口按当前档位（mode.dateRange）
-        let range = mode.dateRange(from: now)
-        let fetched = EventCacheService.shared.userTodoCandidates(from: range.start, to: range.end)
-        // 智能跳过节假日（语义 v3）：勾选任务 startDate 落休日/周末当天静默跳过，不进列表；
-        // 档位精判复用面板纯函数（无日期行恒显示、跨天行按 startDate 归档，同面板语义）
+        // 候选加载/节假日过滤/档位精判抽共享（体检 P1-#7）；弹层排序（升序）为本视图专属
         todos = TodayTodoSorter.sort(
-            fetched.filter { event in
-                !HolidaySkipResolver.isSkipped(of: event, context: context)
-                    && DesktopTodoPanelFilter.included(event, mode: mode, now: now)
-            },
+            TodoListLoader.loadCandidates(mode: mode, now: now),
             now: now,
             calendar: calendar
         )
     }
 
-    /// 勾选完成/取消完成：复用主面板完成链路（EventPanelView 范式）
+    /// 勾选完成/取消完成：共享链路（桌面面板同款）
     private func toggleComplete(_ event: CachedEvent) {
-        Task {
-            // 先 await 数据写入完成，再广播，避免列表回显旧状态
-            await CalendarService.shared.toggleEventCompleted(
-                eventID: event.eventID,
-                isCompleted: !event.isCompleted,
-                isReminder: event.isReminder
-            )
-            // D2/G7v2：完成路径广播缓存变更（弹层自身与徽标即时刷新）
-            NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
-        }
+        TodoListLoader.toggleComplete(event)
     }
 }

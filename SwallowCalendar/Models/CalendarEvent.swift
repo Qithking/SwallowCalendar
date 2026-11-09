@@ -25,15 +25,49 @@ enum EventPriority: Int, CaseIterable {
 
 // MARK: - Recurrence Type
 
+/// 循环类型：rawValue 是持久化键（体检 P1-#3 完整解耦），显示一律用 displayName；
+/// 历史版本曾用中文文案作键，存量行由 EventCacheService 启动迁移改写为英文稳定键，
+/// init?(rawValue:) 保留中文回落兜底（迁移失败/未迁移的旧库仍可读）
 enum RecurrenceType: String, CaseIterable {
-    case none = "1次"           // 不重复
-    case unlimited = "不限"     // 不限次数（每天重复，无结束日期）
-    case hourly = "每小时"      // 仅同步映射使用（EK 无 hourly 表达，由历史间隔推断；不进创建 UI）
-    case daily = "每天"
-    case weekly = "每周"
-    case monthly = "每月"
-    case yearly = "每年"
-    case custom = "自定义"
+    case none = "once"
+    case unlimited = "unlimited"
+    case hourly = "hourly"      // 仅同步映射使用（EK 无 hourly 表达，由历史间隔推断；不进创建 UI）
+    case daily = "daily"
+    case weekly = "weekly"
+    case monthly = "monthly"
+    case yearly = "yearly"
+    case custom = "custom"
+
+    /// 存量中文键映射（历史版本持久化值；仅供 init?(rawValue:) 兜底，勿用于显示）
+    private static let legacyKeys: [String: RecurrenceType] = [
+        "1次": .none, "不限": .unlimited, "每小时": .hourly, "每天": .daily,
+        "每周": .weekly, "每月": .monthly, "每年": .yearly, "自定义": .custom
+    ]
+
+    /// 重写合成 init?(rawValue:)：英文键优先，中文存量键回落
+    init?(rawValue: String) {
+        if let matched = Self.allCases.first(where: { $0.rawValue == rawValue }) {
+            self = matched
+        } else if let legacy = Self.legacyKeys[rawValue] {
+            self = legacy
+        } else {
+            return nil
+        }
+    }
+
+    /// 显示文案（原中文 rawValue 的显示职责）
+    var displayName: String {
+        switch self {
+        case .none: return "1次"
+        case .unlimited: return "不限"
+        case .hourly: return "每小时"
+        case .daily: return "每天"
+        case .weekly: return "每周"
+        case .monthly: return "每月"
+        case .yearly: return "每年"
+        case .custom: return "自定义"
+        }
+    }
 }
 
 // MARK: - Event Color

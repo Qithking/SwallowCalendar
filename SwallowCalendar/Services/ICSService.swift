@@ -17,6 +17,10 @@ final class ICSService {
     /// S-4：订阅响应大小上限 5MB——防止超大响应整体读入内存（内存/磁盘 DoS）
     private static let maxResponseSize = 5 * 1024 * 1024
 
+    /// 缓存最大年龄（体检 P1-#4）：超龄视为未命中走网络刷新，订阅内容滞后
+    /// 从「最长 7 天」收敛到 30 分钟；失败时旧数据由差集机制保留
+    static let cacheMaxAge: TimeInterval = 30 * 60
+
     // MARK: - Fetch ICS
 
     /// 从URL下载ICS内容并解析
@@ -55,7 +59,13 @@ final class ICSService {
     }
 
     /// 从缓存加载ICS
-    func loadCached(url: String) -> [ICSEvent]? {
+    /// - Parameter maxAge: 缓存最大年龄（秒）；nil = 不限龄（既有调用方默认）；
+    ///   超龄返回 nil 视为未命中，调用方回退网络。年龄取文件 modificationDate
+    ///   （fetchAndParse 写缓存即刷新），无需改缓存格式
+    func loadCached(url: String, maxAge: TimeInterval? = nil) -> [ICSEvent]? {
+        if let maxAge, !isCacheFresh(for: url, maxAge: maxAge) {
+            return nil
+        }
         guard let content = loadCachedContent(for: url) else { return nil }
         // BUG-02：缓存内容损坏时返回 nil，让调用方回退网络重新拉取
         guard let events = try? parseICS(content) else {
@@ -63,6 +73,19 @@ final class ICSService {
             return nil
         }
         return events
+    }
+
+    /// 缓存文件是否在 maxAge 内写入；拿不到 mtime 视为超龄（宁可多联网一次）
+    private func isCacheFresh(for url: String, maxAge: TimeInterval) -> Bool {
+        let filename = cacheFileName(for: url)
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("SwallowCalendar/ICS", isDirectory: true)
+        let fileURL = cacheDir.appendingPathComponent("\(filename).ics")
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+              let modified = attributes[.modificationDate] as? Date else {
+            return false
+        }
+        return Date().timeIntervalSince(modified) <= maxAge
     }
 
     // MARK: - Parse ICS

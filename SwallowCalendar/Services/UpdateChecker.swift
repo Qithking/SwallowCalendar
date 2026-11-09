@@ -79,7 +79,6 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     private let repoName = "SwallowCalendar"
     private let currentVersion: String
     private var checkTimer: Timer?
-    private var checkTimerLastRun: Date?
     // R-9：「本次启动已检查」标志——原持久化在 UserDefaults 且全仓从不清除，
     // 导致仅进程生命周期第一次启动生效；单例生命周期=进程生命周期，
     // 实例内存变量天然满足「每次启动重置」
@@ -175,10 +174,6 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         }
     }
 
-    var currentVersionString: String {
-        currentVersion
-    }
-
     func checkForUpdates() async {
         isChecking = true
         errorMessage = nil
@@ -265,11 +260,6 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         }
 
         return false
-    }
-
-    func openReleasePage() {
-        guard let url = URL(string: releaseUrl) else { return }
-        NSWorkspace.shared.open(url)
     }
 
     /// 获取代理下载 URL（添加 gh-proxy.org 前缀）

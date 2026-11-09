@@ -9,7 +9,6 @@ import AppKit
 // MARK: - Popup 配置
 enum Popup {
     // 内边距
-    static let verticalPadding: CGFloat = 5
     static let horizontalPadding: CGFloat = 5
     
     // 圆角半径（根据 macOS 版本动态调整）

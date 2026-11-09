@@ -286,7 +286,7 @@ private struct EventRowPopoverContent: View {
             if let spec = event.recurrenceSpec {
                 infoRow(label: "重复", value: spec.displayDescription)
             } else if event.recurrenceType != .none {
-                infoRow(label: "重复", value: event.recurrenceType.rawValue)
+                infoRow(label: "重复", value: event.recurrenceType.displayName)
             }
 
             // 有效期区间（spec/task-validity-period）：仅循环任务且已设置时显示，缺省端显示「不限」

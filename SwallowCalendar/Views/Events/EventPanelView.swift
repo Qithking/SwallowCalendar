@@ -12,7 +12,6 @@ struct EventPanelView: View {
     @Binding var selectedDate: Date
     let calendarService: CalendarService
     let calendarPreferences: [CalendarPreference]
-    var externalRefreshTrigger: Bool = false
     var onEventsChanged: (() -> Void)? = nil  // 事件变更通知回调
 
     // 初始值即用户默认档：子列表 onAppear 先于父 onAppear 执行，若初始档为 .thisMonth，

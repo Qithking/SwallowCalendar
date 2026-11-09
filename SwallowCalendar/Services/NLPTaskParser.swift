@@ -133,321 +133,297 @@ struct NLPTaskParser {
         return calendar.date(from: components) ?? date
     }
 
+    // MARK: - 中文日期解析（体检 P1-#8：原 375 行单函数拆为编排器 + 阶段函数）
+
+    /// 「时段前缀 → 24 小时制」换算：小时 >=12 视为已是 24 小时制；下午/晚上 +12
+    private static func resolved24h(hour: Int, isAfternoon: Bool) -> Int {
+        if hour >= 12 { return hour }
+        return isAfternoon ? hour + 12 : hour
+    }
+
+    /// 「时刻拼装到某天」共用收尾：年月日取自 day，时分取入参（秒清零）
+    private static func clockDate(hour: Int, minute: Int, on day: Date, calendar: Calendar) -> Date? {
+        var components = calendar.dateComponents([.year, .month, .day], from: day)
+        components.hour = hour
+        components.minute = minute
+        components.second = 0
+        return calendar.date(from: components)
+    }
+
+    /// 「日期换掉、时间保留」合并：把 baseDate 的时分秒安放到新日期上
+    private static func mergingTime(of baseDate: Date, onto day: Date, calendar: Calendar) -> Date? {
+        var components = calendar.dateComponents([.hour, .minute, .second], from: baseDate)
+        components.year = calendar.component(.year, from: day)
+        components.month = calendar.component(.month, from: day)
+        components.day = calendar.component(.day, from: day)
+        return calendar.date(from: components)
+    }
+
     /// 解析中文日期（包括农历）
+    /// 拆分为 6 个阶段：农历 → 时间片段 → 相对日词 → X后 → X月X日 → 周词；
+    /// 各阶段命中即返回，isLunar 恒 false（农历已由阶段 0 独占处理）
     private static func parseChineseDate(_ input: String) -> (date: Date, matched: String, isLunar: Bool) {
         let calendar = Calendar.current
         let now = Date()
-        
-        // 首先尝试解析农历日期
+
+        // 阶段 0：农历优先
         if let lunarResult = parseLunarDate(input, now: now) {
             return lunarResult
         }
-        
-        // 首先尝试解析时间部分（如"下午3点"、"20:15"、"20点15分"）
-        var baseDate = calendar.startOfDay(for: now)  // 默认为今天的开始
-        var matchedText = ""
-        
-        // 匹配 HH:MM 格式（如 20:15, 09:30）
-        if let timeMatch = input.range(of: "(\\d{1,2}):(\\d{2})", options: .regularExpression) {
-            let timeStr = String(input[timeMatch])
-            let components = timeStr.split(separator: ":")
-            if components.count == 2,
-               let hour = Int(components[0]),
-               let minute = Int(components[1]),
-               hour >= 0, hour <= 23, minute >= 0, minute <= 59 {
-                var dateComponents = calendar.dateComponents([.year, .month, .day], from: baseDate)
-                dateComponents.hour = hour
-                dateComponents.minute = minute
-                dateComponents.second = 0
-                
-                if let date = calendar.date(from: dateComponents) {
-                    baseDate = date
-                    matchedText = timeStr
-                }
-            }
-        }
-        // 匹配带时段前缀的时间格式，如"下午3点"、"上午9点"、"晚上8点15分"
-        // N-1：带前缀分支必须先于无前缀分支，否则"下午3点30分"被无前缀正则
-        // 先拦截解析为 03:30，且带分钟输入令原带前缀分支永不可达
-        // E-13：前缀组必选——可选时"晚上开会3点"类输入会从"3点"处匹配而丢失前缀
-        // 口语时间：分钟单位兼容"分/点"（"晚上7点30点"把"分"读作"点"）或省略单位
-        //（"晚上7点30"），否则仅命中"晚上7点"而丢分钟；与 cleanTitle 清洗范围保持一致
-        else if let timeMatch = input.range(of: "(上午|下午|晚上|凌晨)(\\d{1,2})点(\\d{1,2}[分点]?)?", options: .regularExpression) {
-            let timeStr = String(input[timeMatch])
 
-            // 使用 NSRegularExpression 捕获组提取小时和分钟（避免 filter 合并数字的问题）
-            let timeRegex = Self.timeRegex
-            if let match = timeRegex.firstMatch(in: timeStr, range: NSRange(timeStr.startIndex..., in: timeStr)),
-               match.numberOfRanges >= 3,
-               let hourRange = Range(match.range(at: 2), in: timeStr),
-               let hour = Int(timeStr[hourRange]) {
-
-                var finalHour = hour
-                let isAfternoon = timeStr.contains("下午") || timeStr.contains("晚上")
-
-                if hour >= 12 {
-                    // 如果小时 >= 12，说明已经是24小时制，直接使用
-                    finalHour = hour
-                } else if isAfternoon {
-                    // 小时 < 12 且有下午/晚上标识，加12小时
-                    finalHour = hour + 12
-                }
-                // 其他情况（上午/凌晨或无标识）直接使用原始小时数
-
-                // 提取分钟（第3个捕获组，可选）
-                var minute = 0
-                if match.numberOfRanges >= 4,
-                   let minuteRange = Range(match.range(at: 3), in: timeStr),
-                   !minuteRange.isEmpty,
-                   let min = Int(timeStr[minuteRange]) {
-                    minute = min
-                }
-
-                var components = calendar.dateComponents([.year, .month, .day], from: baseDate)
-                components.hour = finalHour
-                components.minute = minute
-                components.second = 0
-
-                if let date = calendar.date(from: components) {
-                    baseDate = date
-                    matchedText = timeStr
-                }
-            }
-        }
-        // 匹配 X点X分 格式（不带上午/下午前缀，如 20点15, 9点30分；
-        // N-1：带前缀场景已由上一分支优先处理，此处自然收窄为无前缀场景）
-        else if let timeMatch = input.range(of: "(\\d{1,2})点(\\d{1,2})(分)?", options: .regularExpression) {
-            let timeStr = String(input[timeMatch])
-            
-            // 使用正则提取数字
-            let numberPattern = "(\\d+)"
-            var numbers: [Int] = []
-            var searchRange = timeStr.startIndex..<timeStr.endIndex
-            
-            while let match = timeStr.range(of: numberPattern, options: .regularExpression, range: searchRange) {
-                if let num = Int(timeStr[match]) {
-                    numbers.append(num)
-                }
-                searchRange = match.upperBound..<timeStr.endIndex
-            }
-            
-            if numbers.count >= 2,
-               let hour = numbers.first,
-               let minute = numbers.last,
-               hour >= 0, hour <= 23, minute >= 0, minute <= 59 {
-                var dateComponents = calendar.dateComponents([.year, .month, .day], from: baseDate)
-                dateComponents.hour = hour
-                dateComponents.minute = minute
-                dateComponents.second = 0
-                
-                if let date = calendar.date(from: dateComponents) {
-                    baseDate = date
-                    matchedText = timeStr
-                }
-            }
-        }
-        // 匹配孤立 X点 时间，如"开会3点"、"晚上开会3点"（前缀与时间被文字隔开或无前缀）
-        // E-13：原带可选前缀的定位正则在"晚上开会3点"类输入会回溯为空导致前缀丢失，
-        // 改为匹配纯时间后检查其前文是否含时段前缀
-        else if let timeMatch = input.range(of: "(\\d{1,2})点(\\d{1,2}分)?", options: .regularExpression) {
-            let timeStr = String(input[timeMatch])
-            // 检查匹配位置之前的文本是否含时段前缀（如"晚上开会3点"的"晚上"）
-            let leadingText = String(input[input.startIndex..<timeMatch.lowerBound])
-
-            // 使用 NSRegularExpression 捕获组提取小时和分钟（避免 filter 合并数字的问题）
-            let timeRegex = Self.timeRegex
-            if let match = timeRegex.firstMatch(in: timeStr, range: NSRange(timeStr.startIndex..., in: timeStr)),
-               match.numberOfRanges >= 3,
-               let hourRange = Range(match.range(at: 2), in: timeStr),
-               let hour = Int(timeStr[hourRange]) {
-
-                var finalHour = hour
-                let isAfternoon = leadingText.contains("下午") || leadingText.contains("晚上")
-                
-                if hour >= 12 {
-                    // 如果小时 >= 12，说明已经是24小时制，直接使用
-                    finalHour = hour
-                } else if isAfternoon {
-                    // 小时 < 12 且有下午/晚上标识，加12小时
-                    finalHour = hour + 12
-                }
-                // 其他情况（上午/凌晨或无标识）直接使用原始小时数
-                
-                // 提取分钟（第3个捕获组，可选）
-                var minute = 0
-                if match.numberOfRanges >= 4,
-                   let minuteRange = Range(match.range(at: 3), in: timeStr),
-                   !minuteRange.isEmpty,
-                   let min = Int(timeStr[minuteRange]) {
-                    minute = min
-                }
-                
-                var components = calendar.dateComponents([.year, .month, .day], from: baseDate)
-                components.hour = finalHour
-                components.minute = minute
-                components.second = 0
-                
-                if let date = calendar.date(from: components) {
-                    baseDate = date
-                    matchedText = timeStr
-                }
-            }
+        // 阶段 1：时间片段（未命中回落当天 0 点）；matchedText 供词类阶段拼接保留
+        let time = parseChineseTimeOfDay(in: input, calendar: calendar, now: now)
+        let baseDate: Date
+        let matchedText: String
+        if let time {
+            baseDate = time.date
+            matchedText = time.matched
+        } else {
+            baseDate = calendar.startOfDay(for: now)
+            matchedText = ""
         }
 
-        // 优先匹配精确词
-        if input.contains("大后天") {
-            let date = calendar.date(byAdding: .day, value: 3, to: calendar.startOfDay(for: now))
-            if let d = date {
-                // 如果已经有时间信息，则更新日期部分但保留时间
-                var components = calendar.dateComponents([.hour, .minute, .second], from: baseDate)
-                components.year = calendar.component(.year, from: d)
-                components.month = calendar.component(.month, from: d)
-                components.day = calendar.component(.day, from: d)
-                if let finalDate = calendar.date(from: components) {
-                    return (finalDate, "大后天" + matchedText, false)
-                }
-            }
-            return (date ?? now, "大后天", false)
+        // 阶段 2-6：按优先级逐级匹配，首中即返回
+        if let r = parseChineseRelativeDay(input, baseDate: baseDate, matchedText: matchedText, calendar: calendar, now: now) {
+            return (r.date, r.matched, false)
         }
-        if input.contains("后天") {
-            let date = calendar.date(byAdding: .day, value: 2, to: calendar.startOfDay(for: now))
-            if let d = date {
-                var components = calendar.dateComponents([.hour, .minute, .second], from: baseDate)
-                components.year = calendar.component(.year, from: d)
-                components.month = calendar.component(.month, from: d)
-                components.day = calendar.component(.day, from: d)
-                if let finalDate = calendar.date(from: components) {
-                    return (finalDate, "后天" + matchedText, false)
-                }
-            }
-            return (date ?? now, "后天", false)
+        if let r = parseChineseInNDuration(input, baseDate: baseDate, matchedText: matchedText, calendar: calendar, now: now) {
+            return (r.date, r.matched, false)
         }
-        if input.contains("明天") {
-            let date = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))
-            if let d = date {
-                var components = calendar.dateComponents([.hour, .minute, .second], from: baseDate)
-                components.year = calendar.component(.year, from: d)
-                components.month = calendar.component(.month, from: d)
-                components.day = calendar.component(.day, from: d)
-                if let finalDate = calendar.date(from: components) {
-                    return (finalDate, "明天" + matchedText, false)
-                }
+        if let r = parseChineseMonthDay(input, baseDate: baseDate, matchedText: matchedText, calendar: calendar, now: now) {
+            return (r.date, r.matched, false)
+        }
+        if let r = parseChinesePrefixedWeekday(input, baseDate: baseDate, matchedText: matchedText, calendar: calendar, now: now) {
+            return (r.date, r.matched, false)
+        }
+        if let r = parseChineseWeekday(input, baseDate: baseDate, matchedText: matchedText, calendar: calendar, now: now) {
+            return (r.date, r.matched, false)
+        }
+
+        // 无日期词但有时间片段 → 用时间片段；全无 → 默认此刻
+        if !matchedText.isEmpty {
+            return (baseDate, matchedText, false)
+        }
+        return (now, "", false)
+    }
+
+    // MARK: 阶段 1：时间片段（原 4 段 else-if 链——正则命中即独占本阶段，内部校验失败不回落他支）
+
+    private typealias ChineseTimeFragment = (date: Date, matched: String)
+
+    /// 时间片段解析入口：HH:MM → 带前缀 X点X分 → 无前缀 X点X分 → 孤立X点（保持原互斥链序；
+    /// N-1：带前缀先于无前缀，否则"下午3点30分"被无前缀正则拦截）
+    private static func parseChineseTimeOfDay(in input: String, calendar: Calendar, now: Date) -> ChineseTimeFragment? {
+        if input.range(of: "(\\d{1,2}):(\\d{2})", options: .regularExpression) != nil {
+            return parseColonTime(in: input, calendar: calendar, now: now)
+        }
+        if input.range(of: "(上午|下午|晚上|凌晨)(\\d{1,2})点(\\d{1,2}[分点]?)?", options: .regularExpression) != nil {
+            return parsePrefixedClockTime(in: input, calendar: calendar, now: now)
+        }
+        if input.range(of: "(\\d{1,2})点(\\d{1,2})(分)?", options: .regularExpression) != nil {
+            return parsePlainClockTime(in: input, calendar: calendar, now: now)
+        }
+        if input.range(of: "(\\d{1,2})点(\\d{1,2}分)?", options: .regularExpression) != nil {
+            return parseIsolatedClockTime(in: input, calendar: calendar, now: now)
+        }
+        return nil
+    }
+
+    /// "20:15" 冒号格式
+    private static func parseColonTime(in input: String, calendar: Calendar, now: Date) -> ChineseTimeFragment? {
+        guard let timeMatch = input.range(of: "(\\d{1,2}):(\\d{2})", options: .regularExpression) else { return nil }
+        let timeStr = String(input[timeMatch])
+        let parts = timeStr.split(separator: ":")
+        guard parts.count == 2,
+              let hour = Int(parts[0]), let minute = Int(parts[1]),
+              hour >= 0, hour <= 23, minute >= 0, minute <= 59,
+              let date = clockDate(hour: hour, minute: minute, on: calendar.startOfDay(for: now), calendar: calendar) else {
+            return nil
+        }
+        return (date, timeStr)
+    }
+
+    /// "下午3点"、"晚上8点15分"
+    /// E-13：前缀组必选——可选时"晚上开会3点"类输入会从"3点"处匹配而丢失前缀；
+    /// 口语时间：分钟单位兼容"分/点"（"晚上7点30点"把"分"读作"点"）或省略单位
+    ///（"晚上7点30"）；与 cleanTitle 清洗范围保持一致
+    private static func parsePrefixedClockTime(in input: String, calendar: Calendar, now: Date) -> ChineseTimeFragment? {
+        guard let timeMatch = input.range(of: "(上午|下午|晚上|凌晨)(\\d{1,2})点(\\d{1,2}[分点]?)?", options: .regularExpression) else { return nil }
+        let timeStr = String(input[timeMatch])
+        // 捕获组提取小时（避免 filter 合并数字的问题）；第 3 组分钟可选
+        guard let match = Self.timeRegex.firstMatch(in: timeStr, range: NSRange(timeStr.startIndex..., in: timeStr)),
+              match.numberOfRanges >= 3,
+              let hourRange = Range(match.range(at: 2), in: timeStr),
+              let hour = Int(timeStr[hourRange]) else {
+            return nil
+        }
+        let isAfternoon = timeStr.contains("下午") || timeStr.contains("晚上")
+        var minute = 0
+        if match.numberOfRanges >= 4,
+           let minuteRange = Range(match.range(at: 3), in: timeStr),
+           !minuteRange.isEmpty,
+           let min = Int(timeStr[minuteRange]) {
+            minute = min
+        }
+        guard let date = clockDate(hour: resolved24h(hour: hour, isAfternoon: isAfternoon), minute: minute, on: calendar.startOfDay(for: now), calendar: calendar) else {
+            return nil
+        }
+        return (date, timeStr)
+    }
+
+    /// "20点15"、"9点30分"（N-1：带前缀场景已由上一分支优先处理，此处自然收窄为无前缀）
+    private static func parsePlainClockTime(in input: String, calendar: Calendar, now: Date) -> ChineseTimeFragment? {
+        guard let timeMatch = input.range(of: "(\\d{1,2})点(\\d{1,2})(分)?", options: .regularExpression) else { return nil }
+        let timeStr = String(input[timeMatch])
+        // 正则逐个提取数字（"20点15" → [20, 15]）
+        let numberPattern = "(\\d+)"
+        var numbers: [Int] = []
+        var searchRange = timeStr.startIndex..<timeStr.endIndex
+        while let match = timeStr.range(of: numberPattern, options: .regularExpression, range: searchRange) {
+            if let num = Int(timeStr[match]) {
+                numbers.append(num)
             }
-            return (date ?? now, "明天", false)
+            searchRange = match.upperBound..<timeStr.endIndex
+        }
+        guard numbers.count >= 2,
+              let hour = numbers.first, let minute = numbers.last,
+              hour >= 0, hour <= 23, minute >= 0, minute <= 59,
+              let date = clockDate(hour: hour, minute: minute, on: calendar.startOfDay(for: now), calendar: calendar) else {
+            return nil
+        }
+        return (date, timeStr)
+    }
+
+    /// "开会3点"：匹配纯时间后检查前文是否含时段前缀（E-13 改造：前缀与时间被文字隔开）
+    private static func parseIsolatedClockTime(in input: String, calendar: Calendar, now: Date) -> ChineseTimeFragment? {
+        guard let timeMatch = input.range(of: "(\\d{1,2})点(\\d{1,2}分)?", options: .regularExpression) else { return nil }
+        let timeStr = String(input[timeMatch])
+        let leadingText = String(input[input.startIndex..<timeMatch.lowerBound])
+        guard let match = Self.timeRegex.firstMatch(in: timeStr, range: NSRange(timeStr.startIndex..., in: timeStr)),
+              match.numberOfRanges >= 3,
+              let hourRange = Range(match.range(at: 2), in: timeStr),
+              let hour = Int(timeStr[hourRange]) else {
+            return nil
+        }
+        let isAfternoon = leadingText.contains("下午") || leadingText.contains("晚上")
+        var minute = 0
+        if match.numberOfRanges >= 4,
+           let minuteRange = Range(match.range(at: 3), in: timeStr),
+           !minuteRange.isEmpty,
+           let min = Int(timeStr[minuteRange]) {
+            minute = min
+        }
+        guard let date = clockDate(hour: resolved24h(hour: hour, isAfternoon: isAfternoon), minute: minute, on: calendar.startOfDay(for: now), calendar: calendar) else {
+            return nil
+        }
+        return (date, timeStr)
+    }
+
+    // MARK: 阶段 2：相对日词（大后天/后天/明天/今天；词表顺序保证"大后天"先于"后天"匹配）
+
+    private static func parseChineseRelativeDay(_ input: String, baseDate: Date, matchedText: String, calendar: Calendar, now: Date) -> (date: Date, matched: String)? {
+        for (offset, keyword) in [(3, "大后天"), (2, "后天"), (1, "明天")] {
+            guard input.contains(keyword) else { continue }
+            guard let d = calendar.date(byAdding: .day, value: offset, to: calendar.startOfDay(for: now)) else {
+                return (now, keyword)
+            }
+            // 已有时间片段则换日期保留时间；合并失败回落日期词当天
+            if let finalDate = mergingTime(of: baseDate, onto: d, calendar: calendar) {
+                return (finalDate, keyword + matchedText)
+            }
+            return (d, keyword)
         }
         if input.contains("今天") {
             if !matchedText.isEmpty {
-                return (baseDate, "今天" + matchedText, false)
+                return (baseDate, "今天" + matchedText)
             }
-            return (calendar.startOfDay(for: now), "今天", false)
+            return (calendar.startOfDay(for: now), "今天")
         }
+        return nil
+    }
 
-        // 匹配 X天后/小时/分钟后
+    // MARK: 阶段 3：X天后/小时后/分钟后（原三段顺序 if 非互斥；天后段带时间合并，余两段此刻起算）
+
+    private static func parseChineseInNDuration(_ input: String, baseDate: Date, matchedText: String, calendar: Calendar, now: Date) -> (date: Date, matched: String)? {
         if let match = input.range(of: "(\\d+)天后", options: .regularExpression) {
             let matched = String(input[match])
-            let numbers = matched.filter { $0.isNumber }
-            if let days = Int(numbers) {
-                let date = calendar.date(byAdding: .day, value: days, to: now)
-                if let d = date {
-                    var components = calendar.dateComponents([.hour, .minute, .second], from: baseDate)
-                    components.year = calendar.component(.year, from: d)
-                    components.month = calendar.component(.month, from: d)
-                    components.day = calendar.component(.day, from: d)
-                    if let finalDate = calendar.date(from: components) {
-                        return (finalDate, matched + matchedText, false)
-                    }
+            if let days = Int(matched.filter { $0.isNumber }) {
+                let d = calendar.date(byAdding: .day, value: days, to: now)
+                if let dd = d, let finalDate = mergingTime(of: baseDate, onto: dd, calendar: calendar) {
+                    return (finalDate, matched + matchedText)
                 }
-                return (date ?? now, matched, false)
+                return (d ?? now, matched)
             }
         }
         if let match = input.range(of: "(\\d+)小时后", options: .regularExpression) {
             let matched = String(input[match])
-            let numbers = matched.filter { $0.isNumber }
-            if let hours = Int(numbers) {
-                let date = calendar.date(byAdding: .hour, value: hours, to: now)
-                return (date ?? now, matched, false)
+            if let hours = Int(matched.filter { $0.isNumber }) {
+                return (calendar.date(byAdding: .hour, value: hours, to: now) ?? now, matched)
             }
         }
         if let match = input.range(of: "(\\d+)分钟后", options: .regularExpression) {
             let matched = String(input[match])
-            let numbers = matched.filter { $0.isNumber }
-            if let minutes = Int(numbers) {
-                let date = calendar.date(byAdding: .minute, value: minutes, to: now)
-                return (date ?? now, matched, false)
+            if let minutes = Int(matched.filter { $0.isNumber }) {
+                return (calendar.date(byAdding: .minute, value: minutes, to: now) ?? now, matched)
             }
         }
+        return nil
+    }
 
-        // 匹配 X月X日 格式
-        if let match = input.range(of: "(\\d+)月(\\d+)[日号]", options: .regularExpression) {
-            let matched = String(input[match])
-            // 使用 NSRegularExpression 捕获组分别提取月和日
-            let dateRegex = Self.dateRegex
-            if let dateMatch = dateRegex.firstMatch(in: matched, range: NSRange(matched.startIndex..., in: matched)),
-               dateMatch.numberOfRanges >= 3,
-               let monthRange = Range(dateMatch.range(at: 1), in: matched),
-               let dayRange = Range(dateMatch.range(at: 2), in: matched),
-               let month = Int(matched[monthRange]),
-               let day = Int(matched[dayRange]),
-               month >= 1, month <= 12, day >= 1, day <= 31 {
-                var components = calendar.dateComponents([.year], from: now)
-                components.month = month
-                components.day = day
-                // R-10：不存在日期（2月30日/4月31日）经钳制回退该月最后一天，不再返回 nil
-                var date = Self.clampedCalendarDate(components, calendar: calendar)
-                if let d = date, d < calendar.startOfDay(for: now) {
-                    components.year = (components.year ?? 2026) + 1
-                    date = Self.clampedCalendarDate(components, calendar: calendar)
-                }
-                
-                // 如果已经有时间信息，合并日期和时间
-                if let d = date {
-                    var timeComponents = calendar.dateComponents([.hour, .minute, .second], from: baseDate)
-                    timeComponents.year = calendar.component(.year, from: d)
-                    timeComponents.month = calendar.component(.month, from: d)
-                    timeComponents.day = calendar.component(.day, from: d)
-                    if let finalDate = calendar.date(from: timeComponents) {
-                        return (finalDate, matched + matchedText, false)
-                    }
-                }
-                return (date ?? now, matched, false)
-            }
+    // MARK: 阶段 4：X月X日（R-10 钳制 + 过去则顺延一年 + 时间合并）
+
+    private static func parseChineseMonthDay(_ input: String, baseDate: Date, matchedText: String, calendar: Calendar, now: Date) -> (date: Date, matched: String)? {
+        guard let match = input.range(of: "(\\d+)月(\\d+)[日号]", options: .regularExpression) else { return nil }
+        let matched = String(input[match])
+        guard let dateMatch = Self.dateRegex.firstMatch(in: matched, range: NSRange(matched.startIndex..., in: matched)),
+              dateMatch.numberOfRanges >= 3,
+              let monthRange = Range(dateMatch.range(at: 1), in: matched),
+              let dayRange = Range(dateMatch.range(at: 2), in: matched),
+              let month = Int(matched[monthRange]), let day = Int(matched[dayRange]),
+              month >= 1, month <= 12, day >= 1, day <= 31 else {
+            return nil
         }
-
-        // BUG-18：先匹配“上周/本周/下周 + 星期X”——普通星期词只取最近未来，
-        // 无法表达过去（"上周五"）或明确周次（"下周一"）
-        if let weekRange = input.range(
-            of: "(上|本|下)个?(星期|周|礼拜)[一二三四五六日天]",
-            options: .regularExpression
-        ) {
-            let matched = String(input[weekRange])
-            let prefix = String(matched.prefix(1))
-            let weekdayChar = String(matched.suffix(1))
-            let weekdayMap: [String: Int] = ["日": 1, "天": 1, "一": 2, "二": 3, "三": 4, "四": 5, "五": 6, "六": 7]
-            if let targetWeekday = weekdayMap[weekdayChar] {
-                // 周一为周首，本周起点 = 当前周周一 0 点
-                var weekCal = Self.weekdayCalendar
-                weekCal.firstWeekday = 2
-                let weekStart = weekCal.dateInterval(of: .weekOfYear, for: now)?.start
-                    ?? weekCal.startOfDay(for: now)
-                let offsetInWeek = (targetWeekday + 5) % 7  // 周一=0 … 周日=6
-                let weekOffset = prefix == "上" ? -7 : (prefix == "下" ? 7 : 0)
-                if let d = weekCal.date(byAdding: .day, value: offsetInWeek + weekOffset, to: weekStart) {
-                    var timeComponents = weekCal.dateComponents([.hour, .minute, .second], from: baseDate)
-                    timeComponents.year = weekCal.component(.year, from: d)
-                    timeComponents.month = weekCal.component(.month, from: d)
-                    timeComponents.day = weekCal.component(.day, from: d)
-                    if let finalDate = weekCal.date(from: timeComponents) {
-                        return (finalDate, matched + matchedText, false)
-                    }
-                }
-                return (weekStart, matched, false)
-            }
+        var components = calendar.dateComponents([.year], from: now)
+        components.month = month
+        components.day = day
+        // R-10：不存在日期（2月30日/4月31日）经钳制回退该月最后一天，不再返回 nil
+        var date = Self.clampedCalendarDate(components, calendar: calendar)
+        if let d = date, d < calendar.startOfDay(for: now) {
+            components.year = (components.year ?? 2026) + 1
+            date = Self.clampedCalendarDate(components, calendar: calendar)
         }
+        if let d = date, let finalDate = mergingTime(of: baseDate, onto: d, calendar: calendar) {
+            return (finalDate, matched + matchedText)
+        }
+        return (date ?? now, matched)
+    }
 
-        // 匹配星期X 或 周X 格式（如"周五"、"星期三"）
-        // 使用固定周日=1的Calendar（N-15 静态常量），不受用户firstWeekday设置影响
+    // MARK: 阶段 5：上/本/下周 + 星期X（BUG-18：普通星期词无法表达过去或明确周次）
+
+    private static func parseChinesePrefixedWeekday(_ input: String, baseDate: Date, matchedText: String, calendar: Calendar, now: Date) -> (date: Date, matched: String)? {
+        guard let weekRange = input.range(of: "(上|本|下)个?(星期|周|礼拜)[一二三四五六日天]", options: .regularExpression) else { return nil }
+        let matched = String(input[weekRange])
+        let prefix = String(matched.prefix(1))
+        let weekdayChar = String(matched.suffix(1))
+        let weekdayMap: [String: Int] = ["日": 1, "天": 1, "一": 2, "二": 3, "三": 4, "四": 5, "五": 6, "六": 7]
+        guard let targetWeekday = weekdayMap[weekdayChar] else { return nil }
+        // 周一为周首，本周起点 = 当前周周一 0 点
+        var weekCal = Self.weekdayCalendar
+        weekCal.firstWeekday = 2
+        let weekStart = weekCal.dateInterval(of: .weekOfYear, for: now)?.start ?? weekCal.startOfDay(for: now)
+        let offsetInWeek = (targetWeekday + 5) % 7  // 周一=0 … 周日=6
+        let weekOffset = prefix == "上" ? -7 : (prefix == "下" ? 7 : 0)
+        if let d = weekCal.date(byAdding: .day, value: offsetInWeek + weekOffset, to: weekStart),
+           let finalDate = mergingTime(of: baseDate, onto: d, calendar: weekCal) {
+            return (finalDate, matched + matchedText)
+        }
+        return (weekStart, matched)
+    }
+
+    // MARK: 阶段 6：星期X/周X（N-15：固定周日=1 的 Calendar；取最近未来，今天已过时刻顺延一周）
+
+    private static func parseChineseWeekday(_ input: String, baseDate: Date, matchedText: String, calendar: Calendar, now: Date) -> (date: Date, matched: String)? {
         let gregorianForWeekday = Self.weekdayCalendar
-        
         let weekdayKeywords: [(keyword: String, targetWeekday: Int)] = [
             ("周日", 1), ("星期日", 1),
             ("周一", 2), ("星期一", 2),
@@ -457,57 +433,36 @@ struct NLPTaskParser {
             ("周五", 6), ("星期五", 6),
             ("周六", 7), ("星期六", 7)
         ]
-        
         for item in weekdayKeywords {
-            if input.contains(item.keyword) {
-                // 找到最近的该星期几
-                let currentWeekday = gregorianForWeekday.component(.weekday, from: now)
-                var daysToAdd = item.targetWeekday - currentWeekday
-                
-                if daysToAdd < 0 {
-                    // 目标星期几已经过去，加7天到下周
-                    daysToAdd += 7
-                } else if daysToAdd == 0 {
-                    // 今天就是目标星期几，检查时间是否已过
-                    if !matchedText.isEmpty {
-                        let timeComponents = gregorianForWeekday.dateComponents([.hour, .minute], from: baseDate)
-                        if let hour = timeComponents.hour, let minute = timeComponents.minute {
-                            var timeDateComponents = gregorianForWeekday.dateComponents([.year, .month, .day], from: now)
-                            timeDateComponents.hour = hour
-                            timeDateComponents.minute = minute
-                            if let timeDate = gregorianForWeekday.date(from: timeDateComponents),
-                               timeDate < now {
-                                // 时间已过，加7天到下周
-                                daysToAdd += 7
-                            }
+            guard input.contains(item.keyword) else { continue }
+            // 找到最近的该星期几
+            let currentWeekday = gregorianForWeekday.component(.weekday, from: now)
+            var daysToAdd = item.targetWeekday - currentWeekday
+            if daysToAdd < 0 {
+                // 目标星期几已经过去，加 7 天到下周
+                daysToAdd += 7
+            } else if daysToAdd == 0 {
+                // 今天就是目标星期几：已带时间片段且时刻已过 → 顺延一周
+                if !matchedText.isEmpty {
+                    let timeComponents = gregorianForWeekday.dateComponents([.hour, .minute], from: baseDate)
+                    if let hour = timeComponents.hour, let minute = timeComponents.minute {
+                        var timeDateComponents = gregorianForWeekday.dateComponents([.year, .month, .day], from: now)
+                        timeDateComponents.hour = hour
+                        timeDateComponents.minute = minute
+                        if let timeDate = gregorianForWeekday.date(from: timeDateComponents), timeDate < now {
+                            daysToAdd += 7
                         }
                     }
-                    // 如果没时间信息或时间还没到，daysToAdd 保持 0（今天）
                 }
-                
-                let targetDate = gregorianForWeekday.date(byAdding: .day, value: daysToAdd, to: gregorianForWeekday.startOfDay(for: now))
-                
-                if let d = targetDate {
-                    var timeComponents = gregorianForWeekday.dateComponents([.hour, .minute, .second], from: baseDate)
-                    timeComponents.year = gregorianForWeekday.component(.year, from: d)
-                    timeComponents.month = gregorianForWeekday.component(.month, from: d)
-                    timeComponents.day = gregorianForWeekday.component(.day, from: d)
-                    if let finalDate = gregorianForWeekday.date(from: timeComponents) {
-                        return (finalDate, item.keyword + matchedText, false)
-                    }
-                }
-                
-                return (targetDate ?? now, item.keyword, false)
+                // 无时间片段或时刻未到，daysToAdd 保持 0（今天）
             }
+            let targetDate = gregorianForWeekday.date(byAdding: .day, value: daysToAdd, to: gregorianForWeekday.startOfDay(for: now))
+            if let d = targetDate, let finalDate = mergingTime(of: baseDate, onto: d, calendar: gregorianForWeekday) {
+                return (finalDate, item.keyword + matchedText)
+            }
+            return (targetDate ?? now, item.keyword)
         }
-
-        // 如果没有找到特定日期但有时间，返回今天的时间
-        if !matchedText.isEmpty {
-            return (baseDate, matchedText, false)
-        }
-
-        // 默认今天
-        return (now, "", false)
+        return nil
     }
 
     /// R-10：公历日期构造——day 超出该月实际天数（如 2月30日）时钳制到该月最后一天。

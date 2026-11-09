@@ -125,6 +125,41 @@ enum DesktopTodoPanelSort {
     }
 }
 
+// MARK: - 待办列表共享加载（体检 P1-#7）
+
+/// 弹层与桌面面板共用的 reload 前半段与完成链路（原两处逐行复制，同 bug 两处各修一次）：
+/// 展开链路候选（循环任务实例可见，bug: status-popover-panel-recurring-invisible）→
+/// 节假日跳过过滤（语义 v3）→ 档位精判（候选方法已限定用户分类，八轮口径）；
+/// 排序与状态筛选两处口径不同，留在各自视图
+enum TodoListLoader {
+    /// 两调用方（SwiftUI 视图 reload）均在主线程；候选方法 MainActor 隔离，需显式标注
+    @MainActor
+    static func loadCandidates(mode: EventFilterMode, now: Date) -> [CachedEvent] {
+        // A-22/R-18：单次 guard-let 取上下文，禁止闭包内强解包
+        guard let context = EventCacheService.shared.context else { return [] }
+        let range = mode.dateRange(from: now)
+        let fetched = EventCacheService.shared.userTodoCandidates(from: range.start, to: range.end)
+        return fetched.filter { event in
+            !HolidaySkipResolver.isSkipped(of: event, context: context)
+                && DesktopTodoPanelFilter.included(event, mode: mode, now: now)
+        }
+    }
+
+    /// 勾选完成/取消完成：复用主面板完成链路（EventPanelView 范式）+ 完成后广播
+    static func toggleComplete(_ event: CachedEvent) {
+        Task {
+            // 先 await 数据写入完成，再广播，避免列表回显旧状态
+            await CalendarService.shared.toggleEventCompleted(
+                eventID: event.eventID,
+                isCompleted: !event.isCompleted,
+                isReminder: event.isReminder
+            )
+            // D2/G7v2：完成路径广播缓存变更（弹层/面板自身与徽标即时刷新）
+            NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
+        }
+    }
+}
+
 // MARK: - 面板内容视图
 
 /// 桌面常驻面板内容：四档筛选 + 仅用户待办（八轮）+ 用户待办可勾选完成
@@ -334,38 +369,15 @@ struct DesktopTodoPanelView: View {
 
     private func reload(now: Date = Date()) {
         reloadAt = now
-        // A-22：单次 guard-let 取上下文——原 nil 检查后又在闭包内 context! 强解包
-        guard let context = EventCacheService.shared.context else {
-            todos = []
-            return
-        }
-        // bug: status-popover-panel-recurring-invisible：改走展开链路候选（循环任务
-        // 档位区间实例可见），替代原 B-27 直查主表谓词；无日期行由候选方法补查保留
-        // （八轮需求：排除系统/订阅日历内容，如霜降等节气/节假日——候选方法已限定用户分类）
-        let range = mode.dateRange(from: now)
-        let fetched = EventCacheService.shared.userTodoCandidates(from: range.start, to: range.end)
-        // 智能跳过节假日（语义 v3）：勾选任务 startDate 落休日/周末当天静默跳过，不进列表
-        // 纯函数精判 + 状态筛选 + 面板排序（DesktopTodoPanelFilterTests 覆盖）
+        // 候选加载/节假日过滤/档位精判抽共享（体检 P1-#7）；状态筛选与面板排序为本视图专属
         todos = DesktopTodoPanelSort.sort(
-            fetched
-                .filter { event in
-                    !HolidaySkipResolver.isSkipped(of: event, context: context)
-                        && DesktopTodoPanelFilter.included(event, mode: mode, now: now)
-                }
+            TodoListLoader.loadCandidates(mode: mode, now: now)
                 .filter { statusFilter.includes(isCompleted: $0.isCompleted) }
         )
     }
 
-    /// 勾选完成/取消完成：复用完成链路（EventPanelView/弹层同款）
+    /// 勾选完成/取消完成：共享链路（弹层同款）
     private func toggleComplete(_ event: CachedEvent) {
-        Task {
-            // 先 await 数据写入完成，再广播，避免列表回显旧状态
-            await CalendarService.shared.toggleEventCompleted(
-                eventID: event.eventID,
-                isCompleted: !event.isCompleted,
-                isReminder: event.isReminder
-            )
-            NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
-        }
+        TodoListLoader.toggleComplete(event)
     }
 }

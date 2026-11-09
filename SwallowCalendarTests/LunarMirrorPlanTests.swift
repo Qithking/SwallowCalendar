@@ -628,7 +628,7 @@ final class LunarMirrorPlanTests: XCTestCase {
             LunarMirrorPlan.occurrenceID(from: LunarMirrorPlan.marker(occurrenceID: key)),
             key
         )
-        XCTAssertNil(LunarMirrorPlan.occurrenceID(from: "此事项来自SwallowCalendar应用"))
+        XCTAssertNil(LunarMirrorPlan.occurrenceID(from: CachedEvent.userOriginMarker))
         XCTAssertNil(LunarMirrorPlan.occurrenceID(from: nil))
     }
 

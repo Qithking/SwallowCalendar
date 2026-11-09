@@ -72,6 +72,21 @@ struct RecurrenceEndRule: Codable, Hashable {
     }
 }
 
+extension RecurrenceEndRule {
+    /// 手写解码（体检 P1-2）：Codable 合成不采用属性默认值，缺 mode 键会整体失败；
+    /// 缺键一律回落默认值（向前兼容，未来本类型加字段时存量 JSON 不炸），类型错误仍判损坏。
+    /// mode 是唯一判别式：缺 mode 视为 .never 并忽略矛盾载荷，避免「mode 与 date/count 不一致」中间态
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let mode = try c.decodeIfPresent(Mode.self, forKey: .mode) ?? .never
+        self.init(
+            mode: mode,
+            date: mode == .date ? try c.decodeIfPresent(Date.self, forKey: .date) : nil,
+            count: mode == .count ? try c.decodeIfPresent(Int.self, forKey: .count) : nil
+        )
+    }
+}
+
 // MARK: - RecurrenceSpec
 
 struct RecurrenceSpec: Codable, Hashable {
@@ -104,6 +119,23 @@ struct RecurrenceSpec: Codable, Hashable {
         self.nthWeekday = nthWeekday
         self.months = Array(Set(months)).sorted()
         self.end = end
+    }
+
+    /// 手写解码（体检 P1-2）：Codable 合成不采用属性默认值，未来新增字段时存量 JSON
+    /// 缺新键会整体解码失败（展开侧静默降级 legacy、镜像侧误判 .corrupt）。
+    /// 缺键一律回落 memberwise init 默认值（向前兼容，归一化逻辑自动复用）；
+    /// frequency 缺失/未知、类型错误仍判损坏（无法可靠猜测）
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            frequency: try c.decode(RecurrenceFrequency.self, forKey: .frequency),
+            interval: try c.decodeIfPresent(Int.self, forKey: .interval) ?? 1,
+            weekdays: try c.decodeIfPresent([Int].self, forKey: .weekdays) ?? [],
+            monthDay: try c.decodeIfPresent(Int.self, forKey: .monthDay),
+            nthWeekday: try c.decodeIfPresent(NthWeekday.self, forKey: .nthWeekday),
+            months: try c.decodeIfPresent([Int].self, forKey: .months) ?? [],
+            end: try c.decodeIfPresent(RecurrenceEndRule.self, forKey: .end) ?? .never
+        )
     }
 
     // MARK: 持久化
