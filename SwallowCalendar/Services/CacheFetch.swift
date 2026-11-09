@@ -2,7 +2,7 @@
 //  CacheFetch.swift
 //  SwallowCalendar
 //
-//  统一缓存查询入口（审计 M6）：把「查询失败」与「查询为空」显式分开，
+//  统一缓存查询入口：把「查询失败」与「查询为空」显式分开，
 //  禁止再用 try? 吞掉 fetch 错误，避免列表/提醒/同步静默失效且无日志。
 //
 
@@ -22,7 +22,7 @@ enum CacheFetch {
     }
 
     /// 统一执行体：任何查询失败都记录日志并包装为 Failure 抛出。
-    /// 集中在此一处，便于用例直接验证「失败必上报」的机制（审计 M6）
+    /// 集中在此一处，便于用例直接验证「失败必上报」的机制
     static func perform<T>(operation: String, _ body: () throws -> T) throws -> T {
         do {
             return try body()

@@ -227,7 +227,7 @@ final class AppSettings {
         var displayName: String {
             switch self {
             case .default: return "默认排序"
-            // V-24：实际按 startDate 排序（缓存事件无创建时间字段），
+            // 实际按 startDate 排序（缓存事件无创建时间字段），
             // 显示名改为"开始时间"使语义与行为一致；rawValue 保留兼容已持久化设置
             case .createTime: return "开始时间"
             case .deadline: return "截止时间"
@@ -306,7 +306,7 @@ final class AppSettings {
     }
 
     private func updateLaunchAtLogin() {
-        // R-22：先查 status 再操作——默认配置（launchAtLogin=false）对未注册服务
+        // 先查 status 再操作——默认配置（launchAtLogin=false）对未注册服务
         // 无条件 unregister() 每次启动记一条 notRegistered 假错误日志；已启用时
         // 重复 register 同理。状态已符合目标时直接跳过
         let status = SMAppService.mainApp.status

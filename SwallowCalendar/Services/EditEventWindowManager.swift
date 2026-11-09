@@ -32,7 +32,7 @@ final class EditEventWindowManager: NSObject, NSWindowDelegate {
             event: event,
             calendarService: calendarService,
             onDismiss: { [weak self] in
-                // E-8：弱引用闭包，打破 manager→window→rootView 闭包→manager 保留环
+                // 弱引用闭包，打破 manager→window→rootView 闭包→manager 保留环
                 self?.editWindow?.close()
                 onDismiss()
             },
@@ -83,7 +83,7 @@ final class EditEventWindowManager: NSObject, NSWindowDelegate {
         window.setFrame(frame, display: true)
     }
 
-    /// E-8：窗口红叉关闭时清空引用，打断 manager→window 保留链（红叉路径也断链）
+    /// 窗口红叉关闭时清空引用，打断 manager→window 保留链（红叉路径也断链）
     func windowWillClose(_ notification: Notification) {
         editWindow = nil
     }

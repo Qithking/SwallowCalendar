@@ -21,12 +21,12 @@ enum BatchAddParser {
 
     static func prepareLines(_ text: String, limit: Int = maxLines) -> [BatchAddLine] {
         text
-            // R-11：必须用 whereSeparator 拆行——CRLF 的 \r\n 在 Swift 中合并为单个
+            // 必须用 whereSeparator 拆行——CRLF 的 \r\n 在 Swift 中合并为单个
             // Character（grapheme cluster），它 ≠ "\n"，split(separator: "\n") 对
             // Windows 粘贴文本整个不拆行（全部文本合成一条任务）；isNewline 对
             // \n、\r、\r\n 合成字符均返回 true，三种换行都能正确拆分
             .split(whereSeparator: { $0.isNewline })
-            // R-11：whitespacesAndNewlines 兜底清除行首尾残留空白（含孤立 \r）
+            // whitespacesAndNewlines 兜底清除行首尾残留空白（含孤立 \r）
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .prefix(limit)

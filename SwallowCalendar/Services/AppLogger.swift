@@ -7,7 +7,7 @@ import os
 import Foundation
 
 /// 统一日志管理，按模块分类
-/// N-9：subsystem 与 bundle ID 一致，Console.app 可按 bundle ID 过滤
+/// subsystem 与 bundle ID 一致，Console.app 可按 bundle ID 过滤
 enum AppLogger {
     private static let subsystem = "Qithking.SwallowCalendar"
 

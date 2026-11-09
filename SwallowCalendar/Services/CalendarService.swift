@@ -61,7 +61,7 @@ final class CalendarService {
     // MARK: - Authorization
 
     /// 请求 EventKit 权限
-    /// - Parameter requestReminders: S-7：是否同时请求提醒权限——提醒同步默认关闭，
+    /// - Parameter requestReminders: 是否同时请求提醒权限——提醒同步默认关闭，
     ///   关闭时不应无条件索要提醒 fullAccess
     /// 返回 (日历授权成功, 提醒授权成功)
     @MainActor
@@ -155,9 +155,8 @@ final class CalendarService {
     }
 
     /// 初始同步成功后默认勾选全部系统日历（幂等：已存在任一偏好记录则跳过，尊重用户已做选择）
-    /// - Note: 修复「设置页未勾选却显示系统日历内容」——原实现无偏好记录时
-    ///   enabledCalendars 兜底全量同步/显示，而设置页 Toggle 按"无记录=未勾"渲染，两侧语义不一致；
-    ///   首次同步成功后落库全勾记录，此后同步、设置页、日历网格三处均以记录为唯一口径
+    /// - Note: 首次同步成功后落库全勾记录——此后同步、设置页、日历网格均以
+    ///   记录为唯一口径（无记录时设置页按"未勾"渲染，兜底全量会两侧分叉）
     @MainActor
     func seedDefaultCalendarPreferences(context: ModelContext, preferences: [CalendarPreference], calendars: [EKCalendar]) {
         guard preferences.isEmpty, !calendars.isEmpty else { return }
@@ -221,8 +220,8 @@ final class CalendarService {
     /// - Returns: nil 表示获取失败（授权丢失/EK 调用失败），空数组才是真实无数据；
     ///           调用方（syncReminders 差集删除）必须区分二者，失败时禁止清空缓存
     func fetchReminders(includeCompleted: Bool = false, from: Date? = nil, to: Date? = nil) async -> [CalendarEvent]? {
-        // R-4：授权丢失原与"真空"同返 []，下游差集删除会误清全部提醒缓存
-        //（completedOccurrenceDatesJSON/originStartDate 仅存缓存，丢失不可恢复）
+        // 授权丢失必须与"真空"（空结果）区分：返回 nil，下游差集删除才不会
+        // 误清全部提醒缓存（completedOccurrenceDatesJSON/originStartDate 丢失不可恢复）
         guard reminderAuthorizationStatus == .fullAccess else {
             return nil
         }
@@ -231,7 +230,7 @@ final class CalendarService {
 
         return await withCheckedContinuation { continuation in
             eventStore.fetchReminders(matching: predicate) { reminders in
-                // R-4：EK 回调 nil = XPC 失败，同样与"真空"区分
+                // EK 回调 nil = XPC 失败，同样与"真空"区分
                 guard let all = reminders else {
                     continuation.resume(returning: nil)
                     return
@@ -239,7 +238,7 @@ final class CalendarService {
                 // 农历镜像（notes 带镜像标记）不进缓存：应用内展示仍由 base 农历展开承担，
                 // 系统侧镜像只是一条普通提醒，避免在应用内重复出现/反写 base 规则
                 let visible = all.filter { LunarMirrorPlan.occurrenceID(from: $0.notes) == nil }
-                // bug: ek-recurrence-materialization-mirror——Apple 对循环提醒按「发生」物化为
+                // Apple 对循环提醒按「发生」物化为
                 // 独立 EKReminder，历史发生以已完成态落库。锚集合 = 带规则的未完成条目，
                 // 同 title 已完成条目即物化历史，不入库（syncReminders 按返回集差集自动删缓存）
                 let anchorTitles = Set(
@@ -350,7 +349,7 @@ final class CalendarService {
         )
     }
 
-    /// EK 规则 → 应用档位（bug: ek-recurrence-materialization-mirror）
+    /// EK 规则 → 应用档位
     /// - EK 无 hourly 表达：每小时与每天同为 daily/interval=1，freqRaw=0 为歧义档，
     ///   借同 title 物化历史到期间隔众数推断（1h → .hourly，否则 .daily；无历史 fallback .daily）
     /// - weekly/monthly/yearly 直接映射；应用自建提醒不写规则，映射恒 .none 不受影响
@@ -400,7 +399,7 @@ final class CalendarService {
         extractReminderOffsets(from: alarms)?.max() ?? 0
     }
 
-    /// 从 EKAlarm 数组提取完整提醒偏移数组（多级，plan 步骤 7）
+    /// 从 EKAlarm 数组提取完整提醒偏移数组（多级）
     /// 有符号分钟：正=提前、0=到点、负=延后；absolute 闹钟不携带提前量；
     /// 去重升序；无有效 alarm 返回 nil（无提前提醒）
     static func extractReminderOffsets(from alarms: [EKAlarm]?) -> [Int]? {
@@ -464,7 +463,7 @@ final class CalendarService {
 
     /// 创建日历事件或提醒
     /// - Note: 如果 asReminder 为 true，则创建到系统提醒；否则创建到系统日历
-    /// - Note: 循环任务单条化（plan step 4）：只创建单条 EK 记录 + 缓存行（recurrenceType 标记），
+    /// - Note: 循环任务单条化：只创建单条 EK 记录 + 缓存行（recurrenceType 标记），
     ///         序列由 getEvents 虚拟展开、完成由 startDate 推进，不再生成多实例
     @MainActor
     func createEvent(
@@ -494,7 +493,7 @@ final class CalendarService {
         var finalEndDate = endDate
         if let spec {
             finalStartDate = spec.firstOccurrence(from: startDate, isLunar: isLunar) ?? startDate
-            // E-4：全天事件的 startDate=当日 00:00，恒早于 Date()，
+            // 全天事件的 startDate=当日 00:00，恒早于 Date()，
             // 会把当天创建的"每天"全天事项首实例错误推进到明天；
             // 全天只需早于今天零点才算已过期，带时间保持 <= 当前时刻
             let isOverdue = isAllDay
@@ -537,7 +536,7 @@ final class CalendarService {
                     reminderMinutes: reminderMinutes,
                     color: color,
                     skipHolidays: skipHolidays,
-                    // 有效期透传（spec AC-6，plan step 6）：仅循环分支携带
+                    // 有效期透传：仅循环分支携带
                     validity: validity
                 )
             } else {
@@ -626,7 +625,7 @@ final class CalendarService {
 
         // 设置重复规则
         if let recurrence = recurrence, recurrence != .none {
-            // EK 无小时频度：每小时仅在应用内承载，不写系统规则（原实现会误降级为「每天」）
+            // EK 无小时频度：每小时仅在应用内承载，不写系统规则
             let freq: EKRecurrenceFrequency?
             switch recurrence {
             case .daily, .unlimited: freq = .daily
@@ -649,7 +648,7 @@ final class CalendarService {
             throw EventError.noCalendarAvailable
         }
         
-        // B-5：用户分类事件一律打来源标记（与 syncEventsToSystem 开关无关）。
+        // 用户分类事件一律打来源标记（与 syncEventsToSystem 开关无关）。
         // 原因：事件总是写入系统日历，若不打标记，清缓存后 syncEvents 会将其
         // 误归为 .system，系统日历侧删除时缓存会被连带误删（.user 本应跳过）。
         if category == .user {
@@ -688,7 +687,7 @@ final class CalendarService {
         }
     }
 
-    /// B-33：EventPriority（9=最高）→ EKReminder.priority（1=最高、9=最低、0=无）语义映射
+    /// EventPriority（9=最高）→ EKReminder.priority（1=最高、9=最低、0=无）语义映射
     private static func ekPriority(from priority: EventPriority?) -> Int {
         // 先解包再 switch：EventPriority 自带 .none case，对 Optional 直接 switch 时
         // `case .none` 被解析为 Optional.none（与 nil 重复），.some(EventPriority.none)
@@ -729,7 +728,7 @@ final class CalendarService {
         // 设置到期时间（统一入口，保证 dueDateComponents 携带时区）
         reminder.dueDateComponents = Self.makeDueComponents(from: dueDate, isAllDay: isAllDay)
         
-        // B-33：同步写入 EK priority——此前只写缓存，EK 侧提醒无优先级；
+        // 同步写入 EK priority，EK 侧与缓存口径一致；
         // 语义映射：本项目 EventPriority 9=最高，EKReminder 1=最高、9=最低、0=无
         reminder.priority = Self.ekPriority(from: priority)
         
@@ -771,7 +770,7 @@ final class CalendarService {
         }
     }
 
-    /// 创建循环任务单条系统日历事件（单条化 plan step 4：去组参数）
+    /// 创建循环任务单条系统日历事件（去组参数）
     @MainActor
     private func createCalendarEventWithGroupInfo(
         title: String,
@@ -816,7 +815,7 @@ final class CalendarService {
             throw EventError.noCalendarAvailable
         }
 
-        // B-5：与 createCalendarEvent 一致，用户分类事件统一打来源标记，
+        // 与 createCalendarEvent 一致，用户分类事件统一打来源标记，
         // 避免清缓存重同步后被误归为 .system 而遭连带删除
         if category == .user {
             event.notes = CachedEvent.userOriginMarker
@@ -843,7 +842,7 @@ final class CalendarService {
                 reminderMinutes: reminderMinutes ?? 0,
                 eventColorHex: color?.rawValue,
                 skipHolidays: skipHolidays,
-                // 有效期归一化落库（spec AC-6，plan step 6）：nil = 该端不限制
+                // 有效期归一化落库：nil = 该端不限制
                 validStartDate: validity?.start,
                 validEndDate: validity?.end
             )
@@ -851,7 +850,7 @@ final class CalendarService {
             if let offsets = reminderOffsets, !offsets.isEmpty {
                 cached.reminderOffsets = offsets
             }
-            // 历史锚点 = 创建时刻的序列首实例（bug: recurring-past-occurrence-invisible）：
+            // 历史锚点 = 创建时刻的序列首实例：
             // 已过时刻被推进时本值即下一期，与「每天跑步从明天起」语义一致
             cached.originStartDate = cached.startDate
             context.insert(cached)
@@ -871,7 +870,7 @@ final class CalendarService {
         }
     }
 
-    /// 创建循环任务单条系统提醒（单条化 plan step 4：去组参数）
+    /// 创建循环任务单条系统提醒（去组参数）
     @MainActor
     private func createReminderWithGroupInfo(
         title: String,
@@ -937,7 +936,7 @@ final class CalendarService {
                 reminderMinutes: reminderMinutes ?? 0,
                 eventColorHex: color?.rawValue,
                 skipHolidays: skipHolidays,
-                // 有效期归一化落库（spec AC-6，plan step 6）：nil = 该端不限制
+                // 有效期归一化落库：nil = 该端不限制
                 validStartDate: validity?.start,
                 validEndDate: validity?.end
             )
@@ -967,12 +966,12 @@ final class CalendarService {
     /// 删除事件（日历事件或提醒）
     @MainActor
     func deleteEvent(eventID: String, isReminder: Bool = false) throws {
-        // 单条化 plan step 8：列表行可能是 occurrence 虚拟展开行（复合 ID），
+        // 列表行可能是 occurrence 虚拟展开行（复合 ID），
         // 删循环任务 = 删整条，回查本体 ID（Risks 表 Mitigation：删除入口先 parseOccurrenceID 分流）
         let baseID = CachedEvent.parseOccurrenceID(eventID)?.baseID ?? eventID
         // 删除前取缓存类型：删完后需要判断是否清理农历镜像（日历事件与提醒都要覆盖）
         let cachedBeforeDelete = findCachedEvent(eventID: baseID)
-        // B-7：EK 对象缺失（已被外部删除等）不再直接 return——仍继续删除缓存，
+        // EK 对象缺失（已被外部删除等）不再直接 return——仍继续删除缓存，
         // 避免幽灵条目；对象存在才走 EK 删除
         if isReminder {
             if let reminder = eventStore.calendarItem(withIdentifier: baseID) as? EKReminder {
@@ -994,7 +993,7 @@ final class CalendarService {
             do {
                 try cacheService.context?.save()
             } catch {
-                // B-7：缓存删除失败必须记日志，空 catch 静默吞错无法排查
+                // 缓存删除失败必须记日志，空 catch 静默吞错无法排查
                 AppLogger.sync.error("deleteEvent 缓存删除失败: \(String(describing: error))")
             }
         }
@@ -1011,7 +1010,7 @@ final class CalendarService {
         }
     }
 
-    /// 删除 EK 侧单条记录（EKEvent/EKReminder），供存量迁移使用（单条化 plan step 9）
+    /// 删除 EK 侧单条记录（EKEvent/EKReminder），供存量迁移使用
     /// 与 deleteEvent 兜底语义一致：对象不存在（已被外部删除/无授权）视为已删除返回 true；
     /// remove 抛错记日志返回 false（调用方该组原地保留下次重试）
     @MainActor
@@ -1075,7 +1074,7 @@ final class CalendarService {
     ///         完成只记录历史并推进 startDate，不再整条标记、不再追加实例
     @MainActor
     func toggleEventCompleted(eventID: String, isCompleted: Bool, isReminder: Bool = false) async {
-        // 单条化 plan step 5：复合 occurrence ID 分流。本体行查不到复合 ID，
+        // 复合 occurrence ID 分流。本体行查不到复合 ID，
         // 幂等守卫与 EK 查询对其均无效，必须最先分流
         if let parts = CachedEvent.parseOccurrenceID(eventID) {
             await toggleRecurringOccurrence(
@@ -1094,7 +1093,7 @@ final class CalendarService {
             return
         }
 
-        // B-2：跟踪 EK 写入是否失败（对象不存在不算失败——无旧状态可翻转）
+        // 跟踪 EK 写入是否失败（对象不存在不算失败——无旧状态可翻转）
         var ekSaveFailed = false
 
         if isReminder {
@@ -1158,7 +1157,7 @@ final class CalendarService {
             }
         }
         
-        // B-2：EK 保存失败时终止——不更新缓存完成状态、不追加周期实例，
+        // EK 保存失败时终止——不更新缓存完成状态、不追加周期实例，
         // 避免下次同步从 EK 拉回旧状态导致完成状态翻转、周期实例膨胀
         if ekSaveFailed {
             AppLogger.sync.warning("EK写入失败，已跳过缓存更新与周期追加 id=\(eventID) completed=\(isCompleted)")
@@ -1177,7 +1176,7 @@ final class CalendarService {
         }
     }
 
-    /// 循环任务 occurrence 级完成/撤销（单条化 plan step 5）
+    /// 循环任务 occurrence 级完成/撤销
     /// - 本体单条 + completedOccurrenceDates 完成历史 + startDate 推进式序列
     /// - EK 侧不打 [SC_COMPLETED]：完成时平移 EK startDate/endDate（提醒为 dueDateComponents）到下一次 occurrence
     /// - 幂等依据：occurrence 是否已在完成历史
@@ -1206,7 +1205,7 @@ final class CalendarService {
         if isCompleted {
             // 推进判定：next 为 nil 表示序列终止或冻结；occurrence 早于 startDate 属历史补完成，只记历史不推进
             var next = spec.next(after: occurrence, origin: sequenceOrigin, isLunar: cached.isLunar)
-            // 有效期补齐（spec/task-validity-period AC-5，plan step 5b）：startDate 落后于
+            // 有效期补齐：startDate 落后于
             // 有效期开始端（编辑把开始端改到未来产生空档）时，逐周期推进到首个 ≥ validStart
             if let validStart = cached.validStartDate {
                 var catchup = 0
@@ -1219,7 +1218,7 @@ final class CalendarService {
                     next = nil
                 }
             }
-            // 有效期冻结（spec/task-validity-period AC-4，plan step 5c）：下一次 occurrence 越过
+            // 有效期冻结：下一次 occurrence 越过
             // 结束端 → 停止出现，next 置 nil：不写 EK 不动 startDate，仅记完成历史
             if let validEnd = cached.validEndDate, let t = next, t > validEnd {
                 AppLogger.sync.debug("occurrence 越过有效期结束端，冻结推进 base=\(baseID)")
@@ -1228,7 +1227,7 @@ final class CalendarService {
             let shouldAdvance = next != nil && occurrence >= (cached.startDate ?? occurrence)
 
             var ekSaveFailed = false
-            // BUG-09：对应域名已授权时 NOT-FOUND 等价于「外部已删除」，必须按写失败中止缓存推进，
+            // 对应域名已授权时 NOT-FOUND 等价于「外部已删除」，必须按写失败中止缓存推进，
             // 否则 EK 保留旧日期、缓存单边推进，下次同步会把游标拉回造成分叉；
             // 无授权（含测试宿主）时 EK 求值为空，保持「对象不存在不算失败」既有语义
             let ekReachable = isReminder
@@ -1248,7 +1247,7 @@ final class CalendarService {
                         }
                     } else {
                         AppLogger.sync.warning("EKReminder NOT-FOUND 跳过 occurrence 推进 base=\(baseID)")
-                        // BUG-09：已授权却查不到 = 外部删除，按写失败处理避免缓存单边推进
+                        // 已授权却查不到 = 外部删除，按写失败处理避免缓存单边推进
                         if ekReachable { ekSaveFailed = true }
                     }
                 } else {
@@ -1267,7 +1266,7 @@ final class CalendarService {
                         }
                     } else {
                         AppLogger.sync.warning("EKEvent NOT-FOUND 跳过 occurrence 推进 base=\(baseID)")
-                        // BUG-09：同上，已授权却查不到 = 外部删除
+                        // 同上，已授权却查不到 = 外部删除
                         if ekReachable { ekSaveFailed = true }
                     }
                 }
@@ -1325,14 +1324,14 @@ final class CalendarService {
     /// 更新事件（日历事件或提醒）
     /// - Parameter reminderOffsets: 多级提醒偏移数组；nil = 不改提醒，空数组 = 清除全部提醒
     /// - Parameter skipHolidays: nil = 不改跳过节假日标记（编辑面板未触碰该开关时保持原值）
-    /// - Parameter validity: 有效期三态（spec/task-validity-period AC-6，plan step 7）：
+    /// - Parameter validity: 有效期三态：
     ///   外层 nil = 未触碰保持原值；内层 nil = 清除区间；.some(period) = 归一化落库
     @MainActor
     func updateEvent(eventID: String, title: String?, startDate: Date?, endDate: Date?, isAllDay: Bool? = nil, isReminder: Bool = false, priority: EventPriority? = nil, reminderMinutes: Int? = nil, reminderOffsets: [Int]? = nil, color: EventColor? = nil, skipHolidays: Bool? = nil, validity: ValidityPeriod?? = nil) throws {
-        // 单条化 plan step 7：列表行可能是 occurrence 虚拟展开行（复合 ID），
+        // 列表行可能是 occurrence 虚拟展开行（复合 ID），
         // 编辑即改整条，回查本体 ID（Risks 表 Mitigation：编辑入口先 parseOccurrenceID 分流）
         let baseID = CachedEvent.parseOccurrenceID(eventID)?.baseID ?? eventID
-        // BUG-06：编辑展开实例（复合 ID）时不允许改时间——startDate/endDate/isAllDay 会写回
+        // 编辑展开实例（复合 ID）时不允许改时间——startDate/endDate/isAllDay 会写回
         // EK base 并回拨整条序列游标；此处统一丢弃时间类参数，仅保留标题/优先级/提醒/颜色等
         let isOccurrenceInstance = CachedEvent.parseOccurrenceID(eventID) != nil
         if isOccurrenceInstance, startDate != nil || endDate != nil || isAllDay != nil {
@@ -1342,20 +1341,19 @@ final class CalendarService {
         let effectiveEndDate = isOccurrenceInstance ? nil : endDate
         let effectiveIsAllDay = isOccurrenceInstance ? nil : isAllDay
         if isReminder {
-            // R-5：EK 对象失效（事项可能已被系统侧删除）时静默跳过会令 UI 假装保存成功，
-            // 补 NOT-FOUND 日志（对照 deleteEvent B-7）；缓存分支同步跳过——否则下次同步
-            // 会从 EK 拉回旧状态覆盖（同 B-2 一致性原则）
+            // EK 对象失效（事项可能已被系统侧删除）时静默跳过会令 UI 假装保存成功，
+            // 补 NOT-FOUND 日志（对照 deleteEvent）；缓存分支同步跳过——否则下次同步
+            // 会从 EK 拉回旧状态覆盖（同删除路径一致性原则）
             guard let reminder = eventStore.calendarItem(withIdentifier: baseID) as? EKReminder else {
                 AppLogger.sync.warning("updateEvent EKReminder NOT-FOUND，跳过更新 id=\(baseID)")
                 return
             }
             if let title { reminder.title = title }
-            // B-6：startDate 与 endDate 任一传入都更新到期时间（提醒只有 dueDate
-            // 一个时间语义），原实现忽略 endDate 导致只调结束时间不生效
+            // startDate 与 endDate 任一传入都更新到期时间（提醒只有 dueDate
+            // 一个时间语义，两端需同步生效）
             if let dueSource = effectiveStartDate ?? effectiveEndDate {
                 // 全天事件只写日期；非全天写入具体时间（isAllDay 未传时按原始时间
-                // 是否带时分秒推断——B-22：原 <86400 判定会把跨天定时提醒
-                //（如今天10:00~明天10:30，间隔>24h）误判为全天）
+                // 是否带时分秒推断，避免把跨天定时提醒（间隔>24h）误判为全天）
                 let isTimed: Bool
                 if let effectiveIsAllDay {
                     isTimed = !effectiveIsAllDay
@@ -1373,7 +1371,7 @@ final class CalendarService {
             }
             try eventStore.save(reminder, commit: true)
         } else {
-            // R-5：同上，EKEvent 对象失效时补 NOT-FOUND 日志
+            // 同上，EKEvent 对象失效时补 NOT-FOUND 日志
             guard let event = eventStore.event(withIdentifier: baseID) else {
                 AppLogger.sync.warning("updateEvent EKEvent NOT-FOUND，跳过更新 id=\(baseID)")
                 return
@@ -1384,7 +1382,7 @@ final class CalendarService {
             if let effectiveEndDate {
                 event.endDate = effectiveEndDate
             } else if let effectiveIsAllDay, effectiveIsAllDay, !wasAllDay {
-                // E-6：带时间 → 全天，无原始时长可保，按单日处理
+                // 带时间 → 全天，无原始时长可保，按单日处理
                 event.endDate = event.startDate
             }
             // 已是全天且未传 endDate：保留原 endDate（用户未改日期时不改写 23:59:59 等原值）
@@ -1401,8 +1399,8 @@ final class CalendarService {
         if let cached = findCachedEvent(eventID: baseID) {
             if let title { cached.title = title }
             if isReminder {
-                // B-6：提醒只有到期时间一个语义，startDate==endDate 必须同步写，
-                // 原实现只写 startDate、endDate 残留旧值导致缓存与 EK 分叉
+                // 提醒只有到期时间一个语义，startDate==endDate 必须同步写，
+                // 否则 endDate 残留旧值导致缓存与 EK 分叉
                 if let dueSource = effectiveStartDate ?? effectiveEndDate {
                     cached.startDate = dueSource
                     cached.endDate = dueSource
@@ -1413,7 +1411,7 @@ final class CalendarService {
                 if let effectiveEndDate {
                     cached.endDate = effectiveEndDate
                 } else if let effectiveIsAllDay, effectiveIsAllDay, !wasCachedAllDay {
-                    // E-6：带时间 → 全天，缓存 endDate 同步为单日
+                    // 带时间 → 全天，缓存 endDate 同步为单日
                     cached.endDate = effectiveStartDate ?? cached.startDate
                 }
                 // 已是全天且未传 endDate：保留原缓存 endDate（与 EK 侧一致）
@@ -1436,7 +1434,7 @@ final class CalendarService {
             if let color { cached.eventColorHex = color.rawValue }
             // 跳过节假日标记：仅显式传入时写回（nil = 保持原值）
             if let skipHolidays { cached.skipHolidays = skipHolidays }
-            // 有效期三态写入（spec AC-6，plan step 7）：validity 为 ValidityPeriod??，
+            // 有效期三态写入：validity 为 ValidityPeriod??，
             // 一层解包后内层 nil = 清除区间；.some = 原样落库（保留时分，不再按天归一化）
             if let validity {
                 cached.validStartDate = validity?.start
@@ -1446,7 +1444,7 @@ final class CalendarService {
             do {
                 try cacheService.context?.save()
             } catch {
-                // B-6：缓存保存失败记日志，try? 静默吞错无法排查
+                // 缓存保存失败记日志，try? 静默吞错无法排查
                 AppLogger.sync.error("updateEvent 缓存保存失败: \(String(describing: error))")
             }
 
@@ -1459,7 +1457,7 @@ final class CalendarService {
         }
     }
     
-    /// 循环规则更新失败：必须让保存链路感知，不得静默当成「已保存」（审计 M3）
+    /// 循环规则更新失败：必须让保存链路感知，不得静默当成「已保存」
     enum RecurrenceUpdateError: LocalizedError {
         case cacheContextUnavailable
         case eventNotFound(String)
@@ -1474,8 +1472,8 @@ final class CalendarService {
         }
     }
 
-    /// 更新事件周期类型（单条化 plan step 7：编辑即改整条）
-    /// - 周期→1次（BUG-21 用户口径）：保留已完成历史（已办列表可见），清未来展开依据；
+    /// 更新事件周期类型（编辑即改整条）
+    /// - 周期→1次：保留已完成历史（已办列表可见），清未来展开依据；
     ///   `completedOccurrenceDatesJSON` 不再清空，`originStartDate` 置 nil 防止从远古锚点
     ///   展开出过去未完成行；游标 startDate 不动
     /// - 1次→周期 / 周期类型变更：仅更新类型，下一次 occurrence 由查询链从 startDate 以新周期推进
@@ -1525,7 +1523,7 @@ final class CalendarService {
         if newSpec == nil {
             // 清未来展开依据：originStartDate 仅用于展开序列起点，留着会让 ② 从锚点产出历史未完成行
             cached.originStartDate = nil
-            // 切单次对称清除有效期（spec AC-6，plan step 8）：单次任务无周期语义，区间随之失效
+            // 切单次对称清除有效期：单次任务无周期语义，区间随之失效
             cached.validStartDate = nil
             cached.validEndDate = nil
         } else {
@@ -1651,7 +1649,7 @@ final class CalendarService {
         } while lunarMirrorPending.contains(baseID)
     }
 
-    /// 批量补窗的 base 值类型快照：跨 await 只持有值类型，不再访问 SwiftData 模型（M-3）
+    /// 批量补窗的 base 值类型快照：跨 await 只持有值类型，不再访问 SwiftData 模型
     struct LunarMirrorBaseSnapshot: Equatable {
         let baseID: String
         let isReminder: Bool
@@ -1660,7 +1658,7 @@ final class CalendarService {
         /// 抑制列表损坏：本轮跳过重建（不能把损坏当成空列表）
         let suppressedKeysUnavailable: Bool
 
-        /// 预筛（M-1）：仅「农历 + monthly/yearly」可产生镜像；
+        /// 预筛：仅「农历 + monthly/yearly」可产生镜像；
         /// 仍有登记/抑制残留、规则或登记损坏的必须对账（覆盖清理与诊断路径）
         init(
             baseID: String,
@@ -1745,7 +1743,7 @@ final class CalendarService {
         return grouping
     }
 
-    /// 系统侧存在性集合：由已成功拉取的全量列表构建（H-1）。
+    /// 系统侧存在性集合：由已成功拉取的全量列表构建。
     /// - Note: 不用 `calendarItem(withIdentifier:)` 单点查询——已完成/iCloud 提醒可能返回 nil，
     ///   会把系统侧仍存在的本体误判为孤儿
     static func systemBaseIDs(reminders: [EKReminder]) -> Set<String> {
@@ -1757,10 +1755,10 @@ final class CalendarService {
     }
 
     /// 批量补窗（M8）：启动与每日一次调用。
-    /// - 预筛：只为「可产生镜像（农历 + monthly/yearly）或有登记/抑制残留」的 base 对账（M-1）；
-    /// - 预取：提醒 / 日历窗口各拉取一次并在内存按 baseID 分配（M-1）；
-    /// - 快照：跨 await 只持有值类型 ID，不持有 SwiftData 模型（M-3）；
-    /// - 孤儿清扫：镜像带标记但 base 在缓存与系统侧都已不存在 → 删除（H-1）。
+    /// - 预筛：只为「可产生镜像（农历 + monthly/yearly）或有登记/抑制残留」的 base 对账；
+    /// - 预取：提醒 / 日历窗口各拉取一次并在内存按 baseID 分配；
+    /// - 快照：跨 await 只持有值类型 ID，不持有 SwiftData 模型；
+    /// - 孤儿清扫：镜像带标记但 base 在缓存与系统侧都已不存在 → 删除。
     /// - Note: 不挂在 EKEventStoreChanged 上，避免与镜像自身写入互相触发。
     @MainActor
     func reconcileAllLunarMirrors() async {
@@ -1769,11 +1767,11 @@ final class CalendarService {
         guard let cached = CacheFetch.optional(descriptor, in: context, operation: "农历镜像批量补窗查询") else {
             return
         }
-        // M-3：先收成值类型快照，后续 await 期间不再触碰模型属性
+        // 先收成值类型快照，后续 await 期间不再触碰模型属性
         let snapshots = Self.makeLunarMirrorSnapshots(from: cached)
         let cachedBaseIDs = Set(snapshots.map(\.baseID))
 
-        // M-1：提醒 / 日历窗口各拉取一次；失败则整侧跳过（不能因一次读失败误删镜像）
+        // 提醒 / 日历窗口各拉取一次；失败则整侧跳过（不能因一次读失败误删镜像）
         var reminderGroups: [String: PrefetchedLunarMirrorGroup] = [:]
         var reminderItems: [String: [String: EKCalendarItem]] = [:]
         var reminderPresence: CompletePresence?
@@ -1783,7 +1781,7 @@ final class CalendarService {
                 let grouping = Self.groupReminderMirrors(all)
                 reminderGroups = grouping.groups
                 reminderItems = grouping.items
-                // H-1：系统侧存在性取自已拉取的全量列表，不再逐条单点查询
+                // 系统侧存在性取自已拉取的全量列表，不再逐条单点查询
                 reminderPresence = CompletePresence(
                     ids: Self.systemBaseIDs(reminders: all),
                     observedAt: Date()
@@ -1825,7 +1823,7 @@ final class CalendarService {
             )
         }
 
-        // H-1：孤儿清扫（先清后补，避免已删 base 的镜像继续响铃）
+        // 孤儿清扫（先清后补，避免已删 base 的镜像继续响铃）
         if remindersAvailable || eventsAvailable {
             cleanupOrphanLunarMirrors(
                 cachedBaseIDs: cachedBaseIDs,
@@ -1875,7 +1873,7 @@ final class CalendarService {
         }
     }
 
-    /// H-1：删除孤儿镜像（base 在缓存与系统侧都已不存在）
+    /// 删除孤儿镜像（base 在缓存与系统侧都已不存在）
     /// - 判定：复合键中的 baseID 不在缓存快照，且不在完整系统快照里
     /// - 类型约束：只接受 `CompletePresence?`，窗口快照无法进入删除判定；
     ///   提醒侧全量拉取、事件侧每日一次全量扫描各自构建完整快照
@@ -2178,7 +2176,7 @@ final class CalendarService {
         }
         guard let event = item as? EKEvent else { return }
         configureEventMirrorFields(event, base: base, date: date)
-        // M-2：本体移动日历后镜像同步迁移；目标日历取不到时按创建路径回退默认日历，
+        // 本体移动日历后镜像同步迁移；目标日历取不到时按创建路径回退默认日历，
         // 保存失败则不落指纹，下次对账重试（不会出现「指纹已改但日历没迁」的假同步）
         if let target = eventStore.calendar(withIdentifier: base.calendarID)
             ?? eventStore.defaultCalendarForNewEvents
@@ -2253,7 +2251,7 @@ final class CalendarService {
         return CacheFetch.optional(descriptor, in: context, operation: "缓存事件回查")?.first
     }
 
-    /// 循环规则写路径专用：查询失败抛出，区分「本体不存在」与「查询失败」（审计 M3）
+    /// 循环规则写路径专用：查询失败抛出，区分「本体不存在」与「查询失败」
     @MainActor
     private func findCachedEventOrThrow(eventID: String) throws -> CachedEvent? {
         guard let context = cacheService.context else {
@@ -2281,8 +2279,7 @@ final class CalendarService {
         }
 
         Task {
-            // B-28：取真实同步结果回传——原实现无条件回"同步成功"，
-            // 保存失败时 UI 无法感知，用户误以为数据已同步
+            // 取真实同步结果回传，保存失败时 UI 需可感知
             let success = await cacheService.syncEvents(from: self, calendars: enabledCals)
             await MainActor.run {
                 completion?(success, success ? "同步成功" : "同步失败，请重试")
@@ -2299,10 +2296,9 @@ final class CalendarService {
     func getNextLunarDate(from date: Date, recurrenceType: RecurrenceType) -> Date? {
         let chineseCalendar = Calendar(identifier: .chinese)
 
-        // B-17：改用 date(byAdding:) 由系统 Calendar 处理农历溢出——原组件加法
-        // （month+1/day+30 后 date(from:)）在 29 天小月、无对应闰月时返回 nil，
-        // 周期序列被截断；date(byAdding:) 对溢出做系统取整（如 30 日遇小月取月末），
-        // 序列不再中断，闰月也按系统逐月推进语义处理
+        // 农历溢出（29 天小月/无对应闰月）由系统 Calendar 取整处理（如 30 日遇小月
+        // 取月末），序列不中断；组件加法（month+1/day+30 后 date(from:)）会返回 nil
+        // 截断周期序列，date(byAdding:) 还按系统逐月推进语义处理闰月
         switch recurrenceType {
         case .unlimited, .daily:
             return chineseCalendar.date(byAdding: .day, value: 1, to: date)
@@ -2360,7 +2356,7 @@ final class CalendarService {
             reminderMinutes: cached.reminderMinutes,
             eventColorHex: cached.eventColorHex,
             skipHolidays: cached.skipHolidays,
-            // 有效期透传（spec AC-6，plan step 9）：双字段已归一化，组装区间载体供 UI/服务层
+            // 有效期透传：双字段已归一化，组装区间载体供 UI/服务层
             validity: (cached.validStartDate != nil || cached.validEndDate != nil)
                 ? ValidityPeriod(start: cached.validStartDate, end: cached.validEndDate)
                 : nil
@@ -2409,7 +2405,7 @@ extension CGColor {
 // MARK: - Recurrence Helper
 
 extension CalendarService {
-    // MARK: - BUG-05 锚点原语（非农历 monthly/yearly）
+    // MARK: - 锚点原语（非农历 monthly/yearly）
 
     /// 按锚点 origin 与序号 index 构造第 N 期（spec 单一真源）：
     /// 月末/闰日缺失日期直接跳过（不再回弹），时分秒保留 origin。
@@ -2432,7 +2428,7 @@ extension CalendarService {
         return spec.index(of: date, origin: origin, isLunar: false)
     }
 
-    /// 确定性单步推进到下一个 occurrence（单条化 plan step 3）
+    /// 确定性单步推进到下一个 occurrence
     /// 与当前时间无关；月/年按锚定日构造并跳过缺失日期；农历走 chinese Calendar；
     /// 跳过节假日不在此处理——语义 v3 为显示层静默过滤，不改写序列
     static func nextOccurrence(after date: Date, recurrenceType: RecurrenceType, isLunar: Bool, origin: Date? = nil) -> Date? {
@@ -2444,7 +2440,7 @@ extension CalendarService {
         return spec.next(after: date, origin: origin ?? date, isLunar: isLunar)
     }
 
-    /// nextOccurrence 的逆运算（反向单步，bug: recurring-past-occurrence-invisible）
+    /// nextOccurrence 的逆运算（反向单步）
     /// - Note: 未传 origin 时保持「游标单位回退」旧语义（存量锚点回填按步走链，不重新锚定）
     static func previousOccurrence(before date: Date, recurrenceType: RecurrenceType, isLunar: Bool, origin: Date? = nil) -> Date? {
         guard let origin else {
@@ -2462,7 +2458,7 @@ extension CalendarService {
         return spec.previous(before: date, origin: origin, isLunar: isLunar)
     }
 
-    /// 展开起点对齐（bug: reminder-starved-by-badge-expansion）：
+    /// 展开起点对齐：
     /// 直接跳到「≤ windowStart 的最近相位」，调用方从此点开始产出，避免从远古锚点空转
     static func alignedExpansionStart(origin: Date, recurrenceType: RecurrenceType, isLunar: Bool, windowStart: Date) -> Date? {
         guard !isLunar,
@@ -2472,7 +2468,7 @@ extension CalendarService {
         return spec.alignedOccurrence(before: windowStart, origin: origin, isLunar: false)
     }
 
-    /// 存量循环行回填历史锚点 originStartDate（bug: recurring-past-occurrence-invisible）
+    /// 存量循环行回填历史锚点 originStartDate
     /// 算法：从游标反向单步回退，取不早于创建时刻的第一个序列点——游标即创建时
     /// 推进/落定的序列首实例，反向链上每点均为合法周期点，时刻模式自动对齐；
     /// 下界用创建时刻（而非创建日零点），保留「创建时已过时刻推进到下一期」的
@@ -2493,7 +2489,7 @@ extension CalendarService {
         return occ
     }
 
-    /// EK 侧创建时间（存量循环行回填 originStartDate 用，bug: recurring-past-occurrence-invisible）
+    /// EK 侧创建时间（存量循环行回填 originStartDate 用）
     /// EventCacheService 同步路径无 eventStore，经本访问器读取；查不到返回 nil
     func ekCreationDate(eventID: String, isReminder: Bool) -> Date? {
         if isReminder {

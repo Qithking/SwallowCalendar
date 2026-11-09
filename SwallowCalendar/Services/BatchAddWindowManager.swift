@@ -14,7 +14,7 @@ final class BatchAddWindowManager {
 
     private var window: NSWindow?
     private var windowDelegate: BatchAddWindowDelegate?
-    // R-23：onTaskAdded 经间接层转发——窗口存活期间主面板重开会用新闭包再次 open，
+    // onTaskAdded 经间接层转发——窗口存活期间主面板重开会用新闭包再次 open，
     // 原复用分支静默忽略新闭包，rootView 持有的仍是旧面板刷新回调（refreshTrigger
     // toggle 到已废弃实例）；闭包无法比较相等，间接层保证始终调用最新回调
     private var onTaskAddedHandler: (() -> Void)?

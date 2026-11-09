@@ -3,8 +3,8 @@
 //  SwallowCalendar
 //
 //  智能跳过节假日：休日静默跳过判定纯函数（spec: smart-holiday-skip 语义 v3）
-//  语义 v3（2026-10-24 用户定案）：勾选任务 startDate 落休日 → 当天列表不显示、不提醒，
-//  任务保留原日期（无顺延改写），由用户自行改期；取消原「顺延至下一工作日」机制
+//  语义：勾选任务 startDate 落休日 → 当天列表不显示、不提醒，
+//  任务保留原日期（无顺延改写），由用户自行改期
 //
 
 import Foundation
@@ -16,7 +16,7 @@ import os
 /// 则当天静默跳过（列表不显示、不提醒）。不修改 startDate 持久值。
 enum HolidaySkipResolver {
 
-    /// V-35：休/班标题匹配公共常量（全/半角括号口径，单一真源；
+    /// 休/班标题匹配公共常量（全/半角括号口径，单一真源；
     /// CalendarDayCell 网格休/班标记与本 Resolver 共用，防关键词漂移）
     static let restTitleKeywords = ["假期", "（休）", "(休)"]
     static let workTitleKeywords = ["补班", "（班）", "(班)"]
@@ -39,7 +39,7 @@ enum HolidaySkipResolver {
     static func isRestDay(_ date: Date, context: ModelContext?) -> Bool {
         let calendar = Calendar.current
         let windowStart = calendar.startOfDay(for: date)
-        // bug: holiday-skip-n-plus-one——日粒度判定缓存优先：
+        // 日粒度判定缓存优先：
         // 渲染逐行/倒计时逐秒刷新与循环展开逐 occurrence 判定不再逐次查库
         if let context, let cached = cachedVerdict(windowStart, context: context) {
             return cached
@@ -61,7 +61,7 @@ enum HolidaySkipResolver {
         }
         let descriptor = FetchDescriptor<CachedEvent>(predicate: predicate)
         // 查询失败 fail-open：仅周末规则仍生效（确定性规则），平日按工作日照常
-        //（fail-open 非权威判定，不写入缓存）；失败必须落日志（审计 M6）
+        //（fail-open 非权威判定，不写入缓存）；失败必须落日志
         guard let context,
               let events = CacheFetch.optional(descriptor, in: context, operation: "休/班判定查询") else {
             return calendar.isDateInWeekend(date)
@@ -80,7 +80,7 @@ enum HolidaySkipResolver {
         return verdict
     }
 
-    // MARK: - 日粒度判定缓存（bug: holiday-skip-n-plus-one）
+    // MARK: - 日粒度判定缓存
 
     private static let cacheLock = NSLock()
     /// 判定缓存：按 ModelContext 身份分桶（防多容器/测试串值），键 = 当日零点。
@@ -128,7 +128,7 @@ enum HolidaySkipResolver {
         dayVerdicts[key] = bucket
     }
 
-    /// 批量预热（bug: startup-expired-check-n-plus-one）：单次按休/班标题窄查询预载
+    /// 批量预热：单次按休/班标题窄查询预载
     /// [from, to) 各日判定，循环展开逐 occurrence 判定退化为内存命中。
     /// 语义与逐日 isRestDay 完全一致：① 班标识日 false；② 休标识日 true；③ 无标识日周末规则。
     /// 覆盖日归属沿用「事件覆盖当日」语义：非零长事件严格重叠日窗口；零长事件归属开始日

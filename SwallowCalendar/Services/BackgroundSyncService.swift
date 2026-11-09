@@ -34,13 +34,13 @@ final class BackgroundSyncService {
     var pendingExternalResync = false
 
     /// 防抖到期后执行的同步动作；internal 供测试注入 spy 计数
-    /// 外部变更同步跳过 ICS 订阅源（订阅有自身刷新节奏，AC-3）
+    /// 外部变更同步跳过 ICS 订阅源（订阅有自身刷新节奏）
     var externalSyncAction: () async -> Void = {
         await BackgroundSyncService.shared.syncOnce(includeSubscriptions: false)
     }
 
     /// 启动/重开面板同步动作；internal 供测试注入 spy。
-    /// 参数 includeSubscriptions：首次启动 true（全量含 ICS），重开 false（AC-3 同语义跳过 ICS）
+    /// 参数 includeSubscriptions：首次启动 true（全量含 ICS），重开 false（同语义跳过 ICS）
     var startupSyncAction: (_ includeSubscriptions: Bool) async -> Void = { includeSubscriptions in
         await BackgroundSyncService.shared.syncOnce(includeSubscriptions: includeSubscriptions)
     }
@@ -68,8 +68,8 @@ final class BackgroundSyncService {
     }
 
     func start() async {
-        // bug: panel-reopen-ics-refresh——主面板每次重建都调 start()，重开非数据变更事件，
-        // 全量 ICS 网络刷新属 AC-3 语义外开销；首次启动保持全量，重开仅同步 EK 数据
+        // 主面板每次重建都调 start()，重开非数据变更事件，
+        // 全量 ICS 网络刷新属语义外开销；首次启动保持全量，重开仅同步 EK 数据
         if hasStartedOnce {
             await startupSyncAction(false)
         } else {
@@ -100,7 +100,7 @@ final class BackgroundSyncService {
 
     /// 防抖调度：新通知取消上一个任务，静默 debounceSeconds 后只执行一次同步；
     /// 到期时若同步正在进行（isSyncing，如手动同步）则重排一次防抖重试，
-    /// 避免该次外部变更被 syncOnce 的互斥 guard 静默丢弃（AC-4）
+    /// 避免该次外部变更被 syncOnce 的互斥 guard 静默丢弃
     private func scheduleExternalSync() {
         externalChangeTask?.cancel()
         externalChangeTask = Task { [weak self] in
@@ -109,12 +109,12 @@ final class BackgroundSyncService {
             guard !Task.isCancelled else { return }
             if self.isSyncing {
                 if self.externalSyncRetryCount < self.maxExternalSyncRetries {
-                    // 同步进行中：重排一次防抖重试，避免被 syncOnce 互斥静默丢弃（AC-4）
+                    // 同步进行中：重排一次防抖重试，避免被 syncOnce 互斥静默丢弃
                     self.externalSyncRetryCount += 1
                     self.scheduleExternalSync()
                 } else {
-                    // BUG-10：原实现只重试一次，第二次撞互斥即静默丢弃（最长 60 分钟才可见）；
-                    // 预算耗尽后置待补跑标记，由本轮 syncOnce 结束时立即消费
+                    // 预算耗尽也不能静默丢弃——否则撞互斥的变更最长 60 分钟不可见；
+                    // 置待补跑标记，由本轮 syncOnce 结束时立即消费
                     self.pendingExternalResync = true
                 }
                 return
@@ -125,7 +125,7 @@ final class BackgroundSyncService {
 
     /// 执行一次全量同步
     /// - Parameter includeSubscriptions: 是否同步 ICS 订阅源；外部变更防抖路径传 false
-    ///   （订阅有自身刷新节奏，避免 EK 变更频繁触发网络刷新，AC-3），其余调用默认 true
+    ///   （订阅有自身刷新节奏，避免 EK 变更频繁触发网络刷新），其余调用默认 true
     /// - Returns: nil 同步成功；非 nil 为失败原因描述（多个失败以"；"拼接），
     ///            供手动同步 UI 错误反馈；启动/定时/防抖等后台调用忽略返回值
     @discardableResult
@@ -136,7 +136,7 @@ final class BackgroundSyncService {
         isSyncing = true
         defer {
             isSyncing = false
-            // BUG-10：长同步期间外部变更若重试用尽，同步结束立即补跑一次（跳过 ICS，与外部变更同口径）
+            // 长同步期间外部变更若重试用尽，同步结束立即补跑一次（跳过 ICS，与外部变更同口径）
             if pendingExternalResync {
                 pendingExternalResync = false
                 Task { [weak self] in
@@ -150,10 +150,10 @@ final class BackgroundSyncService {
 
         var failures: [String] = []
 
-        // E-5：日历授权门槛只包住系统日历/提醒同步——ICS 订阅源同步不依赖 EventKit 授权，
+        // 日历授权门槛只包住系统日历/提醒同步——ICS 订阅源同步不依赖 EventKit 授权，
         // 原顶部 guard 会使用户拒绝日历授权时订阅功能静默失效
         let hasCalendarAccess = CalendarService.shared.authorizationStatus == .fullAccess
-        // R-6：nil = 本地偏好查询失败，跳过系统日历同步段——失败伪装真空会触发
+        // nil = 本地偏好查询失败，跳过系统日历同步段——失败伪装真空会触发
         // enabledCalendars 全量分支 + seedDefaultCalendarPreferences 放行，
         // 把用户已裁剪的勾选配置持久化重置；提醒同步不依赖偏好，照常执行
         if let preferences = fetchPreferences(context: context) {
@@ -190,9 +190,9 @@ final class BackgroundSyncService {
             CalendarService.shared.cacheService.clearRemindersCache()
         }
 
-        // ICS 订阅源同步：外部变更防抖路径跳过（includeSubscriptions=false，AC-3）
+        // ICS 订阅源同步：外部变更防抖路径跳过（includeSubscriptions=false）
         if includeSubscriptions {
-            // R-6：nil = 订阅源查询失败，跳过本轮订阅同步——失败伪装空列表会令
+            // nil = 订阅源查询失败，跳过本轮订阅同步——失败伪装空列表会令
             // syncSubscriptionEvents(sources: []) 清空订阅缓存
             if let customSources = fetchCustomSources(context: context) {
                 let enabledSources = customSources.filter { $0.isEnabled }
@@ -210,8 +210,8 @@ final class BackgroundSyncService {
 
     private func startTimer() {
         syncTimer?.invalidate()
-        // R-15：加入 .common mode——scheduledTimer 默认挂 default mode，
-        // UI 交互（滚动/拖拽 tracking mode）期间周期同步暂停（A-16 同型遗漏）
+        // 加入 .common mode——scheduledTimer 默认挂 default mode，
+        // UI 交互（滚动/拖拽 tracking mode）期间周期同步暂停
         let timer = Timer(timeInterval: syncIntervalSeconds, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 await self?.syncOnce()
@@ -228,7 +228,7 @@ final class BackgroundSyncService {
         syncTimer = nil
     }
     
-    /// R-6：返回 nil = 查询失败（数据库异常），空数组才是新用户真空；
+    /// 返回 nil = 查询失败（数据库异常），空数组才是新用户真空；
     /// 失败伪装真空会走 enabledCalendars 全量分支 + seedDefaultCalendarPreferences
     /// 放行落库全勾，把用户已裁剪的日历勾选配置持久化重置
     private func fetchPreferences(context: ModelContext) -> [CalendarPreference]? {
@@ -236,7 +236,7 @@ final class BackgroundSyncService {
         return CacheFetch.optional(descriptor, in: context, operation: "日历偏好查询")
     }
 
-    /// R-6：返回 nil = 查询失败；失败伪装空列表会令 syncSubscriptionEvents(sources: [])
+    /// 返回 nil = 查询失败；失败伪装空列表会令 syncSubscriptionEvents(sources: [])
     /// 清空订阅缓存
     private func fetchCustomSources(context: ModelContext) -> [CustomCalendarSource]? {
         let descriptor = FetchDescriptor<CustomCalendarSource>()

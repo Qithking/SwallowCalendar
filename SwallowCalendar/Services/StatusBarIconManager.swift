@@ -21,15 +21,15 @@ final class StatusBarIconManager {
 
     private var refreshTimer: Timer?
 
-    /// 倒计时徽章数据缓存（bug: reminder-starved-by-badge-expansion 配套节流）：
+    /// 倒计时徽章数据缓存（徽章重绘配套节流）：
     /// 秒级 tick 命中缓存纯计算重绘不查库，查库降频到分钟边界/脏标记驱动
     private var countdownCache = CountdownBadgeCache()
 
-    /// V-19：日期图标生成时的"当天零点"标记，用于按日短路——
+    /// 日期图标生成时的"当天零点"标记，用于按日短路——
     /// 实心/描边日期图标一天内内容不变，同日内定时触发的重绘直接跳过，跨天才重新渲染
     private var iconGenerationDate: Date?
 
-    /// 回退默认图标重绘节流（bug: badge-fallback-redraw-every-second）：
+    /// 回退默认图标重绘节流：
     /// solid/stroke 样式 shouldCache=false，无事项回退路径每秒 tick 全量重渲染；
     /// 回退图标内容仅随样式/颜色 key 变化，同 key 且持续处于回退态时跳过重绘
     private var lastWasFallback = false
@@ -69,9 +69,9 @@ final class StatusBarIconManager {
         }
     }
 
-    /// 缓存变更（D2/G7v2）：置脏标记并立即重绘——徽章路径经倒计时缓存节流，
+    /// 缓存变更：置脏标记并立即重绘——徽章路径经倒计时缓存节流，
     /// 脏标记使本次 updateIcon 恰好重查一次；同步风暴期间高频通知合并为
-    /// 「置脏 + 每 tick 至多一次查询」（原实现每次通知都全量查库）
+    /// 「置脏 + 每 tick 至多一次查询」
     private func handleCachedEventsChanged() {
         countdownCache.markDirty()
         updateIcon()
@@ -93,7 +93,7 @@ final class StatusBarIconManager {
             return
         }
 
-        // V-19：日期类图标（实心/描边日期）一天内内容不变，同日内跳过重绘，
+        // 日期类图标（实心/描边日期）一天内内容不变，同日内跳过重绘，
         // 跨天（标记为 nil 或非今天）才重新生成
         if settings.iconStyle == .solidDate || settings.iconStyle == .strokeDate {
             let today = Calendar.current.startOfDay(for: Date())
@@ -115,10 +115,10 @@ final class StatusBarIconManager {
         Task { @MainActor [weak self] in
             guard let self else { return }
             let now = Date()
-            // 配套节流（bug: reminder-starved-by-badge-expansion）：同一分钟内
+            // 配套节流：同一分钟内
             // 重复 tick 命中缓存纯计算重绘，不查库；跨分钟或脏标记才重查
             guard let start = self.countdownCache.nearestStart(now: now, query: { Self.nearestCountdownStart(now: now) }) else {
-                // 无最近未完成事项：回退默认图标（bug: badge-fallback-redraw-every-second——
+                // 无最近未完成事项：回退默认图标（
                 // 每秒 tick 同 key 跳过重绘；从徽标切回或样式/颜色变更才真正生成）
                 let key = Self.fallbackIconKey(
                     style: settings.iconStyle,
@@ -144,7 +144,7 @@ final class StatusBarIconManager {
     }
 
     /// D2：取最近未完成用户事项的开始时间（nil = 无可显示事项）——查库核心
-    /// 复用列表同款展开链路（bug: badge-recurring-task-invisible）：
+    /// 复用列表同款展开链路：
     /// 循环任务 base.startDate 为过去首实例，直接查主表会被 startDate > now 排除，
     /// 而未来 occurrence 实例未落库——getEvents 在窗口内展开循环任务后统一返回
     @MainActor
@@ -167,7 +167,7 @@ final class StatusBarIconManager {
     }
 
     func updateIconAndRestartTimer() {
-        // V-19：设置变更（样式/颜色/格式）后强制重绘，清除按日短路标记
+        // 设置变更（样式/颜色/格式）后强制重绘，清除按日短路标记
         iconGenerationDate = nil
         updateIcon()
         startRefreshTimer()
@@ -186,14 +186,14 @@ final class StatusBarIconManager {
         // 首次 fire 对齐到下一整秒边界（与列表倒计时定时器同相位，两侧数字同步跳动）；
         // repeats 模式下后续 fire = 新 fireDate + n*interval，整秒序列不漂移
         refreshTimer?.fireDate = Date().addingTimeInterval(CountdownPhaseSync.intervalToNextSecond())
-        // V-19：加入 common mode，菜单展开/拖动等 tracking 期间定时器仍能触发，
+        // 加入 common mode，菜单展开/拖动等 tracking 期间定时器仍能触发，
         // 避免跨天后图标停留在旧日期直到交互结束
         if let timer = refreshTimer {
             RunLoop.main.add(timer, forMode: .common)
         }
     }
 
-    /// 回退图标内容 key（bug: badge-fallback-redraw-every-second）：
+    /// 回退图标内容 key：
     /// 回退默认图标外观仅随样式/自定义格式/格式样式/主题色变化，与每秒 tick 无关
     static func fallbackIconKey(style: IconStyle, customFormat: String, customFormatStyle: AppSettings.CustomFormatStyle, accentColorHex: String) -> String {
         "\(style.rawValue)|\(customFormat)|\(customFormatStyle.rawValue)|\(accentColorHex)"
@@ -352,7 +352,7 @@ final class StatusBarIconManager {
 
 // MARK: - 倒计时徽章数据缓存
 
-/// 倒计时徽章查询节流缓存（bug: reminder-starved-by-badge-expansion 配套）：
+/// 倒计时徽章查询节流缓存：
 /// 秒级 tick 只用缓存的最近事项日期纯计算重绘，查库降频到分钟边界 + 脏标记驱动；
 /// 无事项状态（nil）同样缓存，避免无事项时每秒空查。值类型便于单测注入 query 计数
 struct CountdownBadgeCache {

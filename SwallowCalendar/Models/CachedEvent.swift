@@ -73,7 +73,7 @@ final class CachedEvent {
     static let maxReminderLeadMinutes = 525_600
 
     /// 跨进程 notes 协议标记（写读两侧唯一真源，禁止散落字面量；与下方 localRecurrenceMarker 同族）：
-    /// - userOriginMarker：用户分类事件写入 EK notes，同步回流据此恢复 .user 分类（B-5/B-8）
+    /// - userOriginMarker：用户分类事件写入 EK notes，同步回流据此恢复 .user 分类
     /// - completedMarker：完成时写入 EK notes，同步回流据此恢复完成状态（自愈历史已办）
     static let userOriginMarker = "此事项来自SwallowCalendar应用"
     static let completedMarker = "[SC_COMPLETED]"
@@ -111,29 +111,29 @@ final class CachedEvent {
         reminderMinutes = normalized.max() ?? 0
     }
 
-    /// 多级提醒提前分钟数（JSON 持久化，plan 步骤 6；nil = 未设置多级，回退单级）
+    /// 多级提醒提前分钟数（JSON 持久化；nil = 未设置多级，回退单级）
     var reminderOffsetsJSON: String?
     
     /// 用户选择的事件颜色（十六进制，nil 时使用日历颜色）
     var eventColorHex: String?
 
-    /// 智能跳过节假日：勾选后生效日按节假日休/班标识顺延（plan 步骤①；
-    /// 带默认值新增属性走 SwiftData 轻量迁移，存量行自动补 false）
+    /// 智能跳过节假日：勾选后生效日按节假日休/班标识顺延；
+    /// 带默认值新增属性走 SwiftData 轻量迁移，存量行自动补 false
     var skipHolidays: Bool = false
 
-    /// 任务有效期区间（spec/task-validity-period AC-1~AC-6；带默认值走 SwiftData 轻量迁移）
+    /// 任务有效期区间（带默认值走 SwiftData 轻量迁移）
     /// 落库时已归一化：start=当天 00:00:00 / end=当天 23:59:59；nil = 该端不限制
     var validStartDate: Date?
     var validEndDate: Date?
 
-    /// 序列首实例锚点（bug: recurring-past-occurrence-invisible；带默认值走 SwiftData 轻量迁移）
+    /// 序列首实例锚点（带默认值走 SwiftData 轻量迁移）
     /// 语义 = 创建时刻的 startDate（创建时未过时刻即当天，已过即推进后的下一期）；
     /// 完成推进把 startDate 当游标前移，展开序列若跟随游标，被越过的历史未完成实例
     /// 将永久不可见——展开起点固定用本字段。nil = 存量未回填，回退游标展开（行为零变化），
     /// 存量由 sync 路径按 EK creationDate 幂等回填
     var originStartDate: Date?
 
-    /// 循环任务完成历史（JSON 持久化，单条化 plan step 1；nil = 无完成历史）
+    /// 循环任务完成历史（JSON 持久化；nil = 无完成历史）
     var completedOccurrenceDatesJSON: String?
 
     /// 农历镜像已创建键登记（JSON，nil = 未登记）
@@ -159,7 +159,7 @@ final class CachedEvent {
 
     /// 循环规则真源：JSON 优先，nil 时按旧档位推导（.custom 旧行保持不可展开）
     /// - Note: 损坏 JSON 降级旧档位是「尽力显示」兜底（与镜像侧 .corrupt 保守不动口径不同），
-    ///         但必须落日志——静默降级会让 custom 行未来实例消失且无迹可循（体检 P1-2）
+    ///         但必须落日志——静默降级会让 custom 行未来实例消失且无迹可循
     var recurrenceSpec: RecurrenceSpec? {
         get {
             if let json = recurrenceSpecJSON {
@@ -257,7 +257,7 @@ final class CachedEvent {
         return String(data: data, encoding: .utf8)
     }
 
-    /// 循环任务完成历史（计算属性，真源为 completedOccurrenceDatesJSON，单条化 plan step 1）
+    /// 循环任务完成历史（计算属性，真源为 completedOccurrenceDatesJSON）
     /// 读取：解码 JSON，未设置/坏数据回退空数组；写入：去重升序编码，空数组清除 JSON
     var completedOccurrenceDates: [Date] {
         get {
@@ -317,7 +317,7 @@ final class CachedEvent {
         return (try? JSONDecoder().decode([String].self, from: data)) == nil
     }
 
-    /// BUG-05：按 origin 相位重算完成历史（时分秒由锚点原语从 origin 保留）；纯函数供单测
+    /// 按 origin 相位重算完成历史（时分秒由锚点原语从 origin 保留）；纯函数供单测
     static func migratedAnchorCompletionDates(
         _ dates: [Date],
         origin: Date,
@@ -338,7 +338,7 @@ final class CachedEvent {
         return Array(Set(recomputed)).sorted()
     }
 
-    // MARK: - 有效期判定（spec/task-validity-period AC-1；plan step 3）
+    // MARK: - 有效期判定
 
     /// occurrence 是否落在有效期区间内（闭区间含端点，精确到时分；双端 nil = 不限制）
     /// 判定口径：occ >= validStart 且 occ <= validEnd——设开始 10:00 则 09:59 无效、10:00 有效；
@@ -349,7 +349,7 @@ final class CachedEvent {
         return true
     }
 
-    // MARK: - 复合 occurrence ID（单条化 plan step 2）
+    // MARK: - 复合 occurrence ID
 
     /// 构造复合 occurrence eventID；实现已收敛到纯工具 OccurrenceID（保留转发，调用点不变）
     static func makeOccurrenceID(baseID: String, occurrence: Date) -> String {
@@ -418,11 +418,11 @@ final class CachedEvent {
 // MARK: - 月历窗口谓词
 
 extension CachedEvent {
-    /// 月历窗口谓词（bug: month-switch-recurring-invisible）：
+    /// 月历窗口谓词：
     /// 循环 base 行（startDate=过去首实例）与未来月窗口不重叠，纯窗口重叠谓词会在
     /// 切月后把 base 行排除，mergedDisplayEvents 无行可展开——循环行豁免窗口过滤
     /// （始终包含，数量有限展开窗口自行裁剪）；普通行仍按窗口重叠过滤。
-    /// BUG-21：循环改单次后本体已无循环类型，但保留完成历史（历史期次需在月历可见）；
+    /// 循环改单次后本体已无循环类型，但保留完成历史（历史期次需在月历可见）；
     /// 游标 startDate 可能远在历史月份窗口之后，此处与 getEvents 同口径按
     /// 「有完成历史即命中」粗筛，历史行由展开阶段精确过滤。
     /// @Query 与单测（FetchDescriptor）共用本构造器，保证单一事实源
@@ -463,7 +463,7 @@ final class EventCacheService {
     /// 主上下文：由 ContentView 注入环境 ModelContext，确保与 @Query 使用同一上下文
     private var mainContext: ModelContext?
 
-    // B-13：events 与 reminders 拆分为独立同步标志——共用一个标志时，
+    // events 与 reminders 拆分为独立同步标志——共用一个标志时，
     // 手动与后台并发同步不同数据源会导致后到者被静默跳过
     var isSyncingEvents = false
 
@@ -486,7 +486,7 @@ final class EventCacheService {
     }
     
     /// 设置主上下文（由 ContentView 注入环境 ModelContext，确保 @Query 能响应变更）
-    /// 注入即执行存量中文循环键迁移（体检 P1-#3）：先于一切 #Predicate 查询——
+    /// 注入即执行存量中文循环键迁移：先于一切 #Predicate 查询——
     /// SQLite 层字符串比较认英文稳定键，未迁移的中文行会被月历/提醒谓词漏掉
     func setMainContext(_ context: ModelContext) {
         self.mainContext = context
@@ -538,8 +538,8 @@ final class EventCacheService {
     func getEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CachedEvent] {
         guard let context = self.context else { return [] }
         
-        // B-24：时间窗口过滤下沉到 SwiftData 谓词，避免全表加载后内存过滤。
-        // 左边界放宽 1 秒以兼容零长事件（start==end==窗口起点需纳入，见 filterEvents B-1 注释）：
+        // 时间窗口过滤下沉到 SwiftData 谓词，避免全表加载后内存过滤。
+        // 左边界放宽 1 秒以兼容零长事件（start==end==窗口起点需纳入，见 filterEvents 零长注释）：
         // 非零长事件 s < e 时 (s >= wStart || e > wStart) ⟺ e > wStart，故统一用 e > wStart 表达
         let widenedStart = startDate.addingTimeInterval(-1)
         // 哨兵日期用局部常量捕获：#Predicate 宏展开后 Date.distantPast 是静态成员
@@ -550,7 +550,7 @@ final class EventCacheService {
         // 循环任务单条化：本体行 startDate 只代表「下一次 occurrence」，
         // 窗口内 occurrence 序列可能超出本体行自身时间范围，粗筛放宽为
         // 「recurrenceType != none 且 startDate < 窗口右界」即命中（展开后再精确过滤）；
-        // bug: recurring-past-occurrence-invisible——完成推进把游标移出窗口后，
+        // 完成推进把游标移出窗口后，
         // 原条件直接把本体行滤掉（展开无从发生），补历史锚点 originStartDate
         // 命中分支：锚点在窗口右界之前即命中（历史序列从锚点展开）
         let noneRaw = RecurrenceType.none.rawValue
@@ -561,7 +561,7 @@ final class EventCacheService {
                     && event.recurrenceTypeRaw != noneRaw
                     && ((event.startDate ?? distantPast) < endDate
                         || (event.originStartDate ?? distantFuture) < endDate))
-                // BUG-21：循环改单次后本体已无循环类型，但保留完成历史（已办可见）；
+                // 循环改单次后本体已无循环类型，但保留完成历史（已办可见）；
                 // 游标期可能远在窗口之后，此处按「有历史即命中」粗筛，历史行在展开时精确过滤
                 || event.completedOccurrenceDatesJSON != nil
         }
@@ -571,7 +571,7 @@ final class EventCacheService {
             sortBy: [SortDescriptor(\.startDate)]
         )
 
-        // 读路径降级为空：失败与「无数据」在界面表现一致，但失败必须落日志（审计 M1/M6）
+        // 读路径降级为空：失败与「无数据」在界面表现一致，但失败必须落日志
         let events = CacheFetch.degradeToEmpty(
             descriptor,
             in: context,
@@ -592,11 +592,11 @@ final class EventCacheService {
             .sorted { ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) }
     }
 
-    /// 循环任务单条展开为窗口内 occurrence 实例（未落库，单条化 plan step 6）：
+    /// 循环任务单条展开为窗口内 occurrence 实例（未落库）：
     /// ① 完成历史窗口内日期 → isCompleted=true 历史行（历史事实不过 skipHolidays）；
     /// ② 从 startDate 链式 nextOccurrence 推进（与完成推进链共用，保持自洽），
     ///    未完成 occurrence 落休日按 v3 语义静默跳过；迭代上限 4000 防失控。
-    /// 有效期过滤（spec/task-validity-period AC-2 AC-3，plan step 4）：①② 均只产出
+    /// 有效期过滤：①② 均只产出
     /// 有效期内的 occurrence；② 对已完成 occurrence 不再追加（历史行由 ① 独家产出，
     /// 避免冻结场景 startDate 停在已完成 X 时产出重复行），并按结束端越界早退
     /// - Parameter includeHolidaySkipped: true 时休日实例仍产出（月历语义：无顺延，
@@ -615,10 +615,9 @@ final class EventCacheService {
         }()
         // ① 完成历史行（有效期外不产出）
         for occ in base.completedOccurrenceDates where base.isWithinValidity(occ) {
-            // 与窗口重叠才产出（零长按 B-1 覆盖开始日语义）——起点在窗口前但实例
-            // 延伸进窗口的跨窗口情形必须产出，与 ② 未完成实例的重叠判定对称
-            // （bug: completed-long-instance-cross-window-missing——原裸窗口过滤
-            // 丢弃跨窗口起点已完成长实例，如 23:00-03:00 实例在今日窗口不可见）
+            // 与窗口重叠才产出（零长覆盖开始日语义）——起点在窗口前但实例
+            // 延伸进窗口的跨窗口情形必须产出（如 23:00-03:00 实例在今日窗口须可见），
+            // 与 ② 未完成实例的重叠判定对称
             let instanceEnd = occ.addingTimeInterval(duration)
             if (occ >= windowStart && occ < windowEnd) || (occ < windowStart && instanceEnd > windowStart) {
                 result.append(makeOccurrenceInstance(of: base, occurrence: occ, duration: duration, isCompleted: true))
@@ -626,14 +625,14 @@ final class EventCacheService {
         }
         guard let baseStart = base.startDate else { return result }
         let completedSet = Set(base.completedOccurrenceDates.map { $0.timeIntervalSince1970 })
-        // BUG-21 历史语义收口：转单次后本体不再展开未来，历史行唯一真源是 ①。
+        // 转单次后本体不再展开未来，历史行唯一真源是 ①。
         // 增量口径（B）：仅当无完成历史时才保留本体行，保证「转单次后未来 0 行、历史 N 行」。
         // 单一判定入口：非循环生效行不展开未来；转单次且保留历史时，历史行由 ① 独家产出，
         // 不得再追加游标本体——否则历史窗口多一条未完成行，游标落在未来时还会冒未来实例（B 违规）
         guard base.isRecurringActive, let spec = base.recurrenceSpec else {
             guard !base.hasCompletedHistory else { return result }
             // 未转单次也无历史（直接调用的普通单次行）：窗口重叠时产出本体行，
-            // 保持 BUG-21 完成路径（本体 eventID + 落库 isCompleted）可用
+            // 保持完成路径（本体 eventID + 落库 isCompleted）可用
             let instanceEnd = baseStart.addingTimeInterval(duration)
             let inWindow = (baseStart >= windowStart && baseStart < windowEnd)
                 || (baseStart < windowStart && instanceEnd > windowStart)
@@ -673,7 +672,7 @@ final class EventCacheService {
             // 已完成 occurrence 的展示行由 ① 独家产出，② 不追加，避免冻结场景重复行
             if !done, base.isWithinValidity(occ) {
                 let instanceEnd = occ.addingTimeInterval(duration)
-                // 与窗口重叠才产出（零长按 B-1 覆盖开始日语义）
+                // 与窗口重叠才产出（零长覆盖开始日语义）
                 if occ >= windowStart || instanceEnd > windowStart {
                     // 休日处理（仅未完成 occurrence；序列本身不改写）：
                     // 默认静默跳过（列表语义）；月历传 includeHolidaySkipped=true 保留休日实例
@@ -695,8 +694,8 @@ final class EventCacheService {
         return result
     }
 
-    /// 菜单弹层/桌面面板的任务候选（bug: status-popover-panel-recurring-invisible）：
-    /// 两视图原 reload 直查主表（B-27 谓词窗口）漏循环任务未来实例——本方法统一走
+    /// 菜单弹层/桌面面板的任务候选：
+    /// 直查主表的 reload 漏循环任务未来实例——两视图统一走
     /// getEvents 展开链路（休日实例静默跳过、有效期过滤与列表一致），
     /// 限定用户分类（排除系统/订阅内容）；无日期行由下方补查保留（原谓词语义）
     func userTodoCandidates(from windowStart: Date, to windowEnd: Date) -> [CachedEvent] {
@@ -719,7 +718,7 @@ final class EventCacheService {
         return result
     }
 
-    /// 月历视图合并入口（bug: calendar-grid-recurring-invisible）：
+    /// 月历视图合并入口：
     /// @Query 直查主表只能看到循环任务 base 行（过去首实例），看不到未落库的未来
     /// occurrence——本方法把传入行拆为普通行 + 循环展开实例（休日实例保留供标识），
     /// 本体行被替换，语义与 getEvents 一致；调用方负责按月窗口传入 @Query 结果
@@ -764,7 +763,7 @@ final class EventCacheService {
         )
     }
 
-    /// 复合 occurrence ID 解析为展示实例（bug: startup-expired-popup-recurring-miss）：
+    /// 复合 occurrence ID 解析为展示实例：
     /// occurrence 实例未落库，按 eventID 直查主表必 miss——回查本体后重建展示实例；
     /// 普通 eventID（无复合标记）、本体缺失或 occurrence 已完成返回 nil（调用方按失效处理）
     func displayOccurrence(withID eventID: String, context: ModelContext) -> CachedEvent? {
@@ -773,7 +772,7 @@ final class EventCacheService {
         let descriptor = FetchDescriptor<CachedEvent>(
             predicate: #Predicate { $0.eventID == baseID }
         )
-        // 失败与「本体不存在」都返回 nil，但失败必须落日志（审计 M6）
+        // 失败与「本体不存在」都返回 nil，但失败必须落日志
         guard let base = CacheFetch.optional(descriptor, in: context, operation: "occurrence 本体回查")?.first else { return nil }
         let isDone = base.completedOccurrenceDates.contains { $0 == parts.occurrence }
         guard !isDone else { return nil }
@@ -787,7 +786,7 @@ final class EventCacheService {
             guard let start = event.startDate, let end = event.endDate else {
                 return includeNoDateReminders
             }
-            // B-1：零长事件（start==end，如仅日期提醒映射产物 start==end==当日00:00）
+            // 零长事件（start==end，如仅日期提醒映射产物 start==end==当日00:00）
             // 视为覆盖开始当天——原判定 end > startDate 恒为 false，导致到期当天不可见。
             // 采用审计备选方案"零长事件特殊处理"，避免单日查询右边界+1 天把次日
             // 00:00 开始的事件误纳入当天
@@ -811,7 +810,7 @@ final class EventCacheService {
     // MARK: - 同步
     
     /// 同步日历事件到本地缓存
-    /// B-28：返回同步是否成功（保存失败/guard 提前退出均返回 false），
+    /// 返回同步是否成功（保存失败/guard 提前退出均返回 false），
     /// manualSync 依赖此结果回传 UI；@discardableResult 保持旧调用方兼容
     @MainActor
     @discardableResult
@@ -824,7 +823,7 @@ final class EventCacheService {
             isSyncingEvents = false
         }
 
-        // 单条化 plan step 9：存量循环任务组一次性迁移（幂等，UserDefaults 门控保护，
+        // 存量循环任务组一次性迁移（幂等，UserDefaults 门控保护，
         // 全表扫描覆盖 EKEvent/EKReminder 两类旧组）
         migrateRecurringGroups(context: context, calendarService: calendarService)
 
@@ -836,13 +835,13 @@ final class EventCacheService {
         // 从系统日历获取事件
         let systemEvents = calendarService.fetchEvents(from: startDate, to: endDate, calendars: calendars)
         // 获取现有的缓存事件，构建 eventID → 行 全表映射
-        // B-10：不做窗口过滤——事件移出同步窗口后旧行不进索引，else 分支会插入
+        // 不做窗口过滤——事件移出同步窗口后旧行不进索引，else 分支会插入
         // 同 eventID 新行触发 @Attribute(.unique) 冲突导致整次保存失败；
         // 全表构建让更新路径能命中窗口外旧行
         var existingByID: [String: CachedEvent] = [:]
         let descriptor = FetchDescriptor<CachedEvent>()
         // 失败必须中止本次同步：空映射会把全部系统事件当新行插入，
-        // 与既有行触发 @Attribute(.unique) 冲突导致整次保存失败（审计 M6）
+        // 与既有行触发 @Attribute(.unique) 冲突导致整次保存失败
         guard let existing = CacheFetch.optional(descriptor, in: context, operation: "syncEvents 全表映射") else {
             AppLogger.cache.error("syncEvents 中止：现有缓存映射查询失败")
             return false
@@ -854,7 +853,7 @@ final class EventCacheService {
         let newIDs = Set(systemEvents.map { $0.id })
 
         // 删除已不存在的系统事件（缓存中存在但系统中已不存在）
-        // B-10：仅同步窗口内的行参与删除判定，窗口外旧行不在本次同步范围
+        // 仅同步窗口内的行参与删除判定，窗口外旧行不在本次同步范围
         //（由 cleanupOldEvents 按保留期限清理）
         let deletedIDs = Set(existingByID.keys).subtracting(newIDs)
         for eventID in deletedIDs {
@@ -866,7 +865,7 @@ final class EventCacheService {
                 // 跳过提醒事件（由 syncReminders 管理）
                 guard !event.isReminder else { continue }
                 // 跳过用户分类事件（由用户操作管理，不在系统同步中删除）
-                // E-10：user 事件为缓存+EK 双写，走到此处说明 EK 侧已无此事件
+                // user 事件为缓存+EK 双写，走到此处说明 EK 侧已无此事件
                 //（可能被用户在系统日历 App 直接删除），缓存条目将永久残留，
                 // 记日志暴露问题以便排查
                 guard event.category != .user else {
@@ -892,10 +891,10 @@ final class EventCacheService {
                 // 原因：历史已办事项在 [SC_COMPLETED] 机制引入（2026-05）之前标记完成，
                 // 其 EKEvent notes 中并无标记，若强制刷回会导致已办在重启后重新变回过期待办弹窗。
                 var newIsCompleted = existing.isCompleted
-                // B-8：与插入路径对称——notes 含来源标记时恢复 user 分类，
+                // 与插入路径对称——notes 含来源标记时恢复 user 分类，
                 // 避免 EK 侧分类信息变化后缓存残留旧分类
                 var newCategory = event.category
-                // B-25：notes 随 fetchEvents 一并带出，不再逐条 getEvent 跨进程查询；
+                // notes 随 fetchEvents 一并带出，不再逐条 getEvent 跨进程查询；
                 // notes 为空串等价于原 EKEvent.notes 为 nil（无任何标记）
                 let notes = event.notes ?? ""
                 if notes.contains(CachedEvent.completedMarker) {
@@ -914,12 +913,12 @@ final class EventCacheService {
                 // 必须同时比较 reminderMinutes 与 offsets（Architect steelman 采纳项）
                 let newOffsetsJSON = CachedEvent.encodeOffsetsJSON(event.reminderOffsets)
                 let offsetsChanged = existing.reminderOffsetsJSON != newOffsetsJSON
-                // BUG-09：循环行的 startDate/endDate 是本地游标事实，EK 仅作镜像；
+                // 循环行的 startDate/endDate 是本地游标事实，EK 仅作镜像；
                 // 外部删除/写失败后若按 EK 旧日期回写，游标会与完成历史分叉（该期再也无法推进）
                 let isRecurringCursor = existing.recurrenceType != .none
                 let startChanged = !isRecurringCursor && existing.startDate != newStart
                 let endChanged = !isRecurringCursor && existing.endDate != newEnd
-                // B-8：变更检测与赋值补齐 isAllDay/calendarTitle/calendarColorHex/category，
+                // 变更检测与赋值补齐 isAllDay/calendarTitle/calendarColorHex/category，
                 // 避免 EK 侧修改后缓存残留旧值
                 if existing.title != newTitle || startChanged || endChanged || existing.isCompleted != newIsCompleted || existing.reminderMinutes != newReminderMinutes || offsetsChanged || existing.isAllDay != event.isAllDay || existing.calendarTitle != event.calendarTitle || existing.calendarColorHex != event.calendarColorHex || existing.category != newCategory {
                     if existing.isCompleted != newIsCompleted {
@@ -939,7 +938,7 @@ final class EventCacheService {
                     existing.category = newCategory
                     existing.lastUpdated = Date()
                 }
-                // 存量循环行幂等回填历史锚点（bug: recurring-past-occurrence-invisible）：
+                // 存量循环行幂等回填历史锚点：
                 // 首轮同步按 EK creationDate 反推序列首实例，回填后 origin 非 nil 不再进入；
                 // 游标推进（完成/编辑）不擦除锚点，历史未完成实例得以持续展开
                 if existing.recurrenceType != .none, existing.originStartDate == nil {
@@ -951,7 +950,7 @@ final class EventCacheService {
                     )
                 }
             } else {
-                // B-9：优先按 calendar identifier 匹配日历（title 同名/本地化差异
+                // 优先按 calendar identifier 匹配日历（title 同名/本地化差异
                 // 会取错日历导致 calendarID 记录为空串后被过滤消失），
                 // identifier 匹配失败时回退 title 匹配
                 let targetCalendar = calendars.first { $0.calendarIdentifier == event.calendarID }
@@ -963,7 +962,7 @@ final class EventCacheService {
                 // 从 EKEvent 的 notes 中恢复完成状态（跨设备/清缓存后重新同步时
                 // 已完成事项仍能以已完成状态插入缓存，不丢失完成状态）
                 var isCompletedFromNotes = false
-                // B-25：notes 随 fetchEvents 一并带出，不再逐条 getEvent 跨进程查询
+                // notes 随 fetchEvents 一并带出，不再逐条 getEvent 跨进程查询
                 let notes = event.notes ?? ""
                 if notes.contains(CachedEvent.userOriginMarker) {
                     category = .user
@@ -998,7 +997,7 @@ final class EventCacheService {
             cleanupOldEvents(context: context, before: startDate)
             // D2/G7v2：系统日历回流完成，广播缓存变更（徽标即时刷新）
             NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
-            // BUG-05：同步完成后做一次完成历史锚点迁移（此时 originStartDate 回填已落库）
+            // 同步完成后做一次完成历史锚点迁移（此时 originStartDate 回填已落库）
             migrateMonthlyAnchorCompletionDates(context: context)
             return true
         } catch {
@@ -1015,7 +1014,7 @@ final class EventCacheService {
         guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
 
         let descriptor = FetchDescriptor<CachedEvent>()
-        // 查询失败保留迁移标记未置位，下次启动重试（审计 M6）
+        // 查询失败保留迁移标记未置位，下次启动重试
         guard let existing = CacheFetch.optional(descriptor, in: context, operation: "isReminder 迁移查询") else { return }
 
         var migratedCount = 0
@@ -1039,7 +1038,7 @@ final class EventCacheService {
         }
     }
 
-    /// BUG-05：一次性迁移——monthly/yearly 行的完成历史按锚点 origin 重算，
+    /// 一次性迁移——monthly/yearly 行的完成历史按锚点 origin 重算，
     /// 旧 [1/31, 2/28, 3/28] 收敛为 [1/31, 2/28, 3/31]，避免已完成期在锚点展开后重现。
     /// 迁移为一次性，UserDefaults 门控；保存成功才置位，失败下次重试
     @MainActor
@@ -1083,7 +1082,7 @@ final class EventCacheService {
         }
     }
 
-    /// 一次性迁移：旧版多实例循环任务组（groupId != nil）合并为单条推进式记录（单条化 plan step 9）
+    /// 一次性迁移：旧版多实例循环任务组（groupId != nil）合并为单条推进式记录
     /// - 每组保留「最早未完成实例」行作单条（全完成组保留最晚一条已完成实例），
     ///   已完成实例日期升序并入完成历史，groupId/groupIndex 置空（幂等标记，重查自然 no-op）
     /// - 先删其余行的 EK 记录（任一失败该组整体放弃，缓存不动下次重试），后改缓存并统一 save
@@ -1094,8 +1093,6 @@ final class EventCacheService {
         guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
 
         let descriptor = FetchDescriptor<CachedEvent>()
-        // A-23：try? 吞错无日志——迁移 fetch 失败时静默跳过且不标记完成，
-        // 下次启动重试但无迹可查；记录错误后同样终止本次（重试语义不变）
         let all: [CachedEvent]
         do {
             all = try context.fetch(descriptor)
@@ -1157,7 +1154,7 @@ final class EventCacheService {
         }
     }
 
-    /// 本地循环标记（bug: reminder-rule-deletion-swallowed）：应用内为提醒设置的循环档位
+    /// 本地循环标记：应用内为提醒设置的循环档位
     /// 不写 EK 规则（单条化设计），EK 侧无法凭「无规则」区分「应用内设循环」与「外部删规则」；
     /// updateEventRecurrence 改循环时写入 EKReminder.notes，syncReminders 回流据此保留档位
     static let localRecurrenceMarker = "[SC_RECURRENCE_LOCAL]"
@@ -1179,10 +1176,10 @@ final class EventCacheService {
             isReminder: true,
             isCompleted: reminder.isCompleted,
             priority: 0,
-            // bug: ek-recurrence-materialization-mirror——同步写入 EK 映射档位，
+            // 同步写入 EK 映射档位，
             // 系统侧「每小时」不再显示「1次」
             recurrenceType: reminder.recurrenceType,
-            // bug: reminder-spec-dropped-on-insert——循环规则单一真源随插入透传，
+            // 循环规则单一真源随插入透传，
             // 防止自定义循环（每 2 周/多选星期/第 N 个周几）首次入库丢 spec
             recurrenceSpecJSON: reminder.recurrenceSpec?.jsonString,
             reminderMinutes: reminder.reminderMinutes,
@@ -1191,10 +1188,10 @@ final class EventCacheService {
     }
 
     /// syncReminders 更新分支：将 EK 回流映射值合并进既有缓存行，返回是否发生变更
-    /// bug: reminder-offsets-wiped-by-sync——任务 E 模式下应用为 EKReminder 写
+    /// 任务 E 模式下应用为 EKReminder 写
     /// absolute(due) 准点闹钟，EK 侧不含提前量，提前提醒真源为缓存 reminderOffsets：
     /// 此时跳过 reminderOffsetsJSON/reminderMinutes 的变更检测与覆盖，保留缓存现值；
-    /// 其余（relative/无闹钟）照常采纳 EK 值（B-8 语义：EK 侧为准）
+    /// 其余（relative/无闹钟）照常采纳 EK 值（EK 侧为准）
     @discardableResult
     static func mergeReminderUpdate(existing: CachedEvent, ek: CalendarEvent) -> Bool {
         let newTitle = ek.title
@@ -1207,7 +1204,7 @@ final class EventCacheService {
         let newOffsetsJSON = CachedEvent.encodeOffsetsJSON(ek.reminderOffsets)
         let offsetsChanged = adoptReminder && existing.reminderOffsetsJSON != newOffsetsJSON
         let minutesChanged = adoptReminder && existing.reminderMinutes != newReminderMinutes
-        // bug: reminder-rule-deletion-swallowed——EK 无规则时分流：
+        // EK 无规则时分流：
         // notes 带本地循环标记 = 应用内设置的循环档位（EK 侧刻意不写规则，如每小时/农历），保留缓存现值；
         // 无标记 = 系统原生循环提醒的规则已被外部删除，采纳 .none（否则档位永久滞留）
         let newRecurrence: RecurrenceType
@@ -1217,7 +1214,7 @@ final class EventCacheService {
             newRecurrence = ekSpec.legacyType
         } else if ek.recurrenceType != .none {
             // 兼容未携带 spec 的事件载体：档位非 none 即规则存在，按旧档位推导 spec。
-            // bug: recurrence-legacy-derived-degrade——旧档位推导会丢失间隔/多选星期/第 N 个周几
+            // 旧档位推导会丢失间隔/多选星期/第 N 个周几
             // （.weekly 无法区分「工作日/每两周」），档位一致且缓存已有 spec 时优先保留，
             // 否则一次回流就把未来实例降级成每周同一天（A 的「未来不可见」来源之一）
             let derived = RecurrenceSpec.legacy(
@@ -1255,7 +1252,7 @@ final class EventCacheService {
                 existing.reminderOffsetsJSON = newOffsetsJSON
                 existing.reminderMinutes = newReminderMinutes
             }
-            // bug: ek-recurrence-materialization-mirror——系统循环提醒档位以 EK 映射为准；
+            // 系统循环提醒档位以 EK 映射为准；
             // EK 无规则时按上方分流：本地标记保留 / 无标记采纳 .none
             existing.recurrenceType = newRecurrence
             existing.recurrenceSpecJSON = newSpecJSON
@@ -1282,7 +1279,7 @@ final class EventCacheService {
         migrateReminderFlag(context: context)
 
         // 从系统提醒获取（获取所有提醒，包括已完成的，以正确同步外部状态变化）
-        // R-4：nil = 获取失败（授权丢失/EK XPC 失败），此时差集会把全部现有提醒
+        // nil = 获取失败（授权丢失/EK XPC 失败），此时差集会把全部现有提醒
         // 误判为已删除——completedOccurrenceDatesJSON/originStartDate 仅存缓存，
         // 误删不可恢复。跳过本轮同步（缓存保留旧值），返回 false 供上层反馈
         guard let reminders = await calendarService.fetchReminders(includeCompleted: true) else {
@@ -1293,7 +1290,7 @@ final class EventCacheService {
         // 获取现有的提醒，构建字典以优化查询
         var existingByID: [String: CachedEvent] = [:]
         let descriptor = FetchDescriptor<CachedEvent>()
-        // 失败必须中止：空映射会把全部提醒当新行插入并触发唯一约束冲突（审计 M6）
+        // 失败必须中止：空映射会把全部提醒当新行插入并触发唯一约束冲突
         guard let existing = CacheFetch.optional(descriptor, in: context, operation: "syncReminders 全表映射") else {
             AppLogger.cache.error("syncReminders 中止：现有提醒映射查询失败")
             return false
@@ -1315,11 +1312,11 @@ final class EventCacheService {
         // 更新或插入提醒
         for reminder in reminders {
             if let existing = existingByID[reminder.id] {
-                // bug: reminder-offsets-wiped-by-sync——更新分支抽为纯函数合并：
+                // 更新分支抽为纯函数合并：
                 // absolute 准点闹钟（任务 E 模式）EK 侧不携带提前量，
                 // 此时保留缓存 reminderOffsets，不参与变更检测与覆盖
                 Self.mergeReminderUpdate(existing: existing, ek: reminder)
-                // 存量循环提醒幂等回填历史锚点（同 syncEvents，bug: recurring-past-occurrence-invisible）
+                // 存量循环提醒幂等回填历史锚点
                 if existing.recurrenceType != .none, existing.originStartDate == nil, let newStart = reminder.startDate {
                     existing.originStartDate = CalendarService.resolveOriginStartDate(
                         cursor: newStart,
@@ -1340,7 +1337,7 @@ final class EventCacheService {
             lastSyncTime = Date()
             // D2/G7v2：系统提醒回流完成，广播缓存变更（徽标即时刷新）
             NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
-            // BUG-05：同步完成后做一次完成历史锚点迁移（此时 originStartDate 回填已落库）
+            // 同步完成后做一次完成历史锚点迁移（此时 originStartDate 回填已落库）
             migrateMonthlyAnchorCompletionDates(context: context)
         } catch {
             AppLogger.cache.error("提醒保存失败: \(String(describing: error))")
@@ -1350,7 +1347,7 @@ final class EventCacheService {
     }
 
     /// 清除提醒缓存（isReminder 为 true 的记录）
-    /// BUG-01：排除用户自建提醒（category = .user）——默认关闭提醒同步时每次 syncOnce
+    /// 排除用户自建提醒（category = .user）——默认关闭提醒同步时每次 syncOnce
     /// 都走整批清理，原谓词会把自建提醒连同完成历史一起永久删除
     @MainActor
     func clearRemindersCache() {
@@ -1363,14 +1360,14 @@ final class EventCacheService {
             }
         )
 
-        // 查询失败不改动任何行，留待下次调用重试（审计 M6）
+        // 查询失败不改动任何行，留待下次调用重试
         guard let events = CacheFetch.optional(descriptor, in: context, operation: "clearRemindersCache 查询") else {
             return
         }
         for event in events {
             context.delete(event)
         }
-        // R-13：save 失败静默会与库内实际状态不一致，补日志留痕
+        // save 失败静默会与库内实际状态不一致，补日志留痕
         do {
             try context.save()
         } catch {
@@ -1378,8 +1375,8 @@ final class EventCacheService {
         }
     }
 
-    /// V-38：即时删除指定订阅源的全部缓存事件（源被禁用时调用），
-    /// 原实现依赖下一次后台同步兜底，禁用后事件残留一个同步周期
+    /// 即时删除指定订阅源的全部缓存事件（源被禁用时调用）——
+    /// 不依赖下一次后台同步兜底，避免禁用后事件残留一个同步周期
     @MainActor
     func deleteSubscriptionEvents(sourceURL: String) {
         guard let context else { return }
@@ -1402,7 +1399,7 @@ final class EventCacheService {
             try context.save()
             AppLogger.cache.info("已清除被禁用订阅源的缓存事件 count=\(events.count)")
         } catch {
-            // 删除落库失败时禁用源的事件会残留（V-38 症状），必须暴露而非静默吞掉
+            // 删除落库失败时禁用源的事件会残留，必须暴露而非静默吞掉
             AppLogger.cache.error("清除禁用订阅源缓存事件保存失败: \(error.localizedDescription)")
         }
     }
@@ -1430,15 +1427,14 @@ final class EventCacheService {
 
         for source in enabledSources {
             let events: [ICSEvent]
-            // 体检 P1-#4：缓存带 30 分钟 TTL——超龄视为未命中走网络刷新（原实现
-            // 有缓存即永不联网，内容最长滞后 7 天）；maxAge 用 cacheMaxAge 常量
+            // 缓存带 30 分钟 TTL——超龄视为未命中走网络刷新；maxAge 用 cacheMaxAge 常量
             if let cached = icsService.loadCached(url: source.icsURL, maxAge: ICSService.cacheMaxAge) {
                 events = cached
             } else {
                 do {
                     events = try await icsService.fetchAndParse(url: source.icsURL)
                 } catch {
-                    // 体检 P1-#5：单源失败必须落日志（多源场景静默 continue 让失败无感知）；
+                    // 单源失败必须落日志（多源场景静默 continue 让失败无感知）；
                     // 不进 fetchedSourceURLs，该源旧事件由下方差集机制保留不删除
                     AppLogger.cache.warning("订阅源获取失败，保留旧数据 url=\(source.icsURL) error=\(error.localizedDescription)")
                     continue
@@ -1454,7 +1450,7 @@ final class EventCacheService {
         }
 
         // 3. 构建新数据的 eventID → 数据 映射
-        // B-12：eventID 加源 URL 前缀，避免跨源 uid 冲突时 last-write-wins 覆盖；
+        // eventID 加源 URL 前缀，避免跨源 uid 冲突时 last-write-wins 覆盖；
         // 无 uid 时用 summary+dtstart 的 SHA256 稳定哈希替代 "\(summary)_\(timestamp)"
         //（String.hashValue 每次启动随机种子，不可用作持久化标识）
         var newEventsByID: [String: (source: CustomCalendarSource, icsEvent: ICSEvent)] = [:]
@@ -1490,7 +1486,7 @@ final class EventCacheService {
                 event.categoryRaw == subscriptionCategory
             }
         )
-        // 失败必须中止：空映射会把全部订阅事件当新行插入并触发唯一约束冲突（审计 M6）
+        // 失败必须中止：空映射会把全部订阅事件当新行插入并触发唯一约束冲突
         guard let existing = CacheFetch.optional(descriptor, in: context, operation: "syncSubscriptionEvents 全表映射") else {
             AppLogger.cache.error("syncSubscriptionEvents 中止：现有订阅映射查询失败")
             return false
@@ -1502,7 +1498,7 @@ final class EventCacheService {
         // 启用源的 URL 集合（用于判断缓存事件的来源是否仍启用）
         let enabledSourceURLs = Set(enabledSources.map { $0.icsURL })
 
-        // BUG-02：抓取成功但返回 0 事件，且该源已有缓存行——视为可疑空响应
+        // 抓取成功但返回 0 事件，且该源已有缓存行——视为可疑空响应
         //（源被清空/临时返回空），保留旧行并告警；宁留数据不误删
         let emptyResponseSourceURLs = Set(
             fetchedEventsBySource.filter { $0.events.isEmpty }.map { $0.source.icsURL }
@@ -1520,7 +1516,7 @@ final class EventCacheService {
         let deletedIDs = Set(existingByID.keys).subtracting(newIDs)
         for eventID in deletedIDs {
             if let event = existingByID[eventID] {
-                // BUG-02：可疑空响应的源不做差集删除（空解析不得清空订阅）
+                // 可疑空响应的源不做差集删除（空解析不得清空订阅）
                 if suspiciousEmptySources.contains(event.calendarID) {
                     continue
                 }
@@ -1563,7 +1559,7 @@ final class EventCacheService {
                     title: icsEvent.summary,
                     startDate: startDate,
                     endDate: endDate,
-                    // B-11：按 ICS DTSTART 是否含时间判定，不再硬编码全天
+                    // 按 ICS DTSTART 是否含时间判定，不再硬编码全天
                     isAllDay: icsEvent.isAllDay,
                     calendarID: source.icsURL,
                     calendarTitle: source.name,
@@ -1578,20 +1574,20 @@ final class EventCacheService {
         do {
             try context.save()
             lastSyncTime = Date()
-            // BUG-11：订阅同步有实际增删改时广播，月历/待办/休日判定才能即时刷新
+            // 订阅同步有实际增删改时广播，月历/待办/休日判定才能即时刷新
             //（无变更不广播，避免每次轮询触发全量重绘）
             if hasChanges {
                 NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
             }
         } catch {
-            // B-30：保存失败必须记录日志，静默吞掉会丢数据且无法排查
+            // 保存失败必须记录日志，静默吞掉会丢数据且无法排查
             AppLogger.cache.error("订阅同步保存失败: \(String(describing: error))")
             return false
         }
         return true
     }
 
-    /// B-12：跨启动稳定的内容哈希（String.hashValue 每次启动随机种子，不可用作持久化标识）
+    /// 跨启动稳定的内容哈希（String.hashValue 每次启动随机种子，不可用作持久化标识）
     private static func stableHash(_ input: String) -> String {
         let digest = SHA256.hash(data: Data(input.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
@@ -1604,7 +1600,7 @@ final class EventCacheService {
         guard let context = self.context else { return }
 
         let descriptor = FetchDescriptor<CachedEvent>()
-        // 查询失败不改动任何行，留待下次同步重试（审计 M6）
+        // 查询失败不改动任何行，留待下次同步重试
         guard let events = CacheFetch.optional(descriptor, in: context, operation: "clearSystemCalendarCache 查询") else {
             return
         }
@@ -1613,7 +1609,7 @@ final class EventCacheService {
         for event in eventsToDelete {
             context.delete(event)
         }
-        // R-13：save 失败静默会与库内实际状态不一致，补日志留痕
+        // save 失败静默会与库内实际状态不一致，补日志留痕
         do {
             try context.save()
         } catch {
@@ -1629,7 +1625,7 @@ final class EventCacheService {
         guard let context = self.context else { return }
 
         let descriptor = FetchDescriptor<CachedEvent>()
-        // 查询失败不改动任何行，留待下次清缓存重试（审计 M6）
+        // 查询失败不改动任何行，留待下次清缓存重试
         guard let events = CacheFetch.optional(descriptor, in: context, operation: "clearCache 查询") else {
             return
         }
@@ -1642,12 +1638,12 @@ final class EventCacheService {
             }
             context.delete(event)
             deletedCount += 1
-            // R-21：每条让出一轮 runloop（A-8 同型）——大量缓存时逐行 delete
+            // 每条让出一轮 runloop——大量缓存时逐行 delete
             // 独占主线程冻结 UI，yield 后进度动画与交互可穿插响应
             await Task.yield()
         }
         if deletedCount > 0 {
-            // R-13：save 失败静默会与库内实际状态不一致，补日志留痕
+            // save 失败静默会与库内实际状态不一致，补日志留痕
             do {
                 try context.save()
             } catch {
@@ -1657,23 +1653,23 @@ final class EventCacheService {
         AppLogger.cache.info("清除缓存：删除 \(deletedCount) 条系统/订阅缓存，用户事项与提醒已保留")
     }
     
-    /// E-9：已完成用户事项/提醒的保留窗口（天），超过后从本地缓存清理
+    /// 已完成用户事项/提醒的保留窗口（天），超过后从本地缓存清理
     private static let userEventRetentionDays = 365
 
     /// 清理超过保留期限的旧事件（保留 startDate 之前的事件）
-    /// E-9：已完成的用户事项/提醒超过保留窗口后清理；未完成的永不清理
+    /// 已完成的用户事项/提醒超过保留窗口后清理；未完成的永不清理
     private func cleanupOldEvents(context: ModelContext, before cutoffDate: Date) {
         let descriptor = FetchDescriptor<CachedEvent>()
-        // 查询失败不执行清理，留待下次启动重试（审计 M6）
+        // 查询失败不执行清理，留待下次启动重试
         guard let events = CacheFetch.optional(descriptor, in: context, operation: "cleanupOldEvents 查询") else { return }
 
         var deletedCount = 0
         var userDeletedCount = 0
-        // E-9：用户数据清理基准为"365 天前"，与系统缓存用的 cutoffDate（同步窗口起点）分开计算
+        // 用户数据清理基准为"365 天前"，与系统缓存用的 cutoffDate（同步窗口起点）分开计算
         let userRetentionCutoff = Calendar.current.date(byAdding: .day, value: -Self.userEventRetentionDays, to: Date())!
 
         for event in events {
-            // E-9：用户事项与提醒改为有条件清理——已完成且 endDate 早于保留窗口才删除，
+            // 用户事项与提醒按条件清理——已完成且 endDate 早于保留窗口才删除，
             // 未完成的永不清理，避免用户数据意外丢失
             if event.category == .user || event.isReminder {
                 if event.isCompleted, let endDate = event.endDate, endDate < userRetentionCutoff {
@@ -1686,7 +1682,7 @@ final class EventCacheService {
             if event.category == .subscription {
                 continue
             }
-            // B-19：未来窗口外（endDate 超出同步窗口上界 2 年）的系统事件为残留行
+            // 未来窗口外（endDate 超出同步窗口上界 2 年）的系统事件为残留行
             //（如外部编辑推远后恰逢同步失败），仅靠过去侧清理无法回收
             let futureWindowLimit = Calendar.current.date(byAdding: .year, value: 2, to: Date())!
             if let endDate = event.endDate, endDate > futureWindowLimit {
@@ -1702,7 +1698,7 @@ final class EventCacheService {
         }
 
         if deletedCount > 0 || userDeletedCount > 0 {
-            // R-13：save 失败静默会导致过期缓存反复重删，补日志留痕
+            // save 失败静默会导致过期缓存反复重删，补日志留痕
             do {
                 try context.save()
             } catch {

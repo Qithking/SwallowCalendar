@@ -9,7 +9,7 @@ import Foundation
 
 enum TodayTodoSorter {
 
-    /// 弹层排序（spec AC-1）：
+    /// 弹层排序：
     /// 1. 分组——无时间未完成(0) < 有时间未完成(1) < 已完成(2)
     /// 2. 组内按 startDate 升序，nil 视为最早
     /// 3. 同键保持输入顺序（稳定排序）

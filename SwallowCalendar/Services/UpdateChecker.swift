@@ -63,7 +63,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     // S-1 完整性校验：本次下载的比对结果（true=一致 / nil=参照值不可得降级 / false=不一致已拦截）
     @Published var digestVerified: Bool?
 
-    // E-11：直连/代理各一个 session 复用，不再每次下载重建
+    // 直连/代理各一个 session 复用，不再每次下载重建
     // （URLSession 创建开销大；旧 session 未 invalidate 就被覆盖会延迟释放。
     //   直连短超时快速失败，代理正常超时。session 强持 self 至 invalidate，
     //   由 deinit 双 invalidate 打断。）
@@ -79,16 +79,15 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     private let repoName = "SwallowCalendar"
     private let currentVersion: String
     private var checkTimer: Timer?
-    // R-9：「本次启动已检查」标志——原持久化在 UserDefaults 且全仓从不清除，
-    // 导致仅进程生命周期第一次启动生效；单例生命周期=进程生命周期，
-    // 实例内存变量天然满足「每次启动重置」
+    // 「本次启动已检查」标志：存实例内存（单例生命周期=进程生命周期），
+    // 天然满足「每次启动重置」；持久化会导致仅进程首次启动生效
     private var hasCheckedOnThisLaunch = false
 
     private override init() {
         self.currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
         super.init()
 
-        // S-14：启动时后台清理上次更新遗留的 ".old-" 备份包
+        // 启动时后台清理上次更新遗留的 ".old-" 备份包
         // （新版本已成功启动，说明替换完成，备份可安全删除）
         Self.cleanupStaleBackups()
 
@@ -111,7 +110,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         }
     }
     
-    /// E-11：按超时配置创建下载 session（delegate 为 self，回调队列主线程）
+    /// 按超时配置创建下载 session（delegate 为 self，回调队列主线程）
     private func makeDownloadSession(requestTimeout: TimeInterval, resourceTimeout: TimeInterval) -> URLSession {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = requestTimeout
@@ -121,7 +120,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
 
     deinit {
         checkTimer?.invalidate()
-        // E-11：双 session 失效，打断 URLSession 对 delegate(self) 的强持有
+        // 双 session 失效，打断 URLSession 对 delegate(self) 的强持有
         directSession?.invalidateAndCancel()
         proxySession?.invalidateAndCancel()
         downloadTask?.cancel()
@@ -131,7 +130,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         // 检查设置是否开启且是本次启动首次检查
         guard AppSettings.shared.checkUpdateOnFirstLaunch else { return }
         
-        // 每次启动只检查一次（R-9：内存标志，进程重启即重置）
+        // 每次启动只检查一次（内存标志，进程重启即重置）
         guard !hasCheckedOnThisLaunch else { return }
         hasCheckedOnThisLaunch = true
         
@@ -296,7 +295,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         guard let url = URL(string: urlString) else { return }
         downloadTask?.cancel()
 
-        // E-11：session 懒创建复用——首次使用时初始化（直连短超时，代理正常超时）
+        // session 懒创建复用——首次使用时初始化（直连短超时，代理正常超时）
         if usingProxy {
             if proxySession == nil {
                 proxySession = makeDownloadSession(requestTimeout: 60, resourceTimeout: 300)
@@ -397,7 +396,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         
         do {
             try fileManager.moveItem(at: location, to: tempDestURL)
-            // S-12：共享临时目录下的下载文件收紧为仅当前用户可读写
+            // 共享临时目录下的下载文件收紧为仅当前用户可读写
             try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tempDestURL.path)
         } catch {
             Task { @MainActor in
@@ -418,7 +417,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
                 }
                 
                 // 确定文件名
-                // S-9：latestVersion 来自远端 tag，仅保留安全字符（字母数字.-_），
+                // latestVersion 来自远端 tag，仅保留安全字符（字母数字.-_），
                 // 防止畸形 tag 生成怪异文件名
                 let safeVersion = self.latestVersion.filter {
                     $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" || $0 == "_"
@@ -440,7 +439,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
                 // 移动文件到下载文件夹
                 try FileManager.default.moveItem(at: tempDestURL, to: destinationUrl)
 
-                // S-1：下载完整性校验，与权威 SHA256 参照值比对
+                // 下载完整性校验，与权威 SHA256 参照值比对
                 let digestResult = await self.verifyDownloadedFileSha256(fileUrl: destinationUrl)
                 if digestResult == false {
                     // 校验不一致：删除文件并中止，绝不进入安装流程
@@ -509,7 +508,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "下载完成"
-        // S-1：弹窗中如实呈现完整性校验结果
+        // 弹窗中如实呈现完整性校验结果
         let digestNote: String
         switch digestVerified {
         case true:
@@ -542,7 +541,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
             do {
                 let appBundleURL = try self.extractAppBundle(from: downloadedFileUrl)
 
-                // S-1：替换前进行本地签名链校验（签名结构 + Bundle ID + 身份一致性）
+                // 替换前进行本地签名链校验（签名结构 + Bundle ID + 身份一致性）
                 try self.verifyExtractedApp(at: appBundleURL)
 
                 // 切回主线程执行替换和重启
@@ -598,7 +597,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     nonisolated private func extractAppFromDMG(dmgUrl: URL) throws -> URL {
         let mountPoint = NSTemporaryDirectory() + "SwallowCalendar_Install_\(UUID().uuidString)"
 
-        // 创建挂载点目录（S-12：收紧为仅当前用户可进入，共享临时目录下降低暴露面）
+        // 创建挂载点目录（收紧为仅当前用户可进入，共享临时目录下降低暴露面）
         try FileManager.default.createDirectory(
             atPath: mountPoint,
             withIntermediateDirectories: true,
@@ -662,7 +661,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     /// 从 ZIP 中提取 .app 包
     nonisolated private func extractAppFromZip(zipUrl: URL) throws -> URL {
         let tempDir = NSTemporaryDirectory() + "SwallowCalendar_Install_\(UUID().uuidString)"
-        // S-12：解压目录同样收紧为 0700
+        // 解压目录同样收紧为 0700
         try FileManager.default.createDirectory(
             atPath: tempDir,
             withIntermediateDirectories: true,
@@ -706,7 +705,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
 
     /// 递归查找 .app 包
     nonisolated private func findAppBundle(in directory: URL) throws -> URL {
-        // S-6：显式请求符号链接标记——恶意 zip 内 symlink 可指向任意路径，
+        // 显式请求符号链接标记——恶意 zip 内 symlink 可指向任意路径，
         // copyItem 复制链接本身会造成越权读写，遇到符号链接一律跳过
         let contents = try FileManager.default.contentsOfDirectory(
             at: directory,
@@ -816,7 +815,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
             finalNewAppURL = newAppURL
         }
 
-        // S-14：原子替换——同卷 rename 将旧应用移为备份（原子操作），
+        // 原子替换——同卷 rename 将旧应用移为备份（原子操作），
         // 再将新应用移入原位置；中途失败立即回滚，避免出现"应用已删除但新包未就位"的窗口。
         let backupURL = currentAppURL.deletingLastPathComponent()
             .appendingPathComponent("\(currentAppName).old-\(UUID().uuidString)")
@@ -866,7 +865,7 @@ final class UpdateChecker: NSObject, ObservableObject, URLSessionDownloadDelegat
     }
 }
 
-// MARK: - 下载完整性校验（S-1）
+// MARK: - 下载完整性校验
 
 extension UpdateChecker {
     /// 分块计算文件 SHA256（避免大文件整体载入内存）。

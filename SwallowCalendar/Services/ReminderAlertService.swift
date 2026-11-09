@@ -11,9 +11,9 @@ import SwiftData
 import os
 import SwiftUI  // 为了导入 CalendarEvent
 
-/// 去重键：持久化元素 "eventID|alertTs"（plan 步骤 5 / AC-7 多级提醒各级独立去重）。
-/// BUG-03：旧格式（无 "|"）键不再惰性兼容——原实现回退 .distantPast 并以通配语义
-/// 匹配任意 alertTime，叠加 baseID 归一化后整条序列永久静默；现改为解析失败即丢弃
+/// 去重键：持久化元素 "eventID|alertTs"（多级提醒各级独立去重）。
+/// 旧格式（无 "|"）键不兼容——若回退 .distantPast 会以通配语义匹配任意 alertTime，
+/// 叠加 baseID 归一化后整条序列永久静默，故解析失败即丢弃
 struct ReminderAlertKey: Equatable {
     let eventID: String
     let alertTime: Date
@@ -24,8 +24,7 @@ struct ReminderAlertKey: Equatable {
     }
 
     /// 解码持久化串：时间戳取末段 "|" 之后（baseID 恒不含 "|"，末段分割对
-    /// 各格式均正确——复合 eventID "baseID|occ:<epoch>"（R-1 起候选行）、
-    /// 再加时间戳的完整键）；无 "|"、末段非有限数字 → nil（旧格式键一次性迁移丢弃）
+    /// 各格式均正确——复合 eventID "baseID|occ:<epoch>" 加时间戳的完整键）；无 "|"、末段非有限数字 → nil（旧格式键一次性迁移丢弃）
     init?(raw: String) {
         guard let idx = raw.lastIndex(of: "|"),
               let ts = TimeInterval(raw[raw.index(after: idx)...]),
@@ -40,7 +39,7 @@ struct ReminderAlertKey: Equatable {
     }
 }
 
-/// C2 稍后提醒记录：持久化到 UserDefaults（键 snoozeRecordsKey），
+/// 稍后提醒记录：持久化到 UserDefaults（键 snoozeRecordsKey），
 /// 由 60s 轮询检查触发，不建独立 Timer
 struct SnoozeRecord: Codable, Equatable {
     let eventID: String
@@ -64,7 +63,7 @@ final class ReminderAlertService {
     static let shared = ReminderAlertService()
     
     private var timer: Timer?
-    /// 准点调度定时器（bug: due-alert-punctual-scheduling）：单次触发于最近的
+    /// 准点调度定时器：单次触发于最近的
     /// 未提醒 alertTime（含 snooze fireDate），消除 60s 轮询最坏延迟 60 秒的弹窗不及时；
     /// 60s 轮询保留作兜底，两者经 (eventID, alertTime) 去重不会重复弹窗
     private var dynamicTimer: Timer?
@@ -73,23 +72,23 @@ final class ReminderAlertService {
     private static let alertedEventIDsKey = "ReminderAlertService.lastAlertedEventIDs"
     /// 已提醒事件ID的最大缓存数量
     private let maxAlertedEventIDs = 1000
-    /// 持久化上次检查时间的 UserDefaults 键（B-14）
+    /// 持久化上次检查时间的 UserDefaults 键
     private static let lastCheckTimeKey = "ReminderAlertService.lastCheckTime"
-    /// 上次检查时间（B-14：挂起/睡眠恢复后以"上次检查~now"为提醒窗口，避免漏提醒）
+    /// 上次检查时间（挂起/睡眠恢复后以"上次检查~now"为提醒窗口，避免漏提醒）
     private var lastCheckTime: Date?
-    /// 启动式过期检查已完成标志（bug: main-panel-reopen-expired-popup）：
+    /// 启动式过期检查已完成标志：
     /// 主面板每次重开都会重跑 ContentView.task → checkExpiredEvents()，
     /// 该标志保证启动式过期检查在应用生命周期内仅首次真正执行
     private var hasCompletedStartupExpiredCheck = false
-    /// 启动检查执行中标志（A-20：完成标志后置位后，防执行期间重入双弹）
+    /// 启动检查执行中标志（完成标志后置位，防执行期间重入双弹）
     private var isStartupCheckInFlight = false
-    /// block observer token 必须持有，否则注册即释放失效（A-17）
+    /// block observer token 必须持有，否则注册即释放失效
     private var changeObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
 
     private init() {
         // 从 UserDefaults 恢复已提醒事件ID，避免应用重启后重复弹窗
-        // BUG-03：一次性迁移——无法解析的旧格式键（无时间戳）直接丢弃，避免永久静默
+        // 一次性迁移——无法解析的旧格式键（无时间戳）直接丢弃，避免永久静默
         if let saved = UserDefaults.standard.stringArray(forKey: Self.alertedEventIDsKey) {
             let sanitized = Self.sanitizedAlertedEventIDs(saved)
             self.lastAlertedEventIDs = sanitized
@@ -98,12 +97,12 @@ final class ReminderAlertService {
                 UserDefaults.standard.set(sanitized, forKey: Self.alertedEventIDsKey)
             }
         }
-        // B-14：恢复上次检查时间，重启后窗口下界不回退到"无记录"状态
+        // 恢复上次检查时间，重启后窗口下界不回退到"无记录"状态
         let savedTime = UserDefaults.standard.double(forKey: Self.lastCheckTimeKey)
         if savedTime > 0 {
             self.lastCheckTime = Date(timeIntervalSince1970: savedTime)
         }
-        // 准点调度联动（bug: due-alert-punctual-scheduling）：
+        // 准点调度联动：
         // 缓存变更（同步/新建/编辑/完成广播）后重算下次触发时刻
         changeObserver = NotificationCenter.default.addObserver(
             forName: .cachedEventsChanged, object: nil, queue: .main
@@ -112,7 +111,7 @@ final class ReminderAlertService {
             guard let service = self else { return }
             Task { @MainActor in service.rescheduleDynamicTimer() }
         }
-        // 睡眠唤醒：补一次检查（B-14 窗口覆盖挂起区间，挂起期漏掉的提醒即时弹出）
+        // 睡眠唤醒：补一次检查（窗口覆盖挂起区间，挂起期漏掉的提醒即时弹出）
         // 并重算准点调度（系统挂起期间 Timer 不触发）
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
@@ -174,7 +173,7 @@ final class ReminderAlertService {
                     await self?.checkDueEvents()
                 }
             }
-            // A-16：加入 .common mode——scheduledTimer 默认挂 default mode，
+            // 加入 .common mode——scheduledTimer 默认挂 default mode，
             // UI 交互（滚动/拖拽 tracking mode）期间 60s 轮询暂停导致提醒延迟
             RunLoop.main.add(timer, forMode: .common)
             self?.timer = timer
@@ -185,8 +184,8 @@ final class ReminderAlertService {
     
     /// 检查到期的事件（供数据同步完成后调用）
     /// 启动时的检查会忽略 lastAlertedEventIDs 过滤，确保过期事项始终提示
-    /// bug: main-panel-reopen-expired-popup：主面板重开会重建 ContentView 并重跑
-    /// .task → initializeServices → 本方法，原实现每次都以启动式语义弹窗。
+    /// 主面板重开会重建 ContentView 并重跑
+    /// .task → initializeServices → 本方法，每次重入都会以启动式语义弹窗。
     /// 按需求「仅应用初始启动时弹」：应用生命周期内仅首次调用真正执行，
     /// 后续（主面板重开触发）直接跳过
     func checkExpiredEvents() async {
@@ -194,10 +193,10 @@ final class ReminderAlertService {
             AppLogger.reminder.info("启动过期检查已完成或执行中，跳过本次（主面板重开触发）")
             return
         }
-        // A-20：inFlight 防执行期重入；完成标志在检查完成后置位——
-        // 原前置位使检查中途失败/被中断后永不重试
+        // inFlight 防执行期重入；完成标志在检查完成后置位——
+        // 前置位会使检查中途失败/被中断后永不重试
         isStartupCheckInFlight = true
-        // R-14：仅检查成功才置位完成标志——context 未就绪/fetch 失败时返回 false，
+        // 仅检查成功才置位完成标志——context 未就绪/fetch 失败时返回 false，
         // 标志保持未置位，本进程内后续调用（主面板重开/数据同步完成）可重试
         let succeeded = await checkDueEvents(includeExpired: true, ignoreAlertedCache: true)
         isStartupCheckInFlight = false
@@ -209,7 +208,7 @@ final class ReminderAlertService {
         }
     }
     
-    /// 测试辅助：跑一次常规定时检查（bug: due-reminder-zero-offset-miss，@testable 可见）
+    /// 测试辅助：跑一次常规定时检查（@testable 可见）
     func runDueCheckForTesting() async {
         await checkDueEvents()
     }
@@ -222,7 +221,7 @@ final class ReminderAlertService {
         dynamicTimer = nil
     }
 
-    // MARK: - 准点调度（bug: due-alert-punctual-scheduling）
+    // MARK: - 准点调度
 
     /// 调度取数窗口：startDate 落入本区间的未完成事项才可能产生近期 alertTime。
     /// alertTime = startDate - offset*60，offset ∈ [-cap, cap]：
@@ -282,7 +281,7 @@ final class ReminderAlertService {
             },
             sortBy: [SortDescriptor(\.startDate)]
         )
-        // bug: reminder-fetch-swallow——try? 吞错无日志，fetch 失败时动态提醒调度
+        // try? 吞错无日志，fetch 失败时动态提醒调度
         // 链路静默失效（不重排定时器）且无迹可查；记录错误后同样终止本次调度
         let events: [CachedEvent]
         do {
@@ -292,7 +291,7 @@ final class ReminderAlertService {
             return
         }
         // 循环任务展开（A）：本体行 startDate 只是游标，窗口内未来 occurrence 不落库，
-        // 原实现直接拿本体行算 alertTime——游标一旦落在过去/被越过，后续期次永远不调度。
+        // 直接拿本体行算 alertTime 会在游标落在过去/被越过时，后续期次永远不调度。
         // 与弹窗检查同源：补捞全部循环 base（不看 isCompleted/游标窗口）后统一展开，
         // 实例级 isCompleted 才是判定标准（复合 ID 也保证弹窗完成走 occurrence 级路径）
         let expanded = Self.pollWindowCandidates(
@@ -303,8 +302,8 @@ final class ReminderAlertService {
         )
         guard let next = Self.nextTriggerTime(now: now, events: expanded, snoozeRecords: Self.loadSnoozeRecords(), context: context) else { return }
         let interval = max(0, next.timeIntervalSince(now))
-        // R-16：加入 .common mode——scheduledTimer 默认挂 default mode，
-        // UI 交互期间准点提醒暂停延迟弹出（A-16/R-15 同型遗漏）
+        // 加入 .common mode——scheduledTimer 默认挂 default mode，
+        // UI 交互期间准点提醒暂停导致延迟弹出
         let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 await self?.checkDueEvents()
@@ -321,7 +320,7 @@ final class ReminderAlertService {
     /// - Parameters:
     ///   - includeExpired: 是否包含已过期的事项（仅在应用启动时使用）
     ///   - ignoreAlertedCache: 是否忽略已提醒缓存（启动时为 true，确保过期事项始终提示）
-    /// - Returns: 检查是否成功完成（R-14：context 未就绪或 fetch 失败返回 false，
+    /// - Returns: 检查是否成功完成（context 未就绪或 fetch 失败返回 false，
     ///            供启动过期检查判断是否置位完成标志；常规调用方忽略返回值）
     @discardableResult
     private func checkDueEvents(includeExpired: Bool = false, ignoreAlertedCache: Bool = false) async -> Bool {
@@ -338,16 +337,16 @@ final class ReminderAlertService {
         // EventCategory.user.rawValue 的值是 "用户"（中文字符串）
         let userCategory = "用户"
 
-        // B-27：把提醒时间窗口换算为 startDate 窗口下沉到谓词粗筛，避免每分钟全表拉取。
+        // 把提醒时间窗口换算为 startDate 窗口下沉到谓词粗筛，避免每分钟全表拉取。
         // alertTime = startDate - offset*60，offset ∈ [-cap, cap]（正=提前、负=延后），
         // 因此 alertTime 命中窗口的必要条件是 startDate ∈ [cap 下界放宽, now + cap]，
         // 精确判定仍由下方内存过滤完成。cap = 365 天，覆盖 1 个月/6 个月长提前档。
-        // 常规检查下界为 B-14 的 lastCheckTime 窗口（无记录回退 90 秒），并放宽到
+        // 常规检查下界为 lastCheckTime 窗口（无记录回退 90 秒），并放宽到
         // now - cap 以覆盖「开始已过、延后档提醒仍在未来」；includeExpired 下界放开
         let maxReminderLeadSeconds = TimeInterval(CachedEvent.maxReminderLeadMinutes * 60)
         let fetchUpperBound = now.addingTimeInterval(maxReminderLeadSeconds)
         let windowStart = lastCheckTime ?? (calendar.date(byAdding: .second, value: -90, to: now) ?? now)
-        // H2：启动过期检查限定回溯窗口，历史更早的逾期不再参与展开与弹窗，
+        // 启动过期检查限定回溯窗口，历史更早的逾期不再参与展开与弹窗，
         // 冷启动开销与历史总量解耦（主列表仍可查看全部历史）
         let expiredLowerBound = Self.startupExpiredLowerBound(now: now, calendar: calendar)
         let fetchLowerBound = includeExpired
@@ -371,12 +370,12 @@ final class ReminderAlertService {
 
         do {
             var allUserEvents = try context.fetch(baseDescriptor)
-            // bug: startup-expired-popup-recurring-miss：循环 base 行 startDate 只是「下一期」
+            // 循环 base 行 startDate 只是「下一期」
             // 游标，被越过的未完成历史实例直查漏报（主面板经锚点展开可见）——启动过期
-            // 检查把 base 行替换为同源展开实例，与主面板判定源对齐（R-1 起常规窗口
+            // 检查把 base 行替换为同源展开实例，与主面板判定源对齐（常规窗口
             // 路径同样替换，见下方 recurringWindowCandidates）
             if includeExpired {
-                // H1：查询失败会抛到下方 catch → 本轮返回 false，不置位完成标志以便重试；
+                // 查询失败会抛到下方 catch → 本轮返回 false，不置位完成标志以便重试；
                 // 不再用未展开的 rawEvents 顶替（会漏掉循环历史实例）
                 allUserEvents = try Self.expiredCheckCandidates(
                     rawEvents: allUserEvents,
@@ -386,13 +385,13 @@ final class ReminderAlertService {
                     recurringBaseFetcher: startupRecurringFetcherForTesting
                 )
             } else {
-                // R-1：常规窗口内循环 base 行同样替换为窗口内展开实例（复合 ID），
+                // 常规窗口内循环 base 行同样替换为窗口内展开实例（复合 ID），
                 // 弹窗完成走 occurrence 级路径（写历史/推进游标/EK 不污染），
                 // 与启动路径语义对齐，消除双语义并存。
-                // bug: poll-window-completed-base-recurring-miss：粗筛 !$0.isCompleted
-                // 会把 base 行被置位的循环任务滤掉（旧版本完成操作整条置位且不写
-                // 完成历史——R-1 修复前行为，存量已污染），主面板 expandOccurrences
-                // 不看该位 → 列表显示但提醒静默；本方法补捞全部循环 base 后统一展开
+                // 粗筛 !$0.isCompleted
+                // 会把 base 行被置位的循环任务滤掉（存量可能整条置位且无完成历史），
+                // 主面板 expandOccurrences 不看该位 → 列表显示但提醒静默；
+                // 本方法补捞全部循环 base 后统一展开
                 allUserEvents = Self.pollWindowCandidates(
                     rawEvents: allUserEvents,
                     windowStart: windowStart,
@@ -427,12 +426,12 @@ final class ReminderAlertService {
                 } else {
                     // 常规定时检查：逐级窗口判定 [windowStart, now]；
                     // 0 档（准点提醒/未设置提醒 fallback）视为准点档 alertTime=startDate
-                    // （bug: due-reminder-zero-offset-miss：与启动检查「未设置提醒过期弹 startDate」对齐，
+                    // （与启动检查「未设置提醒过期弹 startDate」对齐，
                     // 已弹过的键经 hasAlertedKey 去重不重复弹）
-                    // bug: due-reminder-onset-miss：设置了提前提醒（offsets 不含 0 档）的事件
+                    // 设置了提前提醒（offsets 不含 0 档）的事件
                     // 仅在提前档时刻弹，事件开始时刻无档位命中导致到点不提醒；
                     // 并入隐式准点档与 fallback [0] 语义对齐（到点必提醒），各档键独立去重
-                    // B-14：窗口下界用持久化的上次检查时间——应用挂起/睡眠超 90 秒后，
+                    // 窗口下界用持久化的上次检查时间——应用挂起/睡眠超 90 秒后，
                     // 固定 90 秒窗口会滤掉挂起期间到期的事项导致漏提醒；
                     // 无记录时回退 90 秒窗口（配合 60 秒定时器确保不遗漏）
                     var candidates = offsets
@@ -444,7 +443,7 @@ final class ReminderAlertService {
                 }
                 guard !alertTimes.isEmpty else { continue }
                 // (eventID, alertTime) 级别级去重：已提醒过的级剔除（启动时忽略缓存确保过期事项始终提示）；
-                // 旧格式键（纯 eventID）经 hasAlertedKey 惰性兼容
+                // 无法解析的旧格式键视为未提醒（不命中去重）
                 if !ignoreAlertedCache {
                     alertTimes = alertTimes.filter { !hasAlertedKey(eventID: event.eventID, alertTime: $0) }
                 }
@@ -496,11 +495,10 @@ final class ReminderAlertService {
                 persistAlertedEventIDs()
                 // 限制数组大小，避免内存泄漏
                 trimAlertedEventIDsIfNeeded()
-                // 2026-11-06 口径：移除原 BUG-04 的 300s 自动重提醒（对已开始未完成事项
-                // 入 SnoozeRecord 再重弹）。到点本身有准点提醒，过期项不再自动重复打扰；
+                // 不做自动重提醒：到点本身有准点提醒，过期项不自动重复打扰；
                 // 用户主动「稍后提醒」仍由 snooze() 入队，由 consumeDueSnoozes 触发。
             }
-            // B-14：本次检查已覆盖到 now，记录检查时间作为下次检查（含挂起恢复后）的窗口下界；
+            // 本次检查已覆盖到 now，记录检查时间作为下次检查（含挂起恢复后）的窗口下界；
             // 仅在 fetch 成功后更新，失败时保留旧值以免跳过失败区间的提醒
             lastCheckTime = now
             UserDefaults.standard.set(now.timeIntervalSince1970, forKey: Self.lastCheckTimeKey)
@@ -513,7 +511,7 @@ final class ReminderAlertService {
         }
     }
     
-    /// 弹窗显示期间外部变更同步（bug: four-view-todo-sync）：
+    /// 弹窗显示期间外部变更同步：
     /// 重查快照每行的当前状态——已完成/已删除的行移除（等效单条 removeRow），
     /// 未完成行重建为最新字段（别处编辑后的标题/时间同步显示）。
     /// occurrence 复合 ID 经 displayOccurrence（已完成/失效返回 nil），
@@ -529,7 +527,7 @@ final class ReminderAlertService {
             let descriptor = FetchDescriptor<CachedEvent>(
                 predicate: #Predicate { $0.eventID == rowID }
             )
-            // 查询失败保留旧快照行；查询成功但为空 = 行已删除，应移除（审计 M2）
+            // 查询失败保留旧快照行；查询成功但为空 = 行已删除，应移除
             guard let rows = CacheFetch.optional(descriptor, in: context, operation: "弹窗行状态刷新") else {
                 return event
             }
@@ -538,7 +536,7 @@ final class ReminderAlertService {
         }
     }
 
-    /// 启动过期检查候选集（bug: startup-expired-popup-recurring-miss）：
+    /// 启动过期检查候选集：
     /// 循环 base 行（用户分类、游标或锚点早于窗口右界）替换为
     /// expandOccurrences 同源展开实例（窗口 [lowerBound, upperBound]），
     /// 普通行原样保留，已完成历史实例剔除不弹窗。
@@ -580,7 +578,7 @@ final class ReminderAlertService {
         guard !recurringBases.isEmpty else { return rawEvents }
         let baseIDs = Set(recurringBases.map(\.eventID))
         var result = rawEvents.filter { !baseIDs.contains($0.eventID) }
-        // bug: startup-expired-check-n-plus-one——窗口内展开从 lowerBound 逐周期推进，
+        // 窗口内展开从 lowerBound 逐周期推进，
         // skipHolidays 时逐 occurrence 触发 isRestDay 查库，启动开销随窗口长度线性增长；
         // 展开前单次窄查询预热窗口内休/班判定，循环退化为内存命中（判定语义不变）
         if recurringBases.contains(where: \.skipHolidays) {
@@ -605,7 +603,7 @@ final class ReminderAlertService {
         return result
     }
 
-    /// 常规轮询窗口候选（bug: window-poll-recurring-base-id-completion，R-1）：
+    /// 常规轮询窗口候选：
     /// 常规 60s 轮询路径捞到的循环 base 行同样替换为窗口内展开实例（复合 ID），
     /// 与启动路径（expiredCheckCandidates）完成语义对齐——否则弹窗行携带 base ID，
     /// markAsCompleted 经 parseOccurrenceID=nil 走整条完成主路径
@@ -636,9 +634,9 @@ final class ReminderAlertService {
         return result
     }
 
-    /// 常规轮询窗口候选（含补捞，bug: poll-window-completed-base-recurring-miss）：
-    /// 粗筛谓词 !$0.isCompleted 会把 base 行被置位的循环任务滤掉（旧版本完成操作
-    /// 整条置位且不写完成历史——R-1 修复前行为，存量数据已污染），而主面板
+    /// 常规轮询窗口候选（含补捞）：
+    /// 粗筛谓词 !$0.isCompleted 会把 base 行被置位的循环任务滤掉（存量可能
+    /// 整条置位且无完成历史），而主面板
     /// expandOccurrences 不看该位 → 列表显示但提醒静默。与启动路径
     /// expiredCheckCandidates 同构：独立查询全部循环 base（不含 isCompleted 条件）
     /// 合并去重后统一展开，实例级 isCompleted 才是判定标准
@@ -686,7 +684,7 @@ final class ReminderAlertService {
             hiddenCount: hiddenCount,
             onCompleteAll: { [weak self] in
                 Task { @MainActor in
-                    // B-15：仅标记已开始的实例——"提醒时间已到但事件尚未开始"（startDate > now）
+                    // 仅标记已开始的实例——"提醒时间已到但事件尚未开始"（startDate > now）
                     // 的实例被提前标完成会错误推进周期任务序列
                     guard let self else { return }
                     for event in events where (event.startDate ?? Date()) <= Date() {
@@ -696,7 +694,7 @@ final class ReminderAlertService {
             },
             onEventComplete: { [weak self] eventID in
                 Task { @MainActor in
-                    // 单条完成与"全部完成"同一 B-15 语义：仅已开始实例才标记
+                    // 单条完成与"全部完成"同一语义：仅已开始实例才标记
                     guard let self,
                           let event = events.first(where: { $0.eventID == eventID }),
                           (event.startDate ?? Date()) <= Date() else { return }
@@ -711,11 +709,11 @@ final class ReminderAlertService {
         )
     }
 
-    // MARK: - C2 稍后提醒（snooze）
+    // MARK: - 稍后提醒（snooze）
 
     private static let snoozeRecordsKey = "ReminderAlertService.snoozeRecords"
 
-    /// 稍后提醒：弹窗关闭，约 minutes 分钟后重新提醒（startDate 不变，AC-5）
+    /// 稍后提醒：弹窗关闭，约 minutes 分钟后重新提醒（startDate 不变）
     /// SnoozeRecord 入 UserDefaults，由 60s 轮询检查触发；同事件重复 snooze 覆盖旧记录
     func snooze(eventID: String, minutes: Int) {
         var records = Self.loadSnoozeRecords()
@@ -758,7 +756,7 @@ final class ReminderAlertService {
                 predicate: #Predicate { $0.eventID == record.eventID }
             )
             // 复合 occurrence ID 实例未落库：回查本体重建展示实例（已完成实例被剔除）
-            // 查询失败与「本体不存在」都回退 displayOccurrence，但失败必须落日志（审计 M6）
+            // 查询失败与「本体不存在」都回退 displayOccurrence，但失败必须落日志
             let resolved = CacheFetch.optional(descriptor, in: context, operation: "稍后提醒事件回查")?.first
                 ?? EventCacheService.shared.displayOccurrence(withID: record.eventID, context: context)
             if let event = resolved, !event.isCompleted {
@@ -797,7 +795,7 @@ final class ReminderAlertService {
                     let baseDescriptor = FetchDescriptor<CachedEvent>(
                         predicate: #Predicate { $0.eventID == baseID }
                     )
-                    // 查询失败交给外层 catch 上报，不静默当作「无本体」（审计 M6）
+                    // 查询失败交给外层 catch 上报，不静默当作「无本体」
                     return try CacheFetch.throwing(baseDescriptor, in: context, operation: "完成标记回查本体").first
                 }
             if let event = resolved {
@@ -834,26 +832,26 @@ final class ReminderAlertService {
 
     // MARK: - 去重键辅助
 
-    /// BUG-03：去重主体 ID——复合 occurrence ID 归一到 baseID，其余原样返回
+    /// 去重主体 ID——复合 occurrence ID 归一到 baseID，其余原样返回
     static func alertSubjectID(_ eventID: String) -> String {
         CachedEvent.parseOccurrenceID(eventID)?.baseID ?? eventID
     }
 
-    /// BUG-03：一次性迁移已提醒键——无法解析的旧格式键（无时间戳）丢弃，
+    /// 一次性迁移已提醒键——无法解析的旧格式键（无时间戳）丢弃，
     /// 其余重新编码保持秒级格式（幂等）
     static func sanitizedAlertedEventIDs(_ saved: [String]) -> [String] {
         saved.compactMap { ReminderAlertKey(raw: $0)?.encoded }
     }
 
-    /// 判断两个 eventID 是否指向同一提醒主体：复合实例 ID（"baseID|occ:<epoch>"，
-    /// R-1 起候选行）归一到 baseID 后比较——静态可测，P2-2 升级兼容的核心判定
+    /// 判断两个 eventID 是否指向同一提醒主体：复合实例 ID（"baseID|occ:<epoch>"）
+    /// 归一到 baseID 后比较——静态可测
     static func sameAlertSubject(_ lhs: String, _ rhs: String) -> Bool {
         alertSubjectID(lhs) == alertSubjectID(rhs)
     }
 
     /// 判断 (eventID, alertTime) 是否已提醒过：仅 baseID 相同且 alertTime 精确相等。
-    /// BUG-03：删除 .distantPast 通配分支——旧格式键已由启动迁移丢弃，
-    /// 保留通配会让任意一期命中旧键导致整条序列永久静默
+    /// 不做通配匹配——旧格式键已由启动迁移丢弃，通配会让任意一期
+    /// 命中旧键导致整条序列永久静默
     private func hasAlertedKey(eventID: String, alertTime: Date) -> Bool {
         lastAlertedEventIDs.compactMap { ReminderAlertKey(raw: $0) }.contains { decoded in
             Self.sameAlertSubject(decoded.eventID, eventID) && decoded.alertTime == alertTime

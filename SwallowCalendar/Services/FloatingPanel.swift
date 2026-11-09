@@ -38,7 +38,7 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     var isPresented: Bool = false
     var statusBarButton: NSStatusBarButton?
     let onClose: () -> Void
-    /// E-7：保存内容视图构建闭包，close 销毁层级后 open 重建用
+    /// 保存内容视图构建闭包，close 销毁层级后 open 重建用
     private let contentBuilder: () -> Content
 
     /// R-1（fix: statusbar-toggle-race）：resignKey 引发的关闭时刻。
@@ -107,7 +107,7 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         minSize = NSSize(width: 340, height: 600)
         maxSize = NSSize(width: 500, height: 1000)
 
-        // E-7：构建内容视图（NSHostingController 承载，便于 close 时销毁层级）
+        // 构建内容视图（NSHostingController 承载，便于 close 时销毁层级）
         installContentView()
         
         // 监听应用失焦通知，未固定时自动关闭窗口
@@ -131,14 +131,14 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
             close()
         } else if let at = lastResignKeyCloseAt,
                   Date().timeIntervalSince(at) < PanelToggle.resignKeyEchoWindow {
-            // R-1：面板刚由本次点击引发的 resignKey 关闭，忽略 action 回声不重开
+            // 面板刚由本次点击引发的 resignKey 关闭，忽略 action 回声不重开
             lastResignKeyCloseAt = nil
         } else {
             open()
         }
     }
     
-    /// E-7：构建并安装内容视图（init 与 open 重建共用同一入口）
+    /// 构建并安装内容视图（init 与 open 重建共用同一入口）
     private func installContentView() {
         let rootView = contentBuilder()
             .ignoresSafeArea()
@@ -156,7 +156,7 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     }
 
     func open() {
-        // E-7：close 时已销毁视图层级，重开前必须重建，否则面板空白
+        // close 时已销毁视图层级，重开前必须重建，否则面板空白
         if contentViewController == nil {
             installContentView()
         }
@@ -232,13 +232,13 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     }
     
     func windowDidResignKey(_ notification: Notification) {
-        // V-3/V-12：应用内其他窗口（编辑/设置/提醒弹窗、菜单、Popover）抢走 key 时不关闭面板，
+        // 应用内其他窗口（编辑/设置/提醒弹窗、菜单、Popover）抢走 key 时不关闭面板，
         // 点击其他应用的失焦场景由 deactivateObserver 兜底关闭
         if let newKeyWindow = NSApp.keyWindow, newKeyWindow !== self, NSApp.isActive {
             return
         }
         if shouldClose() {
-            // R-1：记录失 key 关闭时刻，供 toggle 识别同一次状态栏点击的回声
+            // 记录失 key 关闭时刻，供 toggle 识别同一次状态栏点击的回声
             lastResignKeyCloseAt = Date()
             close()
         }
@@ -246,7 +246,7 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     
     override func close() {
         super.close()
-        // E-7：NSPanel 的 close 仅 orderOut 不销毁层级，显式置空 contentViewController
+        // NSPanel 的 close 仅 orderOut 不销毁层级，显式置空 contentViewController
         // 触发 SwiftUI onDisappear，注销面板内倒计时等定时器，避免隐藏面板后台跑 Timer
         contentViewController = nil
         isPresented = false

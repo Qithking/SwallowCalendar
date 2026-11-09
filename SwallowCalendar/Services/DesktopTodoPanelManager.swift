@@ -30,8 +30,8 @@ final class DesktopTodoPanelManager {
 
     /// 面板层级纯函数（测试覆盖）：
     /// - 未置顶：.normal - 1——低于所有普通应用窗口，但明确高于桌面生态全部层
-    ///   （壁纸 desktopWindow / 桌面图标 desktopIcon）：desktopWindow+1 实测仍被
-    ///   macOS 26 桌面图标窗口拦截点击，事件到不了窗口（bug: desktop-panel-picker-not-clickable 四轮取证）
+    ///   （壁纸 desktopWindow / 桌面图标 desktopIcon）：再高一级会被
+    ///   macOS 26 桌面图标窗口拦截点击，事件到不了窗口
     /// - 置顶：.floating——高于所有普通应用窗口，不被其他应用遮挡
     static func level(isPinned: Bool) -> NSWindow.Level {
         isPinned ? .floating : NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue - 1)
@@ -43,7 +43,7 @@ final class DesktopTodoPanelManager {
         panel?.level = Self.level(isPinned: pinned)
     }
 
-    /// 面板当前是否可见（bug: desktop-panel-hidden-reload——orderOut 后 SwiftUI 视图
+    /// 面板当前是否可见（orderOut 后 SwiftUI 视图
     /// 不销毁，通知仍触发 reload 查库；视图以本属性守卫跳过隐藏期间查询，
     /// 重显由 syncVisibility 兜底补发刷新）
     var isPanelVisible: Bool { panel?.isVisible ?? false }
@@ -60,7 +60,7 @@ final class DesktopTodoPanelManager {
             guard ensurePanel() else { return }
             // orderFrontRegardless 不 makeKey：显示但不抢焦点
             panel?.orderFrontRegardless()
-            // bug: desktop-panel-hidden-reload——隐藏期间视图守卫跳过了变更刷新，
+            // 隐藏期间视图守卫跳过了变更刷新，
             // 重显时补发一次缓存变更通知对齐数据（日变更通知未守卫，跨天场景已覆盖）
             if !wasVisible {
                 NotificationCenter.default.post(name: .cachedEventsChanged, object: nil)
@@ -168,7 +168,7 @@ final class DesktopTodoPanelManager {
 
 /// canBecomeKey=true：nonactivating styleMask 保证点击不激活应用、不抢焦点（不激活 app），
 /// 但窗口需可成为 key，SwiftUI Picker 等桥接控件的 action 响应链才通
-/// （真机复现：false 时 Picker 点击失效，bug: desktop-panel-picker-not-clickable）
+/// （真机复现：false 时 Picker 点击失效）
 final class DesktopPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }

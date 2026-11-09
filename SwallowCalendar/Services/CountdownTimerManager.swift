@@ -21,7 +21,7 @@ enum CountdownPhaseSync {
 }
 
 /// 倒计时管理器：使用单一 GCD Timer + 最小堆实现高性能动态倒计时
-/// E-12：显式 MainActor 隔离——register/unregister/shouldRefresh 调用方均为
+/// 显式 MainActor 隔离——register/unregister/shouldRefresh 调用方均为
 /// 主线程视图，timer 回调已派回主线程；把"约定收敛在主线程"固化为类型系统保证
 @MainActor
 final class CountdownTimerManager: ObservableObject {
@@ -159,10 +159,6 @@ final class CountdownTimerManager: ObservableObject {
             adjustRefreshInterval() // 递归检查下一个
             return
         }
-
-        // 实时倒计时：只要有可见事件即保持 1s 节奏（A-19：原「间隔变化重新调度」
-        // 为分档刷新时代残留——固定 1s 后 startTimer 已置 currentInterval=1，
-        // 该分支恒不触发，死代码删除）
     }
 }
 
@@ -221,9 +217,9 @@ extension CountdownTimerManager {
                     elements.removeLast()
                 } else {
                     elements[index] = elements.removeLast()
-                    // B-4：标准删除算法——替换元素可能需要上浮（比新 parent 小）
+                    // 标准删除算法——替换元素可能需要上浮（比新 parent 小）
                     // 或下沉（比子节点大），各调一次，元素只朝一个方向移动，
-                    // 多余方向的调用为空操作。原实现仅 siftDown 导致堆序破坏
+                    // 多余方向的调用为空操作
                     siftUp(from: index)
                     siftDown(from: index)
                 }

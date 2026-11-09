@@ -20,7 +20,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // 状态栏图标
     private lazy var statusItem: NSStatusItem = {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        // R-24：不设置 behavior 即保持默认不可移除（AppKit 无 .removalDisallowed，
+        // 不设置 behavior 即保持默认不可移除（AppKit 无 .removalDisallowed，
         // 默认空值已禁止 Cmd+拖除；显式 .removalAllowed 才会开放移除）——accessory
         // 应用无 Dock 图标与菜单栏恢复入口，图标被拖除后唯一入口消失且无法自行恢复
         item.button?.action = #selector(performStatusItemClick)
@@ -187,7 +187,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func performStatusItemClick() {
         // 状态栏 action 固定在主线程，assumeIsolated 进入 MainActor 上下文
         MainActor.assumeIsolated {
-            // 点击前先关 hover 弹层，避免弹层与主面板叠加（AC-7：点击行为不变）
+            // 点击前先关 hover 弹层，避免弹层与主面板叠加（点击行为不变）
             hoverController?.closePopover()
             guard let panel = panel else { return }
             panel.toggle()

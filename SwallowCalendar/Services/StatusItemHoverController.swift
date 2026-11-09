@@ -2,7 +2,7 @@
 //  StatusItemHoverController.swift
 //  SwallowCalendar
 //
-//  状态栏图标 hover 弹层控制器（plan step 1）：
+//  状态栏图标 hover 弹层控制器：
 //  - NSTrackingArea 挂在系统 statusItem.button 上（不替换 button，点击链路零风险）
 //  - owner 继承 NSResponder 才能收到 mouseEntered/mouseExited 路由
 //  - mouseEntered 延迟 300ms 弹出，fire 时二次校验鼠标仍在 button 内
@@ -36,7 +36,7 @@ final class StatusItemHoverController: NSResponder {
 
     override init() {
         super.init()
-        // transient：点击弹层外部自动关闭（AC-3 的兜底）
+        // transient：点击弹层外部自动关闭（跟踪失效时的兜底）
         popover.behavior = .transient
         popover.animates = false
     }
@@ -73,10 +73,10 @@ final class StatusItemHoverController: NSResponder {
     }
 
     override func mouseExited(with event: NSEvent) {
-        // 移出图标即取消挂起的弹出（<300ms 划过不弹，AC-2）
+        // 移出图标即取消挂起的弹出（<300ms 划过不弹）
         openTimer?.invalidate()
         openTimer = nil
-        // 延迟检查：鼠标若已移入弹层则保持（AC-3，图标→弹层间隙）
+        // 延迟检查：鼠标若已移入弹层则保持（图标→弹层间隙）
         closeCheckTimer?.invalidate()
         closeCheckTimer = Timer.scheduledTimer(
             timeInterval: Self.hoverDelay,
@@ -114,7 +114,7 @@ final class StatusItemHoverController: NSResponder {
 
     // MARK: - 公开操作
 
-    /// 弹层条目点击：关弹层并打开主面板（AC-6）
+    /// 弹层条目点击：关弹层并打开主面板
     func openMainPanel() {
         closePopover()
         onOpenMainPanel?()
