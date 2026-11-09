@@ -289,7 +289,7 @@ final class RecurrenceSpecTests: XCTestCase {
         XCTAssertTrue(existing.isRecurringActive)
     }
 
-    func testMirrorRegistryFieldsNormalizeAndClear() {
+    func testMirrorKeyFieldsNormalizeAndClear() {
         let cached = makeCached(start: date(2030, 1, 1), spec: RecurrenceSpec(frequency: .daily), type: .daily)
         cached.mirrorKeys = ["b", "a", "a"]
         XCTAssertEqual(cached.mirrorKeys, ["a", "b"])

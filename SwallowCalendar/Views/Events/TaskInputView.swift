@@ -211,7 +211,7 @@ struct TaskInputView: View {
                         .labelsHidden()
                         .formToggleSizing()
                         // 无规则/单期时置灰，旁边给一句说明（不能切了无反应）
-                        .disabled(!RecurrencePickerView.isLunarToggleEnabled(spec: taskSpec))
+                        .disabled(!LunarMirrorPolicy.isLunarToggleEnabled(spec: taskSpec))
                     }
                     if let hint = RecurrencePickerView.lunarSystemHint(isLunar: taskIsLunar, spec: taskSpec) {
                         FormHint(hint)

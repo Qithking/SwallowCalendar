@@ -167,11 +167,9 @@ final class LunarMirrorBatchTests: XCTestCase {
         )
     }
 
-    /// S4（R05/R06）：事件侧孤儿只认每日全量快照；窗口内缺失不影响判定
+    /// S4（R05/R06）：事件侧孤儿只认每日全量快照；窗口快照类型不进孤儿判定（只收 CompletePresence?）
     func testEventOrphanDeletionUsesDailyFullPresenceOnly() {
         // 窗口快照里没有 b1，但每日全量快照里存在 → 保留
-        let windowed = WindowedPresence(ids: [], range: date(2025, 11, 1)..<date(2027, 12, 1))
-        XCTAssertEqual(windowed.ids, [])
         XCTAssertEqual(
             LunarMirrorPolicy.orphanBaseIDs(
                 cachedBaseIDs: [], mirrorBaseIDs: ["b1"], presence: presence(["b1"])
@@ -431,7 +429,7 @@ final class LunarMirrorBatchTests: XCTestCase {
             ExistingLunarMirror(occurrenceID: pastKey, date: past, isCompleted: false),
             ExistingLunarMirror(occurrenceID: completedKey, date: completed, isCompleted: true)
         ]
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "b",
             currentDate: date(2026, 4, 1),
             origin: date(2026, 1, 1),
@@ -476,12 +474,12 @@ final class LunarMirrorBatchTests: XCTestCase {
 
     /// S6：无规则/单期时农历开关置灰，并给出说明（不能切了无反应）
     func testLunarToggleDisabledWhenSpecMissing() {
-        XCTAssertFalse(RecurrencePickerView.isLunarToggleEnabled(spec: nil))
+        XCTAssertFalse(LunarMirrorPolicy.isLunarToggleEnabled(spec: nil))
         let hint = RecurrencePickerView.lunarSystemHint(isLunar: true, spec: nil)
         XCTAssertEqual(hint, "未设置重复周期时农历不生效；请先在「重复」中选择周期")
 
         let monthly = RecurrenceSpec(frequency: .monthly, interval: 1)
-        XCTAssertTrue(RecurrencePickerView.isLunarToggleEnabled(spec: monthly))
+        XCTAssertTrue(LunarMirrorPolicy.isLunarToggleEnabled(spec: monthly))
     }
 
     // MARK: - review-3：同 spec 打开农历也放行对账

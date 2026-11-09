@@ -2,11 +2,12 @@
 //  LunarMirrorPolicy.swift
 //  SwallowCalendar
 //
-//  农历镜像生命周期的单一判定源（纯函数）：无 I/O、无 SwiftData、无 EventKit。
+//  农历镜像生命周期的单一判定源（纯函数）：无 SwiftData、无 EventKit、不读写数据（诊断日志经 AppLogger 写 OSLog 除外）。
 //  四类输出集中在此：
-//  1. capability / hint —— 是否该镜像、UI 该说什么；
+//  1. isMirrorEnabled / hint —— 是否该镜像、UI 该说什么；
 //  2. occurrences / desiredDates —— 某时刻应存在哪些期次；
-//  3. reconcile —— 一次对账应创建/更新/删除/登记哪些键。
+//  3. reconcile —— 一次对账应创建/更新/删除/登记哪些键；
+//  4. keysToDelete / orphanBaseIDs —— 应删哪些系统侧键。
 //  依赖仅 OccurrenceID（纯工具）与 RecurrenceSpec（纯模型）；
 //  禁止 import SwiftData / EventKit，禁止反向依赖 CalendarService / Views。
 //
@@ -15,18 +16,6 @@ import Foundation
 import os
 
 // MARK: - 值输入
-
-/// 镜像载体（提醒 / 日历事件）
-enum MirrorCarrier: String, Sendable, Equatable {
-    case reminder
-    case event
-}
-
-/// 已创建键登记与手删抑制（值类型快照，禁止跨 await 持有模型）
-struct MirrorRegistry: Sendable, Equatable {
-    var knownKeys: [String] = []
-    var suppressedKeys: [String] = []
-}
 
 /// 与「期次枚举」相关的纯输入
 struct LunarMirrorSchedule: Sendable, Equatable {
@@ -40,38 +29,7 @@ struct LunarMirrorSchedule: Sendable, Equatable {
     let skipHolidays: Bool
 }
 
-/// 一个 base 的完整纯值快照
-struct LunarMirrorBase: Sendable, Equatable {
-    let baseID: String
-    let carrier: MirrorCarrier
-    let schedule: LunarMirrorSchedule
-    let completedDates: [Date]
-    let registry: MirrorRegistry
-    /// 本体当前内容指纹（nil = 不校验，不做原地更新）
-    let contentFingerprint: String?
-
-    var spec: RecurrenceSpec? { schedule.spec }
-    var isLunar: Bool { schedule.isLunar }
-    var currentDate: Date? { schedule.currentDate }
-}
-
 // MARK: - 输出
-
-/// 是否该镜像（含开关可用性判定）
-enum MirrorCapability: Equatable, Sendable {
-    case mirrorAvailable
-    case localOnly(LocalOnlyReason)
-    case specMissing
-
-    enum LocalOnlyReason: String, Equatable, Sendable {
-        /// 非农历：由公历规则承担，不需要镜像
-        case notLunar
-        /// 频度不需要公历换算（daily/weekly/hourly/custom）
-        case frequency
-        /// 无当前期可作起点
-        case noCurrentOccurrence
-    }
-}
 
 /// UI 提示（条件在 policy，文案由 View 映射）
 enum MirrorHint: Equatable, Sendable {
@@ -144,25 +102,6 @@ struct CompletePresence: Sendable, Equatable {
     let observedAt: Date
 }
 
-/// 系统侧窗口快照：只能用于去重/收养，不得用于删除
-struct WindowedPresence: Sendable, Equatable {
-    let ids: Set<String>
-    let range: Range<Date>
-}
-
-/// 读取失败原因（不得等价于「系统侧为空」）
-enum MirrorReadFailure: String, Sendable, Equatable {
-    case notAuthorized
-    case queryFailed
-}
-
-/// 系统侧存在性三态
-enum SystemPresence: Sendable, Equatable {
-    case complete(CompletePresence)
-    case windowed(WindowedPresence)
-    case unavailable(MirrorReadFailure)
-}
-
 // MARK: - 判定源
 
 enum LunarMirrorPolicy {
@@ -185,16 +124,7 @@ enum LunarMirrorPolicy {
         isMirrorEnabled(isLunar: isLunar, frequency: spec?.frequency)
     }
 
-    /// 开关可用性与对账口径（A1/A2/A3 收敛）
-    static func capability(_ base: LunarMirrorBase) -> MirrorCapability {
-        guard let spec = base.spec else { return .specMissing }
-        guard base.isLunar else { return .localOnly(.notLunar) }
-        guard supportsMirror(frequency: spec.frequency) else { return .localOnly(.frequency) }
-        guard base.currentDate != nil else { return .localOnly(.noCurrentOccurrence) }
-        return .mirrorAvailable
-    }
-
-    /// 农历开关是否可用：无规则/单期时不生效，UI 必须置灰并给出说明
+    /// 农历开关是否可用（对账口径同源，A1/A2/A3 收敛）：无规则/单期时不生效，UI 必须置灰并给出说明
     static func isLunarToggleEnabled(spec: RecurrenceSpec?) -> Bool {
         spec != nil
     }
@@ -204,10 +134,6 @@ enum LunarMirrorPolicy {
         guard let spec else { return .specMissing }
         guard isLunar else { return nil }
         return isMirrorEnabled(isLunar: isLunar, spec: spec) ? .systemMirrors : .localOnlyFrequency
-    }
-
-    static func hint(_ base: LunarMirrorBase) -> MirrorHint? {
-        hint(isLunar: base.isLunar, spec: base.spec)
     }
 
     // MARK: 期次枚举

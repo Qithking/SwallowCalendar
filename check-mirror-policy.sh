@@ -33,53 +33,35 @@ report() {
   fail=1
 }
 
+# 通用 grep 扫描：$1 = 规则名；$2 = 豁免文件（空串 = 不豁免）；其余参数 = 完整 grep 命令
+scan() {
+  local rule="$1" exclude="$2"
+  shift 2
+  local hit file rest
+  while IFS= read -r hit; do
+    file="${hit%%:*}"
+    [ -n "$exclude" ] && [ "$file" = "$exclude" ] && continue
+    rest="${hit#*:}"
+    report "$rule" "$file" "${rest%%:*}" "${rest#*:}"
+  done < <("$@" || true)
+}
+
 # 1. 旧判定入口
-while IFS= read -r hit; do
-  file="${hit%%:*}"
-  rest="${hit#*:}"
-  line="${rest%%:*}"
-  text="${rest#*:}"
-  report "legacy-entry" "$file" "$line" "$text"
-done < <(grep -rnE 'LunarMirrorPlan\.(supportsMirror|isMirrorEnabled|orphanDeletionKeys)' "$SRC" --include='*.swift' || true)
+scan "legacy-entry" "" grep -rnE 'LunarMirrorPlan\.(supportsMirror|isMirrorEnabled|orphanDeletionKeys)' "$SRC" --include='*.swift'
 
 # 2. 删除计划唯一生成点
-while IFS= read -r hit; do
-  file="${hit%%:*}"
-  [ "$file" = "$POLICY" ] && continue
-  rest="${hit#*:}"
-  line="${rest%%:*}"
-  text="${rest#*:}"
-  report "delete-plan" "$file" "$line" "$text"
-done < <(grep -rnE 'deleteOccurrenceIDs\.append' "$SRC" --include='*.swift' || true)
+scan "delete-plan" "$POLICY" grep -rnE 'deleteOccurrenceIDs\.append' "$SRC" --include='*.swift'
 
 # 3. Views 禁词
-while IFS= read -r hit; do
-  file="${hit%%:*}"
-  rest="${hit#*:}"
-  line="${rest%%:*}"
-  text="${rest#*:}"
-  report "ui-wording" "$file" "$line" "$text"
-done < <(grep -rn '镜像' "$SRC/Views" --include='*.swift' || true)
+scan "ui-wording" "" grep -rn '镜像' "$SRC/Views" --include='*.swift'
 
 # 4. policy 纯函数层导入约束
 if [ -f "$POLICY" ]; then
-  while IFS= read -r hit; do
-    file="${hit%%:*}"
-    rest="${hit#*:}"
-    line="${rest%%:*}"
-    text="${rest#*:}"
-    report "policy-import" "$file" "$line" "$text"
-  done < <(grep -nE '^[[:space:]]*import[[:space:]]+(SwiftData|EventKit)' "$POLICY" || true)
+  scan "policy-import" "" grep -nE '^[[:space:]]*import[[:space:]]+(SwiftData|EventKit)' "$POLICY"
 fi
 
 # 5. Services 必须走 policy
-while IFS= read -r hit; do
-  file="${hit%%:*}"
-  rest="${hit#*:}"
-  line="${rest%%:*}"
-  text="${rest#*:}"
-  report "service-entry" "$file" "$line" "$text"
-done < <(grep -rnE 'LunarMirrorPlan\.reconcile' "$SRC/Services" --include='*.swift' || true)
+scan "service-entry" "" grep -rnE 'LunarMirrorPlan\.reconcile' "$SRC/Services" --include='*.swift'
 
 # 6. os.Logger 导入卫生（与 check-applogger-imports.sh 同一份规则，避免两套实现）
 if ! bash "$ROOT/check-applogger-imports.sh"; then

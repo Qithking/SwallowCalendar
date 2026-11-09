@@ -269,48 +269,31 @@ final class CachedEvent {
         }
     }
 
+    /// 镜像键列表共用解码（登记/抑制两属性同形）：JSON 缺失/解码失败 = 空列表；损坏判定另见 isCorruptKeyListJSON
+    private static func decodeKeyList(_ json: String?) -> [String] {
+        guard let json, let data = json.data(using: .utf8),
+              let keys = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return keys
+    }
+
+    /// 镜像键列表共用编码：去重升序；空列表 → nil（清空 JSON）；编码失败 → 原值不动
+    private static func encodeKeyList(_ keys: [String], fallback: String?) -> String? {
+        let normalized = Array(Set(keys)).sorted()
+        guard !normalized.isEmpty else { return nil }
+        guard let data = try? JSONEncoder().encode(normalized) else { return fallback }
+        return String(data: data, encoding: .utf8)
+    }
+
     /// 农历镜像已创建键登记（去重升序；空数组清空 JSON）
     var mirrorKeys: [String] {
-        get {
-            guard let json = mirrorKeysJSON,
-                  let data = json.data(using: .utf8),
-                  let keys = try? JSONDecoder().decode([String].self, from: data) else {
-                return []
-            }
-            return keys
-        }
-        set {
-            let normalized = Array(Set(newValue)).sorted()
-            guard !normalized.isEmpty else {
-                mirrorKeysJSON = nil
-                return
-            }
-            if let data = try? JSONEncoder().encode(normalized) {
-                mirrorKeysJSON = String(data: data, encoding: .utf8)
-            }
-        }
+        get { Self.decodeKeyList(mirrorKeysJSON) }
+        set { mirrorKeysJSON = Self.encodeKeyList(newValue, fallback: mirrorKeysJSON) }
     }
 
     /// 系统侧手删镜像的抑制键（去重升序；空数组清空 JSON）
     var suppressedMirrorKeys: [String] {
-        get {
-            guard let json = suppressedMirrorKeysJSON,
-                  let data = json.data(using: .utf8),
-                  let keys = try? JSONDecoder().decode([String].self, from: data) else {
-                return []
-            }
-            return keys
-        }
-        set {
-            let normalized = Array(Set(newValue)).sorted()
-            guard !normalized.isEmpty else {
-                suppressedMirrorKeysJSON = nil
-                return
-            }
-            if let data = try? JSONEncoder().encode(normalized) {
-                suppressedMirrorKeysJSON = String(data: data, encoding: .utf8)
-            }
-        }
+        get { Self.decodeKeyList(suppressedMirrorKeysJSON) }
+        set { suppressedMirrorKeysJSON = Self.encodeKeyList(newValue, fallback: suppressedMirrorKeysJSON) }
     }
 
     /// 登记 / 抑制列表是否解码损坏（损坏 ≠ 空列表；损坏时必须跳过该 base 的重建）

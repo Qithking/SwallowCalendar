@@ -37,7 +37,7 @@ final class LunarMirrorMatrixTests: XCTestCase {
     /// 一行期望产出：不适用维度用 nil，允许表比断言多
     private struct Row {
         let name: String
-        let carrier: MirrorCarrier
+        let isReminder: Bool
         let frequency: RecurrenceFrequency
         let isLunar: Bool
         let end: RecurrenceEndRule
@@ -92,7 +92,7 @@ final class LunarMirrorMatrixTests: XCTestCase {
         }
 
         // 载体差异：日历事件没有完成历史语义
-        let completedDates: [Date] = (row.carrier == .reminder && row.hasHistory)
+        let completedDates: [Date] = (row.isReminder && row.hasHistory)
             ? [existingDate ?? date(2026, 12, 16)]
             : []
 
@@ -117,51 +117,51 @@ final class LunarMirrorMatrixTests: XCTestCase {
     func testReconcileMatrix() {
         let rows: [Row] = [
             // 提醒 · 农历 monthly：启用、无结束
-            Row(name: "reminder-monthly-lunar-open", carrier: .reminder, frequency: .monthly,
+            Row(name: "reminder-monthly-lunar-open", isReminder: true, frequency: .monthly,
                 isLunar: true, end: .never, hasHistory: false, existing: .firstDesired,
                 createsNonEmpty: true, deletesExisting: false, completesExisting: false, hint: .systemMirrors),
             // 提醒 · 农历 monthly：应用内已完成 → 保留并标完成
-            Row(name: "reminder-monthly-lunar-completed", carrier: .reminder, frequency: .monthly,
+            Row(name: "reminder-monthly-lunar-completed", isReminder: true, frequency: .monthly,
                 isLunar: true, end: .never, hasHistory: true, existing: .firstDesired,
                 createsNonEmpty: nil, deletesExisting: false, completesExisting: true, hint: .systemMirrors),
             // 事件 · 农历 monthly：事件无完成历史 → 不标完成
-            Row(name: "event-monthly-lunar-completed-ignored", carrier: .event, frequency: .monthly,
+            Row(name: "event-monthly-lunar-completed-ignored", isReminder: false, frequency: .monthly,
                 isLunar: true, end: .never, hasHistory: true, existing: .firstDesired,
                 createsNonEmpty: nil, deletesExisting: false, completesExisting: false, hint: .systemMirrors),
             // 提醒 · 农历 yearly：启用、无结束、无既有镜像
-            Row(name: "reminder-yearly-lunar-open", carrier: .reminder, frequency: .yearly,
+            Row(name: "reminder-yearly-lunar-open", isReminder: true, frequency: .yearly,
                 isLunar: true, end: .never, hasHistory: false, existing: .none,
                 createsNonEmpty: true, deletesExisting: false, completesExisting: false, hint: .systemMirrors),
             // 提醒 · 农历 monthly：结束日期之后已有镜像 → 规则变更删除
-            Row(name: "reminder-monthly-lunar-end-date", carrier: .reminder, frequency: .monthly,
+            Row(name: "reminder-monthly-lunar-end-date", isReminder: true, frequency: .monthly,
                 isLunar: true, end: .on(date(2026, 12, 31)), hasHistory: false, existing: .beyondEnd,
                 createsNonEmpty: nil, deletesExisting: true, completesExisting: false, hint: .systemMirrors),
             // 提醒 · 农历 monthly：结束次数 1 → 窗口内无后续期次
-            Row(name: "reminder-monthly-lunar-end-count", carrier: .reminder, frequency: .monthly,
+            Row(name: "reminder-monthly-lunar-end-count", isReminder: true, frequency: .monthly,
                 isLunar: true, end: .after(1), hasHistory: false, existing: .beyondEnd,
                 createsNonEmpty: nil, deletesExisting: true, completesExisting: false, hint: .systemMirrors),
             // 提醒 · 非农历 monthly：公历规则自足 → 删未来旧镜像、无提示
-            Row(name: "reminder-monthly-solar", carrier: .reminder, frequency: .monthly,
+            Row(name: "reminder-monthly-solar", isReminder: true, frequency: .monthly,
                 isLunar: false, end: .never, hasHistory: false, existing: .firstDesired,
                 createsNonEmpty: false, deletesExisting: true, completesExisting: false, hint: nil),
             // 提醒 · 农历 daily：频度不需要换算 → 仅应用内
-            Row(name: "reminder-daily-lunar", carrier: .reminder, frequency: .daily,
+            Row(name: "reminder-daily-lunar", isReminder: true, frequency: .daily,
                 isLunar: true, end: .never, hasHistory: false, existing: .firstDesired,
                 createsNonEmpty: false, deletesExisting: true, completesExisting: false, hint: .localOnlyFrequency),
             // 提醒 · 农历 weekly：仅应用内
-            Row(name: "reminder-weekly-lunar", carrier: .reminder, frequency: .weekly,
+            Row(name: "reminder-weekly-lunar", isReminder: true, frequency: .weekly,
                 isLunar: true, end: .never, hasHistory: false, existing: .firstDesired,
                 createsNonEmpty: false, deletesExisting: true, completesExisting: false, hint: .localOnlyFrequency),
             // 提醒 · 非农历 hourly：无提示、清理旧镜像
-            Row(name: "reminder-hourly-solar", carrier: .reminder, frequency: .hourly,
+            Row(name: "reminder-hourly-solar", isReminder: true, frequency: .hourly,
                 isLunar: false, end: .never, hasHistory: false, existing: .firstDesired,
                 createsNonEmpty: false, deletesExisting: true, completesExisting: false, hint: nil),
             // 事件 · 非农历 monthly：清理旧镜像
-            Row(name: "event-monthly-solar", carrier: .event, frequency: .monthly,
+            Row(name: "event-monthly-solar", isReminder: false, frequency: .monthly,
                 isLunar: false, end: .never, hasHistory: false, existing: .firstDesired,
                 createsNonEmpty: false, deletesExisting: true, completesExisting: false, hint: nil),
             // 事件 · 农历 monthly：启用、无既有镜像
-            Row(name: "event-monthly-lunar-open", carrier: .event, frequency: .monthly,
+            Row(name: "event-monthly-lunar-open", isReminder: false, frequency: .monthly,
                 isLunar: true, end: .never, hasHistory: false, existing: .none,
                 createsNonEmpty: true, deletesExisting: false, completesExisting: false, hint: .systemMirrors)
         ]

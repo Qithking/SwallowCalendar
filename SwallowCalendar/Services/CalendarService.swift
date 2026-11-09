@@ -1871,6 +1871,21 @@ final class CalendarService {
         }
     }
 
+    /// 按复合键删除单条系统侧镜像（提醒 commit / 事件 thisEvent）；单条失败只记日志不中断
+    @MainActor
+    private func removeMirrorItem(_ item: EKCalendarItem, key: String, context: String) {
+        do {
+            if let reminder = item as? EKReminder {
+                try eventStore.remove(reminder, commit: true)
+            } else if let event = item as? EKEvent {
+                try eventStore.remove(event, span: .thisEvent)
+            }
+            AppLogger.sync.debug("\(context, privacy: .public) ok key=\(key, privacy: .public)")
+        } catch {
+            AppLogger.sync.error("\(context, privacy: .public)失败 key=\(key, privacy: .public): \(String(describing: error))")
+        }
+    }
+
     /// H-1：删除孤儿镜像（base 在缓存与系统侧都已不存在）
     /// - 判定：复合键中的 baseID 不在缓存快照，且不在完整系统快照里
     /// - 类型约束：只接受 `CompletePresence?`，窗口快照无法进入删除判定；
@@ -1906,23 +1921,13 @@ final class CalendarService {
             if let group = reminderGroups[baseID] {
                 for key in LunarMirrorPolicy.keysToDelete(scope: .orphan, existing: group.existing, now: now) {
                     guard let reminder = reminderItems[baseID]?[key] as? EKReminder else { continue }
-                    do {
-                        try eventStore.remove(reminder, commit: true)
-                        AppLogger.sync.debug("农历孤儿提醒清理 ok key=\(key, privacy: .public)")
-                    } catch {
-                        AppLogger.sync.error("农历孤儿提醒清理失败 key=\(key, privacy: .public): \(String(describing: error))")
-                    }
+                    removeMirrorItem(reminder, key: key, context: "农历孤儿提醒清理")
                 }
             }
             if let group = eventGroups[baseID] {
                 for key in LunarMirrorPolicy.keysToDelete(scope: .orphan, existing: group.existing, now: now) {
                     guard let event = eventItems[baseID]?[key] as? EKEvent else { continue }
-                    do {
-                        try eventStore.remove(event, span: .thisEvent)
-                        AppLogger.sync.debug("农历孤儿事件清理 ok key=\(key, privacy: .public)")
-                    } catch {
-                        AppLogger.sync.error("农历孤儿事件清理失败 key=\(key, privacy: .public): \(String(describing: error))")
-                    }
+                    removeMirrorItem(event, key: key, context: "农历孤儿事件清理")
                 }
             }
         }
@@ -2001,16 +2006,7 @@ final class CalendarService {
 
         for key in plan.deleteOccurrenceIDs {
             guard let item = byID[key] else { continue }
-            do {
-                if let reminder = item as? EKReminder {
-                    try eventStore.remove(reminder, commit: true)
-                } else if let event = item as? EKEvent {
-                    try eventStore.remove(event, span: .thisEvent)
-                }
-                AppLogger.sync.debug("农历镜像删除 ok key=\(key, privacy: .public)")
-            } catch {
-                AppLogger.sync.error("农历镜像删除失败 key=\(key, privacy: .public): \(String(describing: error))")
-            }
+            removeMirrorItem(item, key: key, context: "农历镜像删除")
         }
 
         for key in plan.updateOccurrenceIDs {
@@ -2109,28 +2105,14 @@ final class CalendarService {
         let keys = LunarMirrorPolicy.keysToDelete(scope: .baseRemoved, existing: group.existing, now: now)
         for key in keys {
             guard let item = items[key] else { continue }
-            do {
-                if let reminder = item as? EKReminder {
-                    try eventStore.remove(reminder, commit: true)
-                } else if let event = item as? EKEvent {
-                    try eventStore.remove(event, span: .thisEvent)
-                }
-                AppLogger.sync.debug("农历镜像删除 ok key=\(key, privacy: .public)")
-            } catch {
-                AppLogger.sync.error("农历镜像删除失败 key=\(key, privacy: .public): \(String(describing: error))")
-            }
+            removeMirrorItem(item, key: key, context: "农历镜像删除")
         }
     }
 
-    /// 新建一条普通、不循环的镜像提醒（系统侧只显示公历）
+    /// 镜像提醒共用字段配置（创建/更新同形）：标题/到期/闹钟/优先级/notes 标记；日历与保存由调用方决定
     @MainActor
-    private func createLunarMirror(base: CachedEvent, date: Date) throws {
-        let reminder = EKReminder(eventStore: eventStore)
+    private func configureReminderMirrorFields(_ reminder: EKReminder, base: CachedEvent, date: Date) {
         reminder.title = base.title
-        reminder.calendar = eventStore.defaultCalendarForNewReminders() ?? eventStore.calendars(for: .reminder).first
-        guard reminder.calendar != nil else {
-            throw EventError.noReminderCalendarAvailable
-        }
         reminder.dueDateComponents = Self.makeDueComponents(from: date, isAllDay: base.isAllDay)
         reminder.alarms = Self.makeAlarms(
             offsets: base.reminderOffsets.isEmpty ? nil : base.reminderOffsets,
@@ -2143,21 +2125,12 @@ final class CalendarService {
             occurrenceID: key,
             fingerprint: Self.mirrorContentFingerprint(base: base)
         )
-        try eventStore.save(reminder, commit: true)
     }
 
-    /// 新建一条普通、不循环的镜像日历事件（系统侧只显示公历）
-    /// - Note: 全天事件沿用现有口径：start=当日 00:00，end=次日 00:00（exclusive），不引入新偏移
+    /// 镜像事件共用字段配置（创建/更新同形）：标题/全天/起止/闹钟/notes 标记；日历选择与保存由调用方决定
     @MainActor
-    private func createLunarEventMirror(base: CachedEvent, date: Date) throws {
-        let event = EKEvent(eventStore: eventStore)
+    private func configureEventMirrorFields(_ event: EKEvent, base: CachedEvent, date: Date) {
         event.title = base.title
-        guard let calendar = eventStore.calendar(withIdentifier: base.calendarID)
-            ?? eventStore.defaultCalendarForNewEvents
-            ?? calendars.first else {
-            throw EventError.noCalendarAvailable
-        }
-        event.calendar = calendar
         event.isAllDay = base.isAllDay
         if base.isAllDay {
             let start = Calendar.current.startOfDay(for: date)
@@ -2177,43 +2150,45 @@ final class CalendarService {
             occurrenceID: key,
             fingerprint: Self.mirrorContentFingerprint(base: base)
         )
+    }
+
+    /// 新建一条普通、不循环的镜像提醒（系统侧只显示公历）
+    @MainActor
+    private func createLunarMirror(base: CachedEvent, date: Date) throws {
+        let reminder = EKReminder(eventStore: eventStore)
+        reminder.calendar = eventStore.defaultCalendarForNewReminders() ?? eventStore.calendars(for: .reminder).first
+        guard reminder.calendar != nil else {
+            throw EventError.noReminderCalendarAvailable
+        }
+        configureReminderMirrorFields(reminder, base: base, date: date)
+        try eventStore.save(reminder, commit: true)
+    }
+
+    /// 新建一条普通、不循环的镜像日历事件（系统侧只显示公历）
+    /// - Note: 全天事件沿用现有口径：start=当日 00:00，end=次日 00:00（exclusive），不引入新偏移
+    @MainActor
+    private func createLunarEventMirror(base: CachedEvent, date: Date) throws {
+        let event = EKEvent(eventStore: eventStore)
+        guard let calendar = eventStore.calendar(withIdentifier: base.calendarID)
+            ?? eventStore.defaultCalendarForNewEvents
+            ?? calendars.first else {
+            throw EventError.noCalendarAvailable
+        }
+        event.calendar = calendar
+        configureEventMirrorFields(event, base: base, date: date)
         try eventStore.save(event, span: .thisEvent)
     }
 
     /// 原地更新已存在的镜像内容（期次/键不变），避免「本体改了、系统侧仍是旧值」
     @MainActor
     private func updateLunarMirror(base: CachedEvent, item: EKCalendarItem, date: Date) throws {
-        let key = CachedEvent.makeOccurrenceID(baseID: base.eventID, occurrence: date)
-        let fingerprint = Self.mirrorContentFingerprint(base: base)
         if let reminder = item as? EKReminder {
-            reminder.title = base.title
-            reminder.dueDateComponents = Self.makeDueComponents(from: date, isAllDay: base.isAllDay)
-            reminder.alarms = Self.makeAlarms(
-                offsets: base.reminderOffsets.isEmpty ? nil : base.reminderOffsets,
-                minutes: nil,
-                reminderDueDate: date
-            )
-            reminder.priority = Self.ekPriority(from: EventPriority(rawValue: base.priority))
-            reminder.notes = LunarMirrorPlan.marker(occurrenceID: key, fingerprint: fingerprint)
+            configureReminderMirrorFields(reminder, base: base, date: date)
             try eventStore.save(reminder, commit: true)
             return
         }
         guard let event = item as? EKEvent else { return }
-        event.title = base.title
-        event.isAllDay = base.isAllDay
-        if base.isAllDay {
-            let start = Calendar.current.startOfDay(for: date)
-            event.startDate = start
-            event.endDate = Calendar.current.date(byAdding: .day, value: 1, to: start)
-                ?? start.addingTimeInterval(86400)
-        } else {
-            event.startDate = date
-            event.endDate = date.addingTimeInterval(Self.mirrorDuration(base: base))
-        }
-        event.alarms = Self.makeAlarms(
-            offsets: base.reminderOffsets.isEmpty ? nil : base.reminderOffsets,
-            minutes: base.reminderMinutes == 0 ? nil : base.reminderMinutes
-        )
+        configureEventMirrorFields(event, base: base, date: date)
         // M-2：本体移动日历后镜像同步迁移；目标日历取不到时按创建路径回退默认日历，
         // 保存失败则不落指纹，下次对账重试（不会出现「指纹已改但日历没迁」的假同步）
         if let target = eventStore.calendar(withIdentifier: base.calendarID)
@@ -2222,7 +2197,6 @@ final class CalendarService {
             event.calendar != target {
             event.calendar = target
         }
-        event.notes = LunarMirrorPlan.marker(occurrenceID: key, fingerprint: fingerprint)
         try eventStore.save(event, span: .thisEvent)
     }
 

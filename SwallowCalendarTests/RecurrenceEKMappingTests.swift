@@ -156,10 +156,10 @@ final class RecurrenceEKMappingTests: XCTestCase {
         let start = anchor
         let end = anchor.addingTimeInterval(60 * 60 * 24 * 30)
         XCTAssertTrue(
-            LunarMirrorPlan.occurrences(spec: hourly, origin: anchor, after: start, through: end).isEmpty,
+            LunarMirrorPolicy.occurrences(spec: hourly, origin: anchor, after: start, through: end).isEmpty,
             "每小时不得进入镜像枚举"
         )
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "hourly-base",
             currentDate: anchor, origin: anchor, spec: hourly, isLunar: false,
             validStart: nil, validEnd: nil, completedDates: [],

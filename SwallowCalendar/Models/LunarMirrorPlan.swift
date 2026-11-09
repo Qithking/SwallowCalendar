@@ -2,10 +2,8 @@
 //  LunarMirrorPlan.swift
 //  SwallowCalendar
 //
-//  兼容转发层：镜像判定逻辑已收敛到 LunarMirrorPolicy（单一判定源）。
-//  本文件仅保留：
-//  - notes 标记 / 指纹解析（镜像识别格式，不属于生命周期判定）；
-//  - 旧入口的同名转发，保证调用点与历史用例不改动（S3 后删除判定类旧入口）。
+//  镜像判定逻辑已收敛到 LunarMirrorPolicy（单一判定源）。
+//  本文件仅保留 notes 标记 / 指纹解析（镜像识别格式，不属于生命周期判定）。
 //
 //  口径见 .work/执行文档.md「农历重复镜像写入方案」：
 //  - 每条期次写一条普通公历提醒（不循环），系统侧显示公历；
@@ -16,7 +14,6 @@
 //
 
 import Foundation
-import os
 
 enum LunarMirrorPlan {
     // MARK: - notes 标记（镜像识别唯一入口）
@@ -59,64 +56,4 @@ enum LunarMirrorPlan {
         return String(hash, radix: 16)
     }
 
-    // MARK: - 转发到 LunarMirrorPolicy
-
-    static var windowMonths: Int { LunarMirrorPolicy.windowMonths }
-    static var topUpMonths: Int { LunarMirrorPolicy.topUpMonths }
-
-    static func horizon(now: Date, furthestMirror: Date?, calendar: Calendar = .current) -> Date {
-        LunarMirrorPolicy.horizon(now: now, furthestMirror: furthestMirror, calendar: calendar)
-    }
-
-    static func occurrences(
-        spec: RecurrenceSpec,
-        origin: Date,
-        after lowerBound: Date,
-        through upperBound: Date
-    ) -> [LunarMirrorOccurrence] {
-        LunarMirrorPolicy.occurrences(
-            spec: spec,
-            origin: origin,
-            after: lowerBound,
-            through: upperBound
-        )
-    }
-
-    static func reconcile(
-        baseID: String,
-        currentDate: Date?,
-        origin: Date,
-        spec: RecurrenceSpec?,
-        isLunar: Bool,
-        validStart: Date?,
-        validEnd: Date?,
-        completedDates: [Date],
-        now: Date,
-        existing: [ExistingLunarMirror],
-        knownKeys: [String] = [],
-        suppressedKeys: [String] = [],
-        expectedFingerprint: String? = nil,
-        skipHolidays: Bool = false,
-        isRestDay: ((Date) -> Bool)? = nil,
-        calendar: Calendar = .current
-    ) -> LunarMirrorReconcilePlan {
-        LunarMirrorPolicy.reconcile(
-            baseID: baseID,
-            currentDate: currentDate,
-            origin: origin,
-            spec: spec,
-            isLunar: isLunar,
-            validStart: validStart,
-            validEnd: validEnd,
-            completedDates: completedDates,
-            now: now,
-            existing: existing,
-            knownKeys: knownKeys,
-            suppressedKeys: suppressedKeys,
-            expectedFingerprint: expectedFingerprint,
-            skipHolidays: skipHolidays,
-            isRestDay: isRestDay,
-            calendar: calendar
-        )
-    }
 }

@@ -38,7 +38,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         // 2025-07-10 = 农历六月十六；下一期 2025-08-09 落在闰六月 → 正常生成
         let origin = date(2025, 7, 10)
         let spec = RecurrenceSpec(frequency: .monthly, interval: 1)
-        let result = LunarMirrorPlan.occurrences(
+        let result = LunarMirrorPolicy.occurrences(
             spec: spec,
             origin: origin,
             after: date(2025, 7, 9),
@@ -53,7 +53,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         XCTAssertNotEqual(ids[1], ids[0])
 
         // 同一输入重复计算幂等
-        let again = LunarMirrorPlan.occurrences(
+        let again = LunarMirrorPolicy.occurrences(
             spec: spec,
             origin: origin,
             after: date(2025, 7, 9),
@@ -68,7 +68,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         // 2026-03-18 = 农历正月三十；下一月二月仅 29 天 → 2026-04-16 为二月廿九
         let origin = date(2026, 3, 18)
         let spec = RecurrenceSpec(frequency: .monthly, interval: 1)
-        let result = LunarMirrorPlan.occurrences(
+        let result = LunarMirrorPolicy.occurrences(
             spec: spec,
             origin: origin,
             after: date(2026, 3, 17),
@@ -86,7 +86,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         // 2026-12-09 = 农历十一月一 → 十二月一（2027-01-08）→ 正月一（2027-02-06）
         let origin = date(2026, 12, 9)
         let spec = RecurrenceSpec(frequency: .monthly, interval: 1)
-        let result = LunarMirrorPlan.occurrences(
+        let result = LunarMirrorPolicy.occurrences(
             spec: spec,
             origin: origin,
             after: date(2026, 12, 8),
@@ -100,7 +100,7 @@ final class LunarMirrorPlanTests: XCTestCase {
     func testYearlyLunarKeepsLunarMonthDay() {
         let origin = date(2025, 7, 10) // 农历六月十六
         let spec = RecurrenceSpec(frequency: .yearly, interval: 1)
-        let result = LunarMirrorPlan.occurrences(
+        let result = LunarMirrorPolicy.occurrences(
             spec: spec,
             origin: origin,
             after: date(2025, 7, 9),
@@ -117,19 +117,19 @@ final class LunarMirrorPlanTests: XCTestCase {
         let full = calendar.date(byAdding: .month, value: 12, to: now)!
 
         XCTAssertEqual(
-            LunarMirrorPlan.horizon(now: now, furthestMirror: nil, calendar: calendar),
+            LunarMirrorPolicy.horizon(now: now, furthestMirror: nil, calendar: calendar),
             full,
             "无镜像时首轮铺满 12 个月"
         )
         XCTAssertEqual(
-            LunarMirrorPlan.horizon(now: now, furthestMirror: date(2027, 1, 8), calendar: calendar),
+            LunarMirrorPolicy.horizon(now: now, furthestMirror: date(2027, 1, 8), calendar: calendar),
             full,
             "尾端不足 3 个月补满到 12 个月"
         )
 
         let fiveMonths = date(2027, 4, 8)
         XCTAssertEqual(
-            LunarMirrorPlan.horizon(now: now, furthestMirror: fiveMonths, calendar: calendar),
+            LunarMirrorPolicy.horizon(now: now, furthestMirror: fiveMonths, calendar: calendar),
             fiveMonths,
             "尾端 ≥3 个月时不额外写入"
         )
@@ -160,7 +160,7 @@ final class LunarMirrorPlanTests: XCTestCase {
     func testReconcileCreatesFutureMirrorsExcludingBaseCurrent() {
         let origin = date(2025, 7, 10)
         let spec = RecurrenceSpec(frequency: .monthly, interval: 1)
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin,
             origin: origin,
@@ -182,7 +182,7 @@ final class LunarMirrorPlanTests: XCTestCase {
     func testReconcileIsIdempotentWhenMirrorsExist() {
         let origin = date(2025, 7, 10)
         let spec = RecurrenceSpec(frequency: .monthly, interval: 1)
-        let first = LunarMirrorPlan.reconcile(
+        let first = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin, spec: spec, isLunar: true,
             validStart: nil, validEnd: nil, completedDates: [],
@@ -192,7 +192,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         let keys = first.createDates.map {
             CachedEvent.makeOccurrenceID(baseID: "base-1", occurrence: $0)
         }
-        let second = LunarMirrorPlan.reconcile(
+        let second = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin, spec: spec, isLunar: true,
             validStart: nil, validEnd: nil, completedDates: [],
@@ -210,7 +210,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         let spec = RecurrenceSpec(frequency: .monthly, interval: 1)
         let currentMirror = mirror(advanced)
         let nextMirror = mirror(date(2025, 9, 7))
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: advanced, origin: origin, spec: spec, isLunar: true,
             validStart: nil, validEnd: nil, completedDates: [],
@@ -225,7 +225,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         let completedDate = date(2025, 9, 7)
         let spec = RecurrenceSpec(frequency: .monthly, interval: 1)
         let completedMirror = mirror(completedDate)
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin, spec: spec, isLunar: true,
             validStart: nil, validEnd: nil, completedDates: [completedDate],
@@ -242,7 +242,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         let pastMirror = mirror(date(2025, 8, 9))
         let futureMirror = mirror(date(2025, 10, 7))
         let completedMirror = mirror(date(2026, 1, 8), completed: true)
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin, spec: nil, isLunar: false,
             validStart: nil, validEnd: nil, completedDates: [],
@@ -258,7 +258,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         let origin = date(2025, 7, 10)
         let stale = mirror(date(2025, 8, 9))
         let spec = RecurrenceSpec(frequency: .monthly, interval: 2)
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin, spec: spec, isLunar: true,
             validStart: nil, validEnd: nil, completedDates: [],
@@ -272,7 +272,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         let origin = date(2025, 7, 10)
         let validEnd = date(2025, 12, 31)
         let spec = RecurrenceSpec(frequency: .monthly, interval: 1)
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin, spec: spec, isLunar: true,
             validStart: nil, validEnd: validEnd, completedDates: [],
@@ -287,7 +287,7 @@ final class LunarMirrorPlanTests: XCTestCase {
     private func makeInitialPlan() -> (plan: LunarMirrorReconcilePlan, keys: [String], origin: Date) {
         let origin = date(2025, 7, 10)
         let spec = RecurrenceSpec(frequency: .monthly, interval: 1)
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin, spec: spec, isLunar: true,
             validStart: nil, validEnd: nil, completedDates: [],
@@ -307,7 +307,7 @@ final class LunarMirrorPlanTests: XCTestCase {
             .filter { $0 != victimDate }
             .map { mirror($0) }
 
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: initial.origin, origin: initial.origin,
             spec: RecurrenceSpec(frequency: .monthly, interval: 1), isLunar: true,
@@ -327,7 +327,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         let remaining = initial.plan.createDates.filter { $0 != victimDate }.map { mirror($0) }
 
         // 应用内改规则后：抑制清空、登记已移除该键（模拟 updateEventRecurrence 的清除）
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: initial.origin, origin: initial.origin,
             spec: RecurrenceSpec(frequency: .monthly, interval: 1), isLunar: true,
@@ -346,7 +346,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         let foreignKey = CachedEvent.makeOccurrenceID(baseID: "base-2", occurrence: victimDate)
         let remaining = initial.plan.createDates.map { mirror($0) }
 
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: initial.origin, origin: initial.origin,
             spec: RecurrenceSpec(frequency: .monthly, interval: 1), isLunar: true,
@@ -367,7 +367,7 @@ final class LunarMirrorPlanTests: XCTestCase {
     func testDesiredDatesExcludePastOccurrencesWhenBaseCursorIsInPast() {
         let origin = date(2025, 7, 10)
         let now = date(2025, 11, 8)
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin,
             spec: RecurrenceSpec(frequency: .monthly, interval: 1), isLunar: true,
@@ -386,7 +386,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         let now = date(2025, 11, 8)
         let victimDate = date(2025, 8, 9)
         let victimKey = CachedEvent.makeOccurrenceID(baseID: "base-1", occurrence: victimDate)
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin,
             spec: RecurrenceSpec(frequency: .monthly, interval: 1), isLunar: true,
@@ -408,7 +408,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         let upper = date(2027, 7, 10)
         for frequency in [RecurrenceFrequency.monthly, .yearly] {
             let spec = RecurrenceSpec(frequency: frequency, interval: 1)
-            let result = LunarMirrorPlan.occurrences(
+            let result = LunarMirrorPolicy.occurrences(
                 spec: spec,
                 origin: origin,
                 after: lower,
@@ -439,7 +439,7 @@ final class LunarMirrorPlanTests: XCTestCase {
     func testReconcileUpdatesRetainedMirrorsWhenFingerprintDrifts() {
         let initial = makeInitialPlan()
         let existing = initial.plan.createDates.map { mirror($0, fingerprint: "old") }
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: initial.origin, origin: initial.origin,
             spec: RecurrenceSpec(frequency: .monthly, interval: 1), isLunar: true,
@@ -456,7 +456,7 @@ final class LunarMirrorPlanTests: XCTestCase {
     func testReconcileSkipsUpdateWhenFingerprintMatches() {
         let initial = makeInitialPlan()
         let existing = initial.plan.createDates.map { mirror($0, fingerprint: "same") }
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: initial.origin, origin: initial.origin,
             spec: RecurrenceSpec(frequency: .monthly, interval: 1), isLunar: true,
@@ -472,7 +472,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         let initial = makeInitialPlan()
         let legacy = mirror(initial.plan.createDates[0])
         let completed = mirror(initial.plan.createDates[1], completed: true, fingerprint: "old")
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: initial.origin, origin: initial.origin,
             spec: RecurrenceSpec(frequency: .monthly, interval: 1), isLunar: true,
@@ -487,7 +487,7 @@ final class LunarMirrorPlanTests: XCTestCase {
     func testReconcileDoesNotUpdateMirrorScheduledForDeletion() {
         let origin = date(2025, 7, 10)
         let stale = mirror(date(2025, 8, 9), fingerprint: "old")
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin,
             spec: RecurrenceSpec(frequency: .monthly, interval: 2), isLunar: true,
@@ -506,7 +506,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         let origin = date(2025, 7, 10)
         let restDay = date(2025, 9, 7)
         let cal = calendar
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin,
             spec: RecurrenceSpec(frequency: .monthly, interval: 1), isLunar: true,
@@ -526,7 +526,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         let restDay = date(2025, 9, 7)
         let restMirror = mirror(restDay)
         let cal = calendar
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin,
             spec: RecurrenceSpec(frequency: .monthly, interval: 1), isLunar: true,
@@ -542,7 +542,7 @@ final class LunarMirrorPlanTests: XCTestCase {
     /// 未勾选跳过节假日时不做任何过滤（回归保护）
     func testNoHolidayFilterWhenSkipHolidaysOff() {
         let origin = date(2025, 7, 10)
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin,
             spec: RecurrenceSpec(frequency: .monthly, interval: 1), isLunar: true,
@@ -581,7 +581,7 @@ final class LunarMirrorPlanTests: XCTestCase {
     func testCalendarMirrorReconcileIsIdempotent() {
         let initial = makeInitialPlan()
         let existing = initial.plan.createDates.map { mirror($0) }
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: initial.origin, origin: initial.origin,
             spec: RecurrenceSpec(frequency: .monthly, interval: 1), isLunar: true,
@@ -600,7 +600,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         let now = date(2025, 9, 1)
         let past = mirror(date(2025, 8, 9))
         let future = mirror(date(2025, 10, 7))
-        let plan = LunarMirrorPlan.reconcile(
+        let plan = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin, spec: nil, isLunar: false,
             validStart: nil, validEnd: nil, completedDates: [],
@@ -609,7 +609,7 @@ final class LunarMirrorPlanTests: XCTestCase {
         XCTAssertEqual(Set(plan.deleteOccurrenceIDs), [future.occurrenceID])
         XCTAssertFalse(plan.deleteOccurrenceIDs.contains(past.occurrenceID), "过期镜像保留")
 
-        let again = LunarMirrorPlan.reconcile(
+        let again = LunarMirrorPolicy.reconcile(
             baseID: "base-1",
             currentDate: origin, origin: origin, spec: nil, isLunar: false,
             validStart: nil, validEnd: nil, completedDates: [],
@@ -647,13 +647,13 @@ final class LunarMirrorPlanTests: XCTestCase {
             for isLunar in [true, false] {
                 let enabledByFrequency = LunarMirrorPolicy.supportsMirror(frequency: frequency)
 
-                let occurrences = LunarMirrorPlan.occurrences(
+                let occurrences = LunarMirrorPolicy.occurrences(
                     spec: spec,
                     origin: origin,
                     after: origin,
                     through: date(2027, 7, 10)
                 )
-                let plan = LunarMirrorPlan.reconcile(
+                let plan = LunarMirrorPolicy.reconcile(
                     baseID: "matrix-base",
                     currentDate: origin,
                     origin: origin,
@@ -687,14 +687,14 @@ final class LunarMirrorPlanTests: XCTestCase {
             let spec = RecurrenceSpec(frequency: frequency, interval: 1)
             XCTAssertFalse(LunarMirrorPolicy.supportsMirror(frequency: frequency))
             XCTAssertTrue(
-                LunarMirrorPlan.occurrences(
+                LunarMirrorPolicy.occurrences(
                     spec: spec, origin: date(2025, 7, 10),
                     after: date(2025, 7, 10), through: date(2026, 7, 10)
                 ).isEmpty,
                 "\(frequency) + 农历不得枚举镜像期次"
             )
             XCTAssertTrue(
-                LunarMirrorPlan.reconcile(
+                LunarMirrorPolicy.reconcile(
                     baseID: "daily-weekly-base",
                     currentDate: date(2025, 7, 10), origin: date(2025, 7, 10), spec: spec,
                     isLunar: true, validStart: nil, validEnd: nil, completedDates: [],

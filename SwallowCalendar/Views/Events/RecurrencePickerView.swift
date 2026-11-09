@@ -78,11 +78,6 @@ struct RecurrencePickerView: View {
         }
     }
 
-    /// 农历开关可用性：无规则/单期时置灰（条件与 policy 同源）
-    static func isLunarToggleEnabled(spec: RecurrenceSpec?) -> Bool {
-        LunarMirrorPolicy.isLunarToggleEnabled(spec: spec)
-    }
-
     // MARK: - 自定义面板
 
     @ViewBuilder
