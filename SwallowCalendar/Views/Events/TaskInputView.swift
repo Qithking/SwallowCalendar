@@ -200,6 +200,7 @@ struct TaskInputView: View {
                         Toggle("", isOn: $taskIsAllDay)
                             .toggleStyle(.switch)
                             .labelsHidden()
+                            .formToggleSizing()
                     }
                     FormRow("农历") {
                         Toggle("", isOn: Binding(
@@ -208,6 +209,12 @@ struct TaskInputView: View {
                         ))
                         .toggleStyle(.switch)
                         .labelsHidden()
+                        .formToggleSizing()
+                        // 无规则/单期时置灰，旁边给一句说明（不能切了无反应）
+                        .disabled(!RecurrencePickerView.isLunarToggleEnabled(spec: taskSpec))
+                    }
+                    if let hint = RecurrencePickerView.lunarSystemHint(isLunar: taskIsLunar, spec: taskSpec) {
+                        FormHint(hint)
                     }
                 }
             }
@@ -245,6 +252,7 @@ struct TaskInputView: View {
                         ))
                         .toggleStyle(.switch)
                         .labelsHidden()
+                        .formToggleSizing()
                     }
                     if taskValidityEnabled {
                         FormRow("有效期起") {
@@ -252,6 +260,7 @@ struct TaskInputView: View {
                                 Toggle("", isOn: $taskValidityHasStart)
                                     .toggleStyle(.switch)
                                     .labelsHidden()
+                                    .formToggleSizing()
                                 DatePicker("", selection: $taskValidityStart, displayedComponents: [.date, .hourAndMinute])
                                     .labelsHidden()
                                     .disabled(!taskValidityHasStart)
@@ -264,6 +273,7 @@ struct TaskInputView: View {
                                 Toggle("", isOn: $taskValidityHasEnd)
                                     .toggleStyle(.switch)
                                     .labelsHidden()
+                                    .formToggleSizing()
                                 DatePicker("", selection: $taskValidityEnd, displayedComponents: [.date, .hourAndMinute])
                                     .labelsHidden()
                                     .disabled(!taskValidityHasEnd)
@@ -306,6 +316,7 @@ struct TaskInputView: View {
                         Toggle("", isOn: $createAsReminder)
                             .toggleStyle(.switch)
                             .labelsHidden()
+                            .formToggleSizing()
                     }
                 }
             }

@@ -47,10 +47,10 @@ struct RecurrencePickerView: View {
                 .buttonStyle(.link)
             }
 
-            if spec != nil, spec?.frequency == .hourly || isLunar {
-                FormHint(isLunar
-                         ? "农历重复仅应用内生效；系统「提醒事项」中显示为「永不」"
-                         : "每小时仅应用内生效；系统「提醒事项」中显示为「永不」")
+            // 提示条件复用映射层唯一判定：农历文案统一放在农历开关旁（lunarSystemHint），
+            // 此处只处理非农历的「每小时仅本地」
+            if !isLunar, let current = spec, RecurrenceEKMapper.isLocalOnly(current, isLunar: isLunar) {
+                FormHint("每小时仅应用内生效；系统「提醒事项」中显示为「永不」")
             }
         }
         // 展开态与收起态都占满控件列，避免自定义面板撑破整行宽度
@@ -60,6 +60,27 @@ struct RecurrencePickerView: View {
             guard preset != .custom else { return }
             spec = RecurrenceSpec.spec(for: preset, anchor: newAnchor, current: spec)
         }
+    }
+
+    /// 农历开关旁的系统侧写入提示（唯一文案来源，界面只用系统提醒事项语言）
+    /// - 条件与对账口径同源：`LunarMirrorPolicy.hint`
+    /// - Returns: nil = 非农历且已设周期，不显示提示
+    static func lunarSystemHint(isLunar: Bool, spec: RecurrenceSpec?) -> String? {
+        switch LunarMirrorPolicy.hint(isLunar: isLunar, spec: spec) {
+        case .systemMirrors:
+            return "将在系统「提醒事项」中按公历日期创建对应提醒；本体规则在系统内显示为「永不」"
+        case .localOnlyFrequency:
+            return "当前频度下农历与公历等价，仅应用内生效；系统「提醒事项」中显示为「永不」"
+        case .specMissing:
+            return "未设置重复周期时农历不生效；请先在「重复」中选择周期"
+        case nil:
+            return nil
+        }
+    }
+
+    /// 农历开关可用性：无规则/单期时置灰（条件与 policy 同源）
+    static func isLunarToggleEnabled(spec: RecurrenceSpec?) -> Bool {
+        LunarMirrorPolicy.isLunarToggleEnabled(spec: spec)
     }
 
     // MARK: - 自定义面板

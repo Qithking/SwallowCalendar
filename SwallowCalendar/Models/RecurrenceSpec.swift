@@ -644,9 +644,17 @@ extension RecurrenceSpec {
 // MARK: - EventKit 正/反向映射（单一入口）
 
 enum RecurrenceEKMapper {
-    /// 本地 spec → EK 规则；每小时/农历无表达返回 nil（仅本地生效）
+    /// 唯一「仅本地」判定：只有 EK 无法表达的两种情形——
+    /// 1) 每小时：EKRecurrenceFrequency 无 hourly；
+    /// 2) 农历：相位与公历不同，写公历规则会落错日期。
+    /// 自定义（interval/星期/每月日期/第 N 个周几/每年月份/结束条件）均可表达，不在其中。
+    static func isLocalOnly(_ spec: RecurrenceSpec, isLunar: Bool) -> Bool {
+        isLunar || spec.frequency == .hourly
+    }
+
+    /// 本地 spec → EK 规则；仅 isLocalOnly 情形返回 nil（仅本地生效）
     static func rule(for spec: RecurrenceSpec, anchor: Date, isLunar: Bool) -> EKRecurrenceRule? {
-        guard !isLunar, spec.frequency != .hourly else { return nil }
+        guard !isLocalOnly(spec, isLunar: isLunar) else { return nil }
         let end: EKRecurrenceEnd?
         switch spec.end.mode {
         case .never: end = nil
@@ -657,41 +665,54 @@ enum RecurrenceEKMapper {
         let weekdayDays: [EKRecurrenceDayOfWeek]?
         let monthDays: [NSNumber]?
         let months: [NSNumber]?
+        // 「第 N 个周几」用 BYSETPOS 表达：BYDAY 只给星期（weekNumber 0），
+        // 由 setPositions 指定第几个（-1 = 最后一个）；两者同时写 weekNumber 会互相矛盾
+        let positions: [NSNumber]?
         switch spec.frequency {
-        case .daily, .hourly:
-            weekdayDays = nil; monthDays = nil; months = nil
+        case .daily:
+            weekdayDays = nil; monthDays = nil; months = nil; positions = nil
+        case .hourly:
+            // 每小时仅本地承载：isLocalOnly guard 已拦截，此处保持穷尽，不得降级为「每天」
+            return nil
         case .weekly:
             let days = spec.weekdays.isEmpty
                 ? [Calendar.current.component(.weekday, from: anchor)]
                 : spec.weekdays
             weekdayDays = uniqueWeekdayNumbers(days).map { EKRecurrenceDayOfWeek(dayOfTheWeek: EKWeekday(rawValue: $0)!, weekNumber: 0) }
-            monthDays = nil; months = nil
+            monthDays = nil; months = nil; positions = nil
         case .monthly:
             if let nth = spec.nthWeekday {
-                weekdayDays = [EKRecurrenceDayOfWeek(dayOfTheWeek: EKWeekday(rawValue: nth.weekday)!, weekNumber: nth.nth)]
+                weekdayDays = [EKRecurrenceDayOfWeek(dayOfTheWeek: EKWeekday(rawValue: nth.weekday)!, weekNumber: 0)]
                 monthDays = nil
+                positions = [NSNumber(value: nth.nth)]
             } else {
                 weekdayDays = nil
                 monthDays = [NSNumber(value: spec.monthDay ?? Calendar.current.component(.day, from: anchor))]
+                positions = nil
             }
             months = nil
         case .yearly:
             let month = spec.months.first ?? Calendar.current.component(.month, from: anchor)
             months = [NSNumber(value: month)]
             if let nth = spec.nthWeekday {
-                weekdayDays = [EKRecurrenceDayOfWeek(dayOfTheWeek: EKWeekday(rawValue: nth.weekday)!, weekNumber: nth.nth)]
+                weekdayDays = [EKRecurrenceDayOfWeek(dayOfTheWeek: EKWeekday(rawValue: nth.weekday)!, weekNumber: 0)]
                 monthDays = nil
+                positions = [NSNumber(value: nth.nth)]
             } else {
                 weekdayDays = nil
                 monthDays = [NSNumber(value: spec.monthDay ?? Calendar.current.component(.day, from: anchor))]
+                positions = nil
             }
         }
         let frequency: EKRecurrenceFrequency
         switch spec.frequency {
-        case .hourly, .daily: frequency = .daily
+        case .daily: frequency = .daily
         case .weekly: frequency = .weekly
         case .monthly: frequency = .monthly
         case .yearly: frequency = .yearly
+        case .hourly:
+            // 不可达（上方 guard），保持穷尽：每小时不产生任何系统规则
+            return nil
         }
         return EKRecurrenceRule(
             recurrenceWith: frequency,
@@ -701,7 +722,7 @@ enum RecurrenceEKMapper {
             monthsOfTheYear: months,
             weeksOfTheYear: nil,
             daysOfTheYear: nil,
-            setPositions: nil,
+            setPositions: positions,
             end: end
         )
     }
@@ -731,26 +752,41 @@ enum RecurrenceEKMapper {
         let weekdays = (rule.daysOfTheWeek ?? []).map { Int($0.dayOfTheWeek.rawValue) }.sorted()
         let monthDays = (rule.daysOfTheMonth ?? []).map { $0.intValue }
         let months = (rule.monthsOfTheYear ?? []).map { $0.intValue }.sorted()
+        // 第 N 个周几既有 weekNumber 形式，也有 BYDAY + BYSETPOS 形式，两种都要读回，
+        // 否则下次同步会把自定义降级成「按日期」
+        let nth = nthWeekday(from: rule)
         switch rule.frequency {
         case .daily:
             return RecurrenceSpec(frequency: .daily, interval: rule.interval, end: end)
         case .weekly:
             return RecurrenceSpec(frequency: .weekly, interval: rule.interval, weekdays: weekdays, end: end)
         case .monthly:
-            if let dayOfWeek = (rule.daysOfTheWeek ?? []).first, dayOfWeek.weekNumber != 0 {
-                let nth = NthWeekday(nth: dayOfWeek.weekNumber, weekday: Int(dayOfWeek.dayOfTheWeek.rawValue))
+            if let nth {
                 return RecurrenceSpec(frequency: .monthly, interval: rule.interval, nthWeekday: nth, end: end)
             }
             return RecurrenceSpec(frequency: .monthly, interval: rule.interval, monthDay: monthDays.first ?? anchorDay, end: end)
         case .yearly:
-            if let dayOfWeek = (rule.daysOfTheWeek ?? []).first, dayOfWeek.weekNumber != 0 {
-                let nth = NthWeekday(nth: dayOfWeek.weekNumber, weekday: Int(dayOfWeek.dayOfTheWeek.rawValue))
+            if let nth {
                 return RecurrenceSpec(frequency: .yearly, interval: rule.interval, nthWeekday: nth, months: months.isEmpty ? [anchorMonth] : months, end: end)
             }
             return RecurrenceSpec(frequency: .yearly, interval: rule.interval, monthDay: monthDays.first ?? anchorDay, months: months.isEmpty ? [anchorMonth] : months, end: end)
         @unknown default:
             return nil
         }
+    }
+
+    /// 从 EK 规则还原「第 N 个周几」：weekNumber 优先，其次 BYSETPOS
+    private static func nthWeekday(from rule: EKRecurrenceRule) -> NthWeekday? {
+        guard let dayOfWeek = (rule.daysOfTheWeek ?? []).first else { return nil }
+        let position: Int
+        if dayOfWeek.weekNumber != 0 {
+            position = dayOfWeek.weekNumber
+        } else if let first = (rule.setPositions ?? []).first.map({ $0.intValue }), (1...5).contains(abs(first)) {
+            position = first
+        } else {
+            return nil
+        }
+        return NthWeekday(nth: position, weekday: Int(dayOfWeek.dayOfTheWeek.rawValue))
     }
 
     private static func uniqueWeekdayNumbers(_ days: [Int]) -> [Int] {

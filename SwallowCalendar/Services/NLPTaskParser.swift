@@ -58,7 +58,16 @@ struct NLPTaskParser {
         let dateResult = parseChineseDate(trimmed)
         let title = cleanTitle(trimmed)
 
-        var result = ParsedTask(title: title, date: dateResult.date)
+        // 只给日期、未给时间的输入默认 09:00（原为当天 00:00，提醒落在半夜）；
+        // 输入含显式时间（几点/HH:MM/小时后等）时按输入走，不覆盖
+        let parsedDate: Date
+        if !dateResult.matched.isEmpty, !Self.containsExplicitTime(dateResult.matched) {
+            parsedDate = Self.defaultMorningTime(dateResult.date)
+        } else {
+            parsedDate = dateResult.date
+        }
+
+        var result = ParsedTask(title: title, date: parsedDate)
 
         // 标记是否为农历
         if dateResult.isLunar {
@@ -106,6 +115,22 @@ struct NLPTaskParser {
         }
 
         return result
+    }
+
+    /// 解析结果文本中是否含显式时间表达（用于区分「只给日期」与「日期+时间」）
+    private static func containsExplicitTime(_ matched: String) -> Bool {
+        let patterns = ["(\\d{1,2}):(\\d{2})", "(\\d{1,2})点", "(\\d+)小时后", "(\\d+)分钟后"]
+        return patterns.contains { matched.range(of: $0, options: .regularExpression) != nil }
+    }
+
+    /// 只给日期的输入默认落在当天 09:00（保留原日期，仅替换时分秒）
+    private static func defaultMorningTime(_ date: Date) -> Date {
+        let calendar = Calendar.current
+        var components = calendar.dateComponents([.year, .month, .day], from: date)
+        components.hour = 9
+        components.minute = 0
+        components.second = 0
+        return calendar.date(from: components) ?? date
     }
 
     /// 解析中文日期（包括农历）

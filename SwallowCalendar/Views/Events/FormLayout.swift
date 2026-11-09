@@ -120,6 +120,12 @@ extension View {
     func formControlSizing() -> some View {
         fixedSize(horizontal: true, vertical: false)
     }
+
+    /// 表单开关统一尺寸：走系统控件尺寸（点击热区与动画随系统规则一起缩放），
+    /// 不用 scaleEffect——缩放会把点击热区和动画一起缩掉，且与系统控件不一致
+    func formToggleSizing() -> some View {
+        controlSize(.small)
+    }
 }
 
 /// 说明文字：统一 11pt 次要色，可换行

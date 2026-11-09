@@ -188,7 +188,7 @@ final class RecurrenceSpecTests: XCTestCase {
         XCTAssertEqual(RecurrenceEKMapper.rule(for: quarterly, anchor: anchor, isLunar: false)?.daysOfTheMonth?.first?.intValue, 31)
 
         let nth = RecurrenceSpec(frequency: .monthly, interval: 1, nthWeekday: NthWeekday(nth: -1, weekday: 6))
-        XCTAssertEqual(RecurrenceEKMapper.rule(for: nth, anchor: anchor, isLunar: false)?.daysOfTheWeek?.first?.weekNumber, -1)
+        XCTAssertEqual(RecurrenceEKMapper.rule(for: nth, anchor: anchor, isLunar: false)?.setPositions?.first?.intValue, -1)
 
         var yearly = RecurrenceSpec(frequency: .yearly, interval: 1, monthDay: 31, months: [1])
         yearly.end = .after(5)
@@ -275,6 +275,30 @@ final class RecurrenceSpecTests: XCTestCase {
         XCTAssertFalse(EventCacheService.mergeReminderUpdate(existing: existing, ek: ek))
         XCTAssertEqual(existing.recurrenceType, .hourly)
         XCTAssertTrue(existing.recurrenceSpec?.frequency == .hourly)
+    }
+
+    func testMergeKeepsLunarSpecWhenMarkerPresent() {
+        // 系统侧读回本体提醒（无 EK 规则 + 本地标记）时，不得把农历规则降级/清空
+        let spec = RecurrenceSpec(frequency: .monthly, interval: 1, monthDay: 15)
+        let existing = makeCached(start: date(2030, 1, 1), spec: spec, type: .monthly)
+        existing.isLunar = true
+        let ek = makeEvent(spec: nil, type: .none, notes: EventCacheService.localRecurrenceMarker)
+        XCTAssertFalse(EventCacheService.mergeReminderUpdate(existing: existing, ek: ek))
+        XCTAssertEqual(existing.recurrenceSpec, spec)
+        XCTAssertTrue(existing.isLunar)
+        XCTAssertTrue(existing.isRecurringActive)
+    }
+
+    func testMirrorRegistryFieldsNormalizeAndClear() {
+        let cached = makeCached(start: date(2030, 1, 1), spec: RecurrenceSpec(frequency: .daily), type: .daily)
+        cached.mirrorKeys = ["b", "a", "a"]
+        XCTAssertEqual(cached.mirrorKeys, ["a", "b"])
+        cached.suppressedMirrorKeys = ["k2", "k1", "k1"]
+        XCTAssertEqual(cached.suppressedMirrorKeys, ["k1", "k2"])
+
+        // 应用内改规则/重新勾选农历时清空抑制
+        cached.suppressedMirrorKeys = []
+        XCTAssertNil(cached.suppressedMirrorKeysJSON)
     }
 
     func testSpecJSONRoundTripIsStable() {

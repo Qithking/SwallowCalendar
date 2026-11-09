@@ -130,6 +130,14 @@ final class CachedEvent {
     /// 循环任务完成历史（JSON 持久化，单条化 plan step 1；nil = 无完成历史）
     var completedOccurrenceDatesJSON: String?
 
+    /// 农历镜像已创建键登记（JSON，nil = 未登记）
+    /// 用途：区分「用户从系统侧手删」与「从未创建/创建失败」；仅登记成功写入 EK 的键
+    var mirrorKeysJSON: String? = nil
+
+    /// 用户在系统侧手删的镜像键（JSON，nil = 无抑制）
+    /// 对账/补窗遇到这些键不重建；应用内改规则或重新勾选农历时清除
+    var suppressedMirrorKeysJSON: String? = nil
+
     /// 缓存更新时间
     var lastUpdated: Date
     
@@ -156,6 +164,21 @@ final class CachedEvent {
             )
         }
         set { recurrenceSpecJSON = newValue?.jsonString }
+    }
+
+    /// 镜像对账专用：显式区分「无规则」与「JSON 损坏」。
+    /// 损坏绝不允许降级成 nil——否则镜像侧会把「解析失败」当成「取消农历」而清空镜像
+    var recurrenceSpecState: SpecState {
+        guard let json = recurrenceSpecJSON else {
+            guard let legacy = RecurrenceSpec.legacy(
+                from: recurrenceType,
+                anchor: originStartDate ?? startDate ?? Date(),
+                isLunar: isLunar
+            ) else { return .none }
+            return .valid(legacy)
+        }
+        guard let spec = RecurrenceSpec.decode(json) else { return .corrupt }
+        return .valid(spec)
     }
 
     /// 循环生效判定唯一入口（A）：未转单次 + 能解析出规则（JSON 优先，老数据懒推导）。
@@ -246,6 +269,60 @@ final class CachedEvent {
         }
     }
 
+    /// 农历镜像已创建键登记（去重升序；空数组清空 JSON）
+    var mirrorKeys: [String] {
+        get {
+            guard let json = mirrorKeysJSON,
+                  let data = json.data(using: .utf8),
+                  let keys = try? JSONDecoder().decode([String].self, from: data) else {
+                return []
+            }
+            return keys
+        }
+        set {
+            let normalized = Array(Set(newValue)).sorted()
+            guard !normalized.isEmpty else {
+                mirrorKeysJSON = nil
+                return
+            }
+            if let data = try? JSONEncoder().encode(normalized) {
+                mirrorKeysJSON = String(data: data, encoding: .utf8)
+            }
+        }
+    }
+
+    /// 系统侧手删镜像的抑制键（去重升序；空数组清空 JSON）
+    var suppressedMirrorKeys: [String] {
+        get {
+            guard let json = suppressedMirrorKeysJSON,
+                  let data = json.data(using: .utf8),
+                  let keys = try? JSONDecoder().decode([String].self, from: data) else {
+                return []
+            }
+            return keys
+        }
+        set {
+            let normalized = Array(Set(newValue)).sorted()
+            guard !normalized.isEmpty else {
+                suppressedMirrorKeysJSON = nil
+                return
+            }
+            if let data = try? JSONEncoder().encode(normalized) {
+                suppressedMirrorKeysJSON = String(data: data, encoding: .utf8)
+            }
+        }
+    }
+
+    /// 登记 / 抑制列表是否解码损坏（损坏 ≠ 空列表；损坏时必须跳过该 base 的重建）
+    var mirrorKeysCorrupt: Bool { Self.isCorruptKeyListJSON(mirrorKeysJSON) }
+    var suppressedMirrorKeysCorrupt: Bool { Self.isCorruptKeyListJSON(suppressedMirrorKeysJSON) }
+
+    /// 仅判定「JSON 存在但解不出 [String]」；缺省不算损坏
+    static func isCorruptKeyListJSON(_ json: String?) -> Bool {
+        guard let json, let data = json.data(using: .utf8) else { return false }
+        return (try? JSONDecoder().decode([String].self, from: data)) == nil
+    }
+
     /// BUG-05：按 origin 相位重算完成历史（时分秒由锚点原语从 origin 保留）；纯函数供单测
     static func migratedAnchorCompletionDates(
         _ dates: [Date],
@@ -280,23 +357,14 @@ final class CachedEvent {
 
     // MARK: - 复合 occurrence ID（单条化 plan step 2）
 
-    /// 复合 occurrence eventID 格式前缀（`|` 分隔符安全：UUID 恒不含 `|`）
-    private static let occurrenceMarker = "|occ:"
-
-    /// 构造复合 occurrence eventID："<baseID>|occ:<epoch>"
-    /// 全项目复合 ID 构造唯一入口，禁止调用方手写拼接
+    /// 构造复合 occurrence eventID；实现已收敛到纯工具 OccurrenceID（保留转发，调用点不变）
     static func makeOccurrenceID(baseID: String, occurrence: Date) -> String {
-        baseID + occurrenceMarker + String(Int(occurrence.timeIntervalSince1970))
+        OccurrenceID.make(baseID: baseID, occurrence: occurrence)
     }
 
-    /// 解析复合 occurrence eventID；普通 eventID（不含标记）返回 nil
-    /// 全项目复合 ID 解析唯一入口
+    /// 解析复合 occurrence eventID；实现已收敛到纯工具 OccurrenceID（保留转发，调用点不变）
     static func parseOccurrenceID(_ eventID: String) -> (baseID: String, occurrence: Date)? {
-        guard let markerRange = eventID.range(of: occurrenceMarker) else { return nil }
-        let baseID = String(eventID[..<markerRange.lowerBound])
-        let epochString = String(eventID[markerRange.upperBound...])
-        guard !baseID.isEmpty, let epoch = TimeInterval(epochString) else { return nil }
-        return (baseID, Date(timeIntervalSince1970: epoch))
+        OccurrenceID.parse(eventID)
     }
 
     init(

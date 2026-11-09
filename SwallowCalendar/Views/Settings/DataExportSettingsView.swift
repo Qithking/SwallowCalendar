@@ -249,12 +249,17 @@ struct DataExportSettingsView: View {
             if let start = event.startDate {
                 if event.isAllDay {
                     lines.append("DTSTART;VALUE=DATE:\(formatICSDateOnly(start))")
-                    // BUG-15：EK 全天事件的 endDate 已是 exclusive（次日零点），无需再加一天；
-                    // 仅零长全天（endDate == start）才按单日补 +1 天（RFC 5545 DTEND 不含当天）
+                    // 全天事件内部/系统读回的 endDate 是「含结束日」（多为该日 23:59:59），
+                    // 也存在 EventKit 客户端写入的 exclusive 写法（次日 00:00）。
+                    // 导出前先归一：已是 00:00 的 exclusive 写法直接用该日，其余按结束日 +1；
+                    // 仅影响导出文件，不改内部存储与日历显示
+                    let calendar = Calendar.current
                     let rawEnd = event.endDate ?? start
-                    let exclusiveEnd = rawEnd > start
-                        ? rawEnd
-                        : (Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start)
+                    let endDay = calendar.startOfDay(for: rawEnd)
+                    let alreadyExclusive = calendar.isDate(rawEnd, equalTo: endDay, toGranularity: .second)
+                    let exclusiveEnd = alreadyExclusive && event.endDate != nil
+                        ? endDay
+                        : calendar.date(byAdding: .day, value: 1, to: endDay) ?? endDay
                     lines.append("DTEND;VALUE=DATE:\(formatICSDateOnly(exclusiveEnd))")
                 } else {
                     lines.append("DTSTART:\(formatICSDate(start))")

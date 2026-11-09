@@ -37,6 +37,8 @@ struct EditEventSheet: View {
     @State private var taskColor: EventColor?
     @State private var taskPriority: EventPriority = .none
     @State private var taskRecurrence: RecurrenceType = .none
+    /// 农历开关：保存时传给 updateEventRecurrence（spec 不变也能触发对账/清理）
+    @State private var isLunar = false
     /// 循环规则单一真源与界面预设（12 项对齐提醒事项）
     @State private var taskPreset: RecurrencePreset = .never
     @State private var taskSpec: RecurrenceSpec?
@@ -80,6 +82,21 @@ struct EditEventSheet: View {
             return (startDate, endDate, isAllDay)
         }
         return (nil, nil, nil)
+    }
+
+    /// 编辑保存全天事件时的 endDate 决策：
+    /// - 原本不是全天 → nil（服务层按单日处理）
+    /// - 原本全天且未改日期 → nil（服务层保留原 endDate，避免 23:59:59 被改写）
+    /// - 原本全天且改了日期 → 原 endDate 按新开始时间平移（保持跨度，跨月/跨年安全）
+    static func allDayEndDateOnEdit(
+        eventIsAllDay: Bool,
+        originalStart: Date?,
+        originalEnd: Date?,
+        newStart: Date
+    ) -> Date? {
+        guard eventIsAllDay, let originalStart, let originalEnd,
+              !Calendar.current.isDate(newStart, inSameDayAs: originalStart) else { return nil }
+        return originalEnd.addingTimeInterval(newStart.timeIntervalSince(originalStart))
     }
 
     /// 当前编辑对象是否为循环展开出的单期行（复合 ID）
@@ -140,6 +157,7 @@ struct EditEventSheet: View {
         self.originalSpec = snapshotSpec
         self.originalLunar = snapshotLunar
         self.originalValidity = snapshotValidity
+        _isLunar = State(initialValue: snapshotLunar)
 
         // 调试预览态：仅供 SC_OPEN_EDIT_PREVIEW 截图取证（正常路径 preview 为 nil，不生效）
         if let preview {
@@ -232,6 +250,7 @@ struct EditEventSheet: View {
                         Toggle("", isOn: $isAllDay)
                             .toggleStyle(.switch)
                             .labelsHidden()
+                            .formToggleSizing()
                             // BUG-06：单期行不允许改时间，避免回拨整条序列游标
                             .disabled(isOccurrenceInstance)
                     }
@@ -264,8 +283,20 @@ struct EditEventSheet: View {
                                 set: { taskSpec = $0; taskRecurrence = $0?.legacyType ?? .none }
                             ),
                             anchor: startDate,
-                            isLunar: originalLunar
+                            isLunar: isLunar
                         )
+                    }
+
+                    FormRow("农历") {
+                        Toggle("", isOn: $isLunar)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .formToggleSizing()
+                            // 无规则/单期时置灰，旁边给一句说明（不能切了无反应）
+                            .disabled(!RecurrencePickerView.isLunarToggleEnabled(spec: taskSpec))
+                    }
+                    if let hint = RecurrencePickerView.lunarSystemHint(isLunar: isLunar, spec: taskSpec) {
+                        FormHint(hint)
                     }
 
                     // 「跳过节假日」已从表单移除（周期预设「工作日」覆盖常见场景）；
@@ -295,6 +326,7 @@ struct EditEventSheet: View {
                             ))
                             .toggleStyle(.switch)
                             .labelsHidden()
+                            .formToggleSizing()
                         }
                         if validityEnabled {
                             FormRow("有效期起") {
@@ -302,6 +334,7 @@ struct EditEventSheet: View {
                                     Toggle("", isOn: $validityHasStart)
                                         .toggleStyle(.switch)
                                         .labelsHidden()
+                                        .formToggleSizing()
                                     DatePicker("", selection: $validityStart, displayedComponents: [.date, .hourAndMinute])
                                         .labelsHidden()
                                         .disabled(!validityHasStart)
@@ -314,6 +347,7 @@ struct EditEventSheet: View {
                                     Toggle("", isOn: $validityHasEnd)
                                         .toggleStyle(.switch)
                                         .labelsHidden()
+                                        .formToggleSizing()
                                     DatePicker("", selection: $validityEnd, displayedComponents: [.date, .hourAndMinute])
                                         .labelsHidden()
                                         .disabled(!validityHasEnd)
@@ -381,7 +415,13 @@ struct EditEventSheet: View {
                 // 未改开始时间时截止时间保持原值）；全天转带时间无原始时长可保，才兜底开始时间 + 1 小时
                 let newEndDate: Date?
                 if isAllDay {
-                    newEndDate = nil
+                    // 全天：未改日期保留原 endDate；改日期按原跨度平移（跨月/跨年安全）
+                    newEndDate = Self.allDayEndDateOnEdit(
+                        eventIsAllDay: event.isAllDay,
+                        originalStart: event.startDate,
+                        originalEnd: event.endDate,
+                        newStart: startDate
+                    )
                 } else if !event.isAllDay, let originalStart = event.startDate, let originalEnd = event.endDate {
                     newEndDate = originalEnd.addingTimeInterval(startDate.timeIntervalSince(originalStart))
                 } else {
@@ -417,12 +457,14 @@ struct EditEventSheet: View {
                     skipHolidays: skipHolidays,
                     validity: validityParam
                 )
-                // 如果循环规则发生变化，写入 spec 真源并同步提醒 EK 规则
-                if taskSpec != originalSpec {
+                // 如果循环规则或农历开关发生变化，写入 spec 真源并同步提醒 EK 规则；
+                // 农历开关必须单列比较：spec 相同也能触发「关闭农历 → 清理系统侧未来提醒」
+                if taskSpec != originalSpec || isLunar != originalLunar {
                     // M3：循环规则落库失败必须走 catch → 提示「保存失败」并保持窗口打开
                     try calendarService.updateEventRecurrence(
                         eventID: event.id,
-                        newSpec: taskSpec
+                        newSpec: taskSpec,
+                        newIsLunar: isLunar
                     )
                 }
 

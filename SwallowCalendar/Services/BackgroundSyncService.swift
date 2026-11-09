@@ -49,6 +49,18 @@ final class BackgroundSyncService {
     /// internal 供测试复位
     var hasStartedOnce = false
 
+    /// M8：农历镜像轻量补窗动作；internal 供测试注入 spy
+    var lunarMirrorTopUpAction: () async -> Void = {
+        await CalendarService.shared.reconcileAllLunarMirrors()
+    }
+
+    /// 上次补窗时刻（进程内）；启动必跑一次，进程存续期间每日补一次
+    /// internal 供测试复位
+    var lastLunarMirrorTopUpAt: Date?
+
+    /// 补窗间隔；internal 供测试收窄
+    var lunarMirrorTopUpInterval: TimeInterval = 24 * 60 * 60
+
     private init() {}
 
     func configure(with container: ModelContainer) {
@@ -64,7 +76,18 @@ final class BackgroundSyncService {
             hasStartedOnce = true
             await startupSyncAction(true)
         }
+        // M8：启动后补窗一次（不足窗口的镜像在此补齐；进程存续期间每日再补一次）
+        await runLunarMirrorTopUpIfNeeded()
         startTimer()
+    }
+
+    /// 启动/每日一次轻量补窗：未到间隔直接返回，不产生额外 EK 读写
+    func runLunarMirrorTopUpIfNeeded(now: Date = Date()) async {
+        if let last = lastLunarMirrorTopUpAt, now.timeIntervalSince(last) < lunarMirrorTopUpInterval {
+            return
+        }
+        lastLunarMirrorTopUpAt = now
+        await lunarMirrorTopUpAction()
     }
 
     /// 外部变更（EKEventStore.changed）触发入口：防抖合并连发通知后同步
@@ -192,6 +215,8 @@ final class BackgroundSyncService {
         let timer = Timer(timeInterval: syncIntervalSeconds, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 await self?.syncOnce()
+                // M8：定时器顺带检查每日补窗（间隔未到时不产生 EK 读写）
+                await self?.runLunarMirrorTopUpIfNeeded()
             }
         }
         RunLoop.main.add(timer, forMode: .common)

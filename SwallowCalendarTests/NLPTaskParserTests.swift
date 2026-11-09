@@ -444,4 +444,42 @@ class NLPTaskParserTests: XCTestCase {
         XCTAssertEqual(result.recurrence, .weekly)
         XCTAssertNotNil(result.date)
     }
+
+    // MARK: - 只给日期、未给时间：默认 09:00
+
+    /// 只给相对日期（明天）→ 当天 09:00（不再落到 00:00 半夜）
+    func testDateOnlyDefaultsToNineAM() {
+        let calendar = Calendar.current
+        let result = NLPTaskParser.parse("明天开会")
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date()))!
+        XCTAssertTrue(calendar.isDate(result.date, inSameDayAs: tomorrow))
+        XCTAssertEqual(calendar.component(.hour, from: result.date), 9)
+        XCTAssertEqual(calendar.component(.minute, from: result.date), 0)
+        XCTAssertEqual(result.title, "开会")
+    }
+
+    /// 只给绝对日期（X月X日）→ 09:00
+    func testDateOnlyAbsoluteDateDefaultsToNineAM() {
+        let calendar = Calendar.current
+        let result = NLPTaskParser.parse("12月25日 圣诞节")
+        XCTAssertEqual(calendar.component(.hour, from: result.date), 9)
+        XCTAssertEqual(calendar.component(.minute, from: result.date), 0)
+    }
+
+    /// 日期 + 显式时间按输入走，不被 09:00 覆盖（含「N小时后」）
+    func testExplicitTimeNotOverriddenByDefault() {
+        let calendar = Calendar.current
+
+        let afternoon = NLPTaskParser.parse("明天下午3点开会")
+        XCTAssertEqual(calendar.component(.hour, from: afternoon.date), 15)
+        XCTAssertEqual(calendar.component(.minute, from: afternoon.date), 0)
+
+        let colon = NLPTaskParser.parse("明天09:30体检")
+        XCTAssertEqual(calendar.component(.hour, from: colon.date), 9)
+        XCTAssertEqual(calendar.component(.minute, from: colon.date), 30)
+
+        let after = NLPTaskParser.parse("3小时后开会")
+        let expected = calendar.date(byAdding: .hour, value: 3, to: Date())!
+        XCTAssertEqual(after.date.timeIntervalSince(expected), 0, accuracy: 60)
+    }
 }
