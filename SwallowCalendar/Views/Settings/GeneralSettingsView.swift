@@ -129,6 +129,19 @@ struct GeneralSettingsView: View {
                         Text(mode.displayTitle).tag(mode)
                     }
                 }
+
+                // 到期提示音：默认「无」；设置后事项到期弹框弹出时同步播放一声。
+                // 选中即试听（选「无」不响），与到期弹框同款 NSSound 播放方式
+                Picker("到期提示音", selection: $settings.dueAlertSound) {
+                    ForEach(DueAlertSound.allCases, id: \.self) { sound in
+                        Text(sound.displayName).tag(sound)
+                    }
+                }
+                .onChange(of: settings.dueAlertSound) { _, sound in
+                    if let soundName = sound.nsSoundName {
+                        NSSound(named: soundName)?.play()
+                    }
+                }
             }
         }
         .formStyle(.grouped)

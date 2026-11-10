@@ -3,6 +3,7 @@
 //  SwallowCalendar
 //
 
+import AppKit
 import Foundation
 import ServiceManagement
 import SwiftUI
@@ -59,6 +60,13 @@ final class AppSettings {
     var showLunarCalendar: Bool {
         didSet {
             UserDefaults.standard.set(showLunarCalendar, forKey: "showLunarCalendar")
+        }
+    }
+
+    /// 事项到期提示音（默认无；设置后到期弹框弹出时同步播放一声）
+    var dueAlertSound: DueAlertSound {
+        didSet {
+            UserDefaults.standard.set(dueAlertSound.rawValue, forKey: "dueAlertSound")
         }
     }
 
@@ -283,6 +291,7 @@ final class AppSettings {
         self.checkUpdateOnFirstLaunch = UserDefaults.standard.object(forKey: "checkUpdateOnFirstLaunch") as? Bool ?? true
         self.syncSystemReminders = UserDefaults.standard.object(forKey: "syncSystemReminders") as? Bool ?? false
         self.syncEventsToSystem = UserDefaults.standard.object(forKey: "syncEventsToSystem") as? Bool ?? false
+        self.dueAlertSound = DueAlertSound(rawValue: UserDefaults.standard.string(forKey: "dueAlertSound") ?? "") ?? .none
         self.sortMode = SortMode(rawValue: UserDefaults.standard.string(forKey: "sortMode") ?? "") ?? .default
         self.sortOrder = SortOrder(rawValue: UserDefaults.standard.string(forKey: "sortOrder") ?? "") ?? .descending
         self.defaultFilterMode = UserDefaults.standard.string(forKey: "defaultFilterMode") ?? "本月"
@@ -321,5 +330,36 @@ final class AppSettings {
         } catch {
             AppLogger.settings.error("更新登录项失败: \(String(describing: error))")
         }
+    }
+}
+
+// MARK: - 到期提示音
+
+/// 事项到期提示音（默认无；设置后到期弹框弹出时同步播放一声）
+/// rawValue 即 NSSound 系统预设名（none 除外），持久化键 "dueAlertSound"
+enum DueAlertSound: String, CaseIterable {
+    case none
+    case basso = "Basso"
+    case blow = "Blow"
+    case bottle = "Bottle"
+    case frog = "Frog"
+    case funk = "Funk"
+    case glass = "Glass"
+    case hero = "Hero"
+    case morse = "Morse"
+    case ping = "Ping"
+    case pop = "Pop"
+    case purr = "Purr"
+    case sosumi = "Sosumi"
+    case submarine = "Submarine"
+    case tink = "Tink"
+
+    var displayName: String {
+        self == .none ? "无" : rawValue
+    }
+
+    /// 对应的 NSSound 系统声音名（none = nil，不播放）
+    var nsSoundName: NSSound.Name? {
+        self == .none ? nil : NSSound.Name(rawValue)
     }
 }

@@ -678,6 +678,10 @@ final class ReminderAlertService {
     /// 显示合并的过期事项提醒弹窗（自定义 SwiftUI 窗口，替代系统 NSAlert）
     /// G4：单条完成接 markAsCompleted、稍后提醒接 snooze
     private func showCombinedAlert(for events: [CachedEvent], isExpired: Bool, hiddenCount: Int) {
+        // 到期提示音：设置非「无」时随弹框播放一声（NSSound 不设 repeats，播完自然停止）
+        if let soundName = AppSettings.shared.dueAlertSound.nsSoundName {
+            NSSound(named: soundName)?.play()
+        }
         ReminderAlertWindowController.shared.show(
             events: events,
             isExpired: isExpired,
