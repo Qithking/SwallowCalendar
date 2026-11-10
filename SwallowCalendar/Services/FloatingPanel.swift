@@ -49,13 +49,25 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
 
     private var pinObserver: NSObjectProtocol?
     private var deactivateObserver: NSObjectProtocol?
-    
+
+    // fix: click-outside-activation-gap：app 激活失败且面板未成为 key 时
+    // （取证：open done active=false isKey=false，Xcode/LLDB 运行下必现），
+    // 点击桌面/其他应用不产生 resignKey 与 resignActive，双关闭链沉默。
+    // 全局鼠标监听器仅在 app 非 active 时收到事件，恰好覆盖该盲区
+    private var globalClickMonitor: Any?
+
+    /// 测试观察用：全局鼠标监听器是否已安装
+    var hasGlobalClickMonitor: Bool { globalClickMonitor != nil }
+
     deinit {
         if let observer = pinObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = deactivateObserver {
             NotificationCenter.default.removeObserver(observer)
+        }
+        if let monitor = globalClickMonitor {
+            NSEvent.removeMonitor(monitor)
         }
     }
     
@@ -206,6 +218,7 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         makeKeyAndOrderFront(nil)
         isPresented = true
+        installGlobalClickMonitor()
         contentView?.needsDisplay = true
         statusBarButton?.isHighlighted = true
     }
@@ -225,10 +238,36 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     }
     
     // MARK: - 关闭逻辑（统一处理）
-    
+
     /// 检查是否应该关闭窗口（未固定且已显示）
     private func shouldClose() -> Bool {
         return isPresented && !AppSettings.shared.isWindowPinned
+    }
+
+    /// 全局点击是否应关闭面板：已显示、未固定、且点击点在面板外。
+    /// 坐标系与 NSWindow.frame 一致（屏幕坐标，左下原点）
+    func shouldCloseOnGlobalClick(at location: NSPoint) -> Bool {
+        return shouldClose() && !frame.contains(location)
+    }
+
+    /// 安装全局鼠标按下监听器（open 时调用，幂等）。
+    /// global monitor 只在 app 非 active 时收到事件——app active 的点击
+    /// 走应用内事件流，仍由 resignKey/resignActive 双链处理，互不重叠
+    private func installGlobalClickMonitor() {
+        guard globalClickMonitor == nil else { return }
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] _ in
+            guard let self,
+                  self.shouldCloseOnGlobalClick(at: NSEvent.mouseLocation) else { return }
+            self.close()
+        }
+    }
+
+    private func removeGlobalClickMonitor() {
+        guard let monitor = globalClickMonitor else { return }
+        NSEvent.removeMonitor(monitor)
+        globalClickMonitor = nil
     }
     
     func windowDidResignKey(_ notification: Notification) {
@@ -250,6 +289,7 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         // 触发 SwiftUI onDisappear，注销面板内倒计时等定时器，避免隐藏面板后台跑 Timer
         contentViewController = nil
         isPresented = false
+        removeGlobalClickMonitor()
         statusBarButton?.isHighlighted = false
         onClose()
     }
