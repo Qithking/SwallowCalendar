@@ -32,4 +32,44 @@ final class CellPopoverLifecycleTests: XCTestCase {
         // 弹窗必须随拆除关闭，否则主界面收起后屏幕残留
         XCTAssertFalse(coordinator.isShowing, "dismantle 后弹窗应已关闭，不应残留")
     }
+
+    // MARK: - 右缘箭头定位（bug: 右侧箭头坐标系翻转——AppKit y 向上 / SwiftUI shape y 向下）
+
+    /// 右缘箭头 tip 必须是「锚点距弹窗顶部」的距离（shape 坐标 y 向下）。
+    /// bug 场景：锚点靠屏幕顶部（菜单栏下首行日期格子），弹窗被屏顶钳制后，
+    /// 误用「距底部」坐标会让箭头上下镜像错到弹窗中下部
+    func testRightArrowTipMeasuresFromBubbleTop() {
+        let contentHeight: CGFloat = 300
+
+        // bug 场景：弹窗被屏幕顶部钳制（minY=596、maxY=896），锚点 midY=850 靠屏顶
+        // 距顶 = 896 - 850 = 46；旧实现（距底 = 850 - 596 = 254）会错到镜像位置
+        let clampedToTop = CellPopoverWindowController.rightArrowTip(
+            anchorMidY: 850,
+            popupFrame: NSRect(x: 0, y: 596, width: 220, height: contentHeight),
+            contentHeight: contentHeight
+        )
+        XCTAssertEqual(clampedToTop, 46, accuracy: 0.5)
+
+        // 弹窗垂直居中于锚点时两种坐标等价（bug 隐蔽的原因），锁定居中语义
+        let centered = CellPopoverWindowController.rightArrowTip(
+            anchorMidY: 500,
+            popupFrame: NSRect(x: 0, y: 350, width: 220, height: contentHeight),
+            contentHeight: contentHeight
+        )
+        XCTAssertEqual(centered, contentHeight / 2, accuracy: 0.5)
+
+        // 锚点越过气泡边缘时钳制在气泡内（预留箭头半宽 + 2）
+        let clampedLow = CellPopoverWindowController.rightArrowTip(
+            anchorMidY: 899,
+            popupFrame: NSRect(x: 0, y: 596, width: 220, height: contentHeight),
+            contentHeight: contentHeight
+        )
+        XCTAssertEqual(clampedLow, PopoverBubbleShape.arrowHalfWidth + 2, accuracy: 0.5)
+        let clampedHigh = CellPopoverWindowController.rightArrowTip(
+            anchorMidY: 0,
+            popupFrame: NSRect(x: 0, y: 596, width: 220, height: contentHeight),
+            contentHeight: contentHeight
+        )
+        XCTAssertEqual(clampedHigh, contentHeight - PopoverBubbleShape.arrowHalfWidth - 2, accuracy: 0.5)
+    }
 }

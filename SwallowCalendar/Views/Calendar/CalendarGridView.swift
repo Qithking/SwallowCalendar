@@ -64,7 +64,11 @@ final class CellPopoverWindowController {
         let tip: CGFloat
         switch arrowSide {
         case .right:
-            tip = min(max(anchorInScreen.midY - frame.minY, half + 2), contentSize.height - half - 2)
+            tip = Self.rightArrowTip(
+                anchorMidY: anchorInScreen.midY,
+                popupFrame: frame,
+                contentHeight: contentSize.height
+            )
         case .top, .bottom:
             tip = min(max(anchorInScreen.midX - frame.minX, half + 2), contentSize.width - half - 2)
         }
@@ -96,6 +100,15 @@ final class CellPopoverWindowController {
     func close() {
         window?.orderOut(nil)
         window = nil
+    }
+
+    /// 右缘箭头的箭尖位置：锚点中心距弹窗顶部的距离，钳制在气泡范围内。
+    /// SwiftUI shape 坐标 y 向下（顶部起），AppKit 屏幕 y 向上（底部起）——
+    /// 不能用 anchor.midY - frame.minY（距底部）：上下颠倒会让靠屏幕顶部的
+    /// 锚点（菜单栏下首行日期格子）的箭头错到弹窗中下部
+    static func rightArrowTip(anchorMidY: CGFloat, popupFrame: NSRect, contentHeight: CGFloat) -> CGFloat {
+        let half = PopoverBubbleShape.arrowHalfWidth
+        return min(max(popupFrame.maxY - anchorMidY, half + 2), contentHeight - half - 2)
     }
 
     /// 定位策略：优先弹窗在锚点左侧、垂直居中于锚点（箭头在右缘，主面板外侧显示）；
