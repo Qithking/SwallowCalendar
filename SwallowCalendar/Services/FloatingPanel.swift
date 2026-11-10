@@ -41,11 +41,14 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     /// 保存内容视图构建闭包，close 销毁层级后 open 重建用
     private let contentBuilder: () -> Content
 
-    /// R-1（fix: statusbar-toggle-race）：resignKey 引发的关闭时刻。
-    /// 点击状态栏图标会使 key 面板先失 key（探针实证：keyWin=nil 且 action 晚 30-56ms
-    /// 到达），resignKey 先 close 后，action 的 toggle 按 presented=N 又 open——
-    /// 一轮点击经历「关了又开」，表现为无法关闭。同一次点击只应翻转一次状态
-    private var lastResignKeyCloseAt: Date?
+    /// R-1（fix: statusbar-toggle-race）：自动关闭（resignKey 链或 global 兜底链）
+    /// 的发生时刻。点击状态栏图标会使 key 面板先失 key（探针实证：keyWin=nil 且
+    /// action 晚 30-56ms 到达），resignKey 先 close 后，action 的 toggle 按
+    /// presented=N 又 open——一轮点击经历「关了又开」，表现为无法关闭。激活失败态
+    /// 下点图标同理：mouseDown 走 global 兜底先 close，action 晚到重开。同一次
+    /// 点击只应翻转一次状态，窗口内第二次翻转视为回声忽略。窗口覆盖取证观测最大
+    /// 间隔 56ms，取 150ms 留余量
+    private var lastAutoCloseAt: Date?
 
     private var pinObserver: NSObjectProtocol?
     private var deactivateObserver: NSObjectProtocol?
@@ -141,10 +144,10 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     func toggle() {
         if isPresented {
             close()
-        } else if let at = lastResignKeyCloseAt,
+        } else if let at = lastAutoCloseAt,
                   Date().timeIntervalSince(at) < PanelToggle.resignKeyEchoWindow {
-            // 面板刚由本次点击引发的 resignKey 关闭，忽略 action 回声不重开
-            lastResignKeyCloseAt = nil
+            // 面板刚由自动关闭链（resignKey 或 global 兜底）关掉，忽略 action 回声不重开
+            lastAutoCloseAt = nil
         } else {
             open()
         }
@@ -250,6 +253,16 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         return shouldClose() && !frame.contains(location)
     }
 
+    /// 全局点击兜底关闭（global monitor 闭包调用）。命中时与 resignKey 链同样
+    /// 写入回声时间戳：激活失败态下点击状态栏图标，mouseDown 先走本兜底 close，
+    /// button action 的 toggle 晚到，无时间戳会按 presented=false 重开面板
+    /// （R-1 同型竞态）
+    func closeOnGlobalClick(at location: NSPoint) {
+        guard shouldCloseOnGlobalClick(at: location) else { return }
+        lastAutoCloseAt = Date()
+        close()
+    }
+
     /// 安装全局鼠标按下监听器（open 时调用，幂等）。
     /// global monitor 只在 app 非 active 时收到事件——app active 的点击
     /// 走应用内事件流，仍由 resignKey/resignActive 双链处理，互不重叠
@@ -258,9 +271,11 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] _ in
-            guard let self,
-                  self.shouldCloseOnGlobalClick(at: NSEvent.mouseLocation) else { return }
-            self.close()
+            // monitor 闭包非隔离，由系统保证主线程调用，按项目惯例 assumeIsolated 转入
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.closeOnGlobalClick(at: NSEvent.mouseLocation)
+            }
         }
     }
 
@@ -277,8 +292,8 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
             return
         }
         if shouldClose() {
-            // 记录失 key 关闭时刻，供 toggle 识别同一次状态栏点击的回声
-            lastResignKeyCloseAt = Date()
+            // 记录自动关闭时刻，供 toggle 识别同一次状态栏点击的回声
+            lastAutoCloseAt = Date()
             close()
         }
     }
