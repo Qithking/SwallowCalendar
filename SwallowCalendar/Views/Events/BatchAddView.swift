@@ -42,14 +42,24 @@ struct BatchAddView: View {
     @State private var validityEnd = Date()
     /// 最近一次测量的内容自然高度（用于决定是否启用内部滚动）
     @State private var contentHeight: CGFloat = 0
+    /// 更多选项表单自然高度（0 = 未上报，先按上限布局）
+    @State private var formNaturalHeight: CGFloat = 0
+    /// 失败列表自然高度（0 = 未上报，先按上限布局）
+    @State private var failureListNaturalHeight: CGFloat = 0
 
     /// 窗口内容宽度（与编辑窗口一致：宽度固定，只有高度随内容变化）
     static let contentWidth: CGFloat = 420
     /// 编辑区固定高度：TextEditor 自身可滚动，窗口高度只随「编辑区 + 底部区」的自然高度变化
     static let editorAreaHeight: CGFloat = 276
-    /// 内容自适应上限：超过后窗口不再长高，改为内部滚动（覆盖部分失败时的多条失败行）；
-    /// 上限需容纳「更多选项」完全展开后的高度（约 750px），避免展开瞬间出内部滚动条
+    /// 窗口高度硬上限：顶部锚定钳制用；内部滚动由分区承担（更多选项区/失败列表各自封顶），
+    /// 正常内容不会触达此上限
     static let maxContentHeight: CGFloat = 800
+    /// 「更多选项」展开表单的滚动封顶：超出后表单区内部滚动，整窗保持不滚
+    static let expandedFormMaxHeight: CGFloat = 400
+    /// 提交结果失败列表的滚动封顶：多条失败时列表内部滚动
+    static let failureListMaxHeight: CGFloat = 150
+    /// 展开区内说明文字与分组卡片的公共水平缩进（卡片侧同时避让滚动指示器）
+    static let expandedGroupInset: CGFloat = 6
 
     init(
         calendarService: CalendarService,
@@ -90,23 +100,22 @@ struct BatchAddView: View {
             VisualEffectView()
                 .ignoresSafeArea()
 
-            ScrollView(.vertical) {
-                contentBody
-                    .frame(width: Self.contentWidth)
-                    // 禁止 ScrollView 在内容高于视口时压缩内容：按自然高度布局，
-                    // 展开瞬间不闪动、内边距不丢失（高度差由窗口顶部锚定长高吸收）
-                    .fixedSize(horizontal: false, vertical: true)
-                    .background(
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: ContentHeightPreferenceKey.self,
-                                value: proxy.size.height
-                            )
-                        }
-                    )
-            }
-            .scrollDisabled(contentHeight <= Self.maxContentHeight)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // 整窗不滚动：超高内容一律分区内部滚动（更多选项区/失败列表各自由
+            // maxHeight 封顶），滚动条不落在窗口边缘，避免整窗滚动时的布局重排
+            contentBody
+                .frame(width: Self.contentWidth)
+                // 强制按自然高度布局：窗口高度由内容驱动（顶部锚定），不被窗口当前
+                // 高度压缩——否则高度上报量到的是「被窗口钳制后的实际高度」（恒等于
+                // 窗口高），窗口永远不会长高，展开区会被压没
+                .fixedSize(horizontal: false, vertical: true)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: ContentHeightPreferenceKey.self,
+                            value: proxy.size.height
+                        )
+                    }
+                )
         }
         .onPreferenceChange(ContentHeightPreferenceKey.self) { height in
             guard abs(height - contentHeight) > 0.5 else { return }
@@ -165,32 +174,76 @@ struct BatchAddView: View {
 
     private var moreOptions: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Button 替代 DisclosureGroup：contentShape 让整行都是点击热区
-            //（DisclosureGroup 只有 label 文本可点，热区偏小）
-            Button {
-                isMoreOptionsExpanded.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .rotationEffect(.degrees(isMoreOptionsExpanded ? 90 : 0))
-                    Text("更多选项")
-                        .font(.system(size: 11, weight: .medium))
-                    Spacer()
+            // 标题行：左侧切换热区占满剩余宽度（整行可点），右侧重置仅展开时显示；
+            // 两个按钮并列，避免嵌套 Button 命中冲突
+            HStack(spacing: 8) {
+                Button {
+                    isMoreOptionsExpanded.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .rotationEffect(.degrees(isMoreOptionsExpanded ? 90 : 0))
+                        Text("更多选项")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .foregroundColor(.secondary)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+
+                if isMoreOptionsExpanded {
+                    Button("重置") { resetCommonAttributes() }
+                        .font(.system(size: 11))
+                        .buttonStyle(.link)
+                }
             }
-            .buttonStyle(.plain)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
 
             if isMoreOptionsExpanded {
-                commonAttributesForm
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
+                VStack(alignment: .leading, spacing: 8) {
+                    // 与下方分组卡片同缩进：左右缘严格对齐（卡片有滚动条避让缩进）
+                    FormHint("下方为公共设置：设置后同步到所有事项；未设置的项按各行描述解析")
+                        .padding(.horizontal, Self.expandedGroupInset)
+                    // 表单区内部滚动：高度必须是确定值 min(自然高, 上限)。
+                    // 不能用 maxHeight——ScrollView 是贪婪视图，会接受父布局的
+                    //「剩余空间提议」，展开瞬间窗口还是旧高度时被压到 ≈0 不可见
+                    ScrollView(.vertical) {
+                        commonAttributesForm
+                            .background(
+                                GeometryReader { proxy in
+                                    Color.clear.preference(
+                                        key: ExpandedFormHeightKey.self,
+                                        value: proxy.size.height
+                                    )
+                                }
+                            )
+                    }
+                    .frame(height: formNaturalHeight == 0
+                            ? Self.expandedFormMaxHeight
+                            : min(formNaturalHeight, Self.expandedFormMaxHeight))
+                    .onPreferenceChange(ExpandedFormHeightKey.self) { formNaturalHeight = $0 }
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
             }
         }
+    }
+
+    /// 重置公共属性区：全部回到未设置态，提交时各行完全按行内描述解析
+    private func resetCommonAttributes() {
+        commonColor = nil
+        commonPriority = .none
+        commonPreset = .never
+        commonSpec = nil
+        commonIsLunar = false
+        commonOffsets = []
+        createAsReminder = false
+        validityEnabled = false
+        validityHasStart = false
+        validityHasEnd = false
     }
 
     private var commonAttributesForm: some View {
@@ -282,7 +335,7 @@ struct BatchAddView: View {
                 }
             }
         }
-        .padding(.horizontal, 6)
+        .padding(.horizontal, Self.expandedGroupInset)
     }
 
     // MARK: - 操作栏
@@ -328,18 +381,35 @@ struct BatchAddView: View {
                 Spacer()
             }
 
-            ForEach(result.failures) { failure in
-                HStack(spacing: 6) {
-                    Text(failure.rawText)
-                        .font(.system(size: 11))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer()
-                    Text(failure.reason)
-                        .font(.system(size: 11))
-                        .foregroundColor(.red)
+            // 失败列表内部滚动：同表单区，高度取确定值 min(自然高, 上限)
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(result.failures) { failure in
+                        HStack(spacing: 6) {
+                            Text(failure.rawText)
+                                .font(.system(size: 11))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Spacer()
+                            Text(failure.reason)
+                                .font(.system(size: 11))
+                                .foregroundColor(.red)
+                        }
+                    }
                 }
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: FailureListHeightKey.self,
+                            value: proxy.size.height
+                        )
+                    }
+                )
             }
+            .frame(height: failureListNaturalHeight == 0
+                    ? Self.failureListMaxHeight
+                    : min(failureListNaturalHeight, Self.failureListMaxHeight))
+            .onPreferenceChange(FailureListHeightKey.self) { failureListNaturalHeight = $0 }
 
             HStack {
                 Spacer()
@@ -438,4 +508,20 @@ private struct BatchAddFailure: Identifiable {
 private struct BatchAddResult {
     let successCount: Int
     let failures: [BatchAddFailure]
+}
+
+/// 更多选项表单自然高度（滚动区确定高度用：min(自然高, 上限)）
+private struct ExpandedFormHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// 提交结果失败列表自然高度（滚动区确定高度用）
+private struct FailureListHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
 }

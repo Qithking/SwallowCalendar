@@ -194,6 +194,9 @@ struct RecurrenceSpec: Codable, Hashable {
 
     // MARK: 预设（严格对齐提醒事项 12 项）
 
+    /// 自定义底稿唯一真源（新建/编辑/批量共用）：进入「自定义」且无既有规则时按每小时起步
+    static let customDraft = RecurrenceSpec(frequency: .hourly, interval: 1)
+
     static func spec(for preset: RecurrencePreset, anchor: Date, current: RecurrenceSpec? = nil) -> RecurrenceSpec? {
         let calendar = Calendar.current
         let day = calendar.component(.day, from: anchor)
@@ -211,8 +214,8 @@ struct RecurrenceSpec: Codable, Hashable {
         case .semiannual: return RecurrenceSpec(frequency: .monthly, interval: 6, monthDay: day)
         case .yearly: return RecurrenceSpec(frequency: .yearly, interval: 1, monthDay: day, months: [month])
         case .custom:
-            // 进入自定义时保留现有维度，无则从每天起步，避免面板空白
-            return current ?? RecurrenceSpec(frequency: .daily, interval: 1)
+            // 进入自定义时保留现有维度，无则按底稿（每小时）起步，避免面板空白
+            return current ?? customDraft
         }
     }
 

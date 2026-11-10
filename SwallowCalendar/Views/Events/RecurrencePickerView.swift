@@ -29,7 +29,7 @@ struct RecurrencePickerView: View {
             .onChange(of: preset) { _, newValue in
                 guard newValue != .custom else {
                     // 自定义进入时保证有可编辑底稿（保留现有维度）
-                    if spec == nil { spec = RecurrenceSpec(frequency: .daily, interval: 1) }
+                    if spec == nil { spec = RecurrenceSpec.customDraft }
                     onChange()
                     return
                 }
@@ -41,7 +41,7 @@ struct RecurrencePickerView: View {
                 customEditor
             } else if preset == .custom {
                 Button("配置自定义规则") {
-                    spec = RecurrenceSpec(frequency: .daily, interval: 1)
+                    spec = RecurrenceSpec.customDraft
                     onChange()
                 }
                 .buttonStyle(.link)
@@ -83,7 +83,7 @@ struct RecurrencePickerView: View {
     @ViewBuilder
     private var customEditor: some View {
         let binding = Binding<RecurrenceSpec>(
-            get: { spec ?? RecurrenceSpec(frequency: .daily, interval: 1) },
+            get: { spec ?? RecurrenceSpec.customDraft },
             set: { spec = $0; onChange() }
         )
         VStack(alignment: .leading, spacing: FormMetrics.rowSpacing) {

@@ -327,6 +327,18 @@ final class RecurrenceSpecTests: XCTestCase {
         XCTAssertNil(RecurrenceSpec.decode(#"{"frequency":"quarterly"}"#))
     }
 
+    /// 用户口径：新建/编辑选「自定义」且无既有规则时，频率底稿默认每小时
+    ///（customDraft 为自定义底稿唯一真源，新建/编辑/批量共用）
+    func testCustomDraftDefaultsToHourly() {
+        XCTAssertEqual(RecurrenceSpec.customDraft, RecurrenceSpec(frequency: .hourly, interval: 1))
+        // spec(for: .custom) 无既有规则时兜底到同一底稿；有则保留现有维度（语义不变）
+        let fallback = RecurrenceSpec.spec(for: .custom, anchor: date(2030, 1, 1), current: nil)
+        XCTAssertEqual(fallback?.frequency, .hourly)
+        XCTAssertEqual(fallback?.interval, 1)
+        let kept = RecurrenceSpec(frequency: .weekly, weekdays: [2])
+        XCTAssertEqual(RecurrenceSpec.spec(for: .custom, anchor: date(2030, 1, 1), current: kept), kept)
+    }
+
     // MARK: - Helpers
 
     private func makeEvent(spec: RecurrenceSpec?, type: RecurrenceType, notes: String?) -> CalendarEvent {
