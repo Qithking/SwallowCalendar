@@ -19,6 +19,12 @@ import AppKit
 final class CellPopoverWindowController {
     private var window: NSWindow?
 
+    /// 主面板关闭联动：baseWindow willClose 时同步关弹窗。
+    /// 「非正常鼠标移动」（截图工具接管鼠标等）下 hover exited 事件丢失，
+    /// 主面板随后因失活收起，SwiftUI 树销毁路径的 dismantle 不保证调用
+    /// （实测弹窗残留且 ignoresMouseEvents 无法点击关闭）——窗口侧自带联动
+    private var baseWindowCloseObserver: NSObjectProtocol?
+
     /// 是否正在显示（供 presenter 去重，避免 SwiftUI 更新时重复建窗）
     var isShowing: Bool { window != nil }
 
@@ -95,11 +101,32 @@ final class CellPopoverWindowController {
         window.setFrame(frame, display: true)
         window.orderFrontRegardless()
         self.window = window
+
+        // 主面板收起（NSPanel close 必发 willClose）时同步关弹窗，不依赖 SwiftUI 生命周期
+        if let baseWindow {
+            baseWindowCloseObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: baseWindow,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.close() }
+            }
+        }
     }
 
     func close() {
+        if let token = baseWindowCloseObserver {
+            NotificationCenter.default.removeObserver(token)
+            baseWindowCloseObserver = nil
+        }
         window?.orderOut(nil)
         window = nil
+    }
+
+    deinit {
+        if let baseWindowCloseObserver {
+            NotificationCenter.default.removeObserver(baseWindowCloseObserver)
+        }
     }
 
     /// 右缘箭头的箭尖位置：锚点中心距弹窗顶部的距离，钳制在气泡范围内。

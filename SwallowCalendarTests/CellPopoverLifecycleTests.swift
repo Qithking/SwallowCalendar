@@ -33,6 +33,34 @@ final class CellPopoverLifecycleTests: XCTestCase {
         XCTAssertFalse(coordinator.isShowing, "dismantle 后弹窗应已关闭，不应残留")
     }
 
+    /// 主面板窗口关闭（失活收起等所有收起路径都走 NSPanel close）时弹窗同步关闭。
+    /// bug: 非正常鼠标移动（截图工具接管鼠标等）下 hover exited 事件丢失，
+    /// 主面板随后因失活收起，但 SwiftUI 树销毁路径的 dismantle 不保证调用，
+    /// 弹窗窗口残留且 ignoresMouseEvents 无法点击关闭——窗口侧必须自带联动
+    func testBaseWindowCloseClosesPopover() throws {
+        let baseWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        baseWindow.isReleasedWhenClosed = false
+        baseWindow.orderFrontRegardless()
+
+        let coordinator = CellPopoverWindowController()
+        coordinator.show(
+            content: { _, _ in Text("bug-repro") },
+            anchorInScreen: NSRect(x: 100, y: 100, width: 20, height: 20),
+            baseWindow: baseWindow
+        )
+        XCTAssertTrue(coordinator.isShowing, "前置失败：弹窗应已显示")
+
+        // 模拟主面板收起：NSPanel/NSWindow close 发 willCloseNotification
+        baseWindow.close()
+
+        XCTAssertFalse(coordinator.isShowing, "主面板关闭时弹窗应同步关闭，不应残留")
+    }
+
     // MARK: - 右缘箭头定位（bug: 右侧箭头坐标系翻转——AppKit y 向上 / SwiftUI shape y 向下）
 
     /// 右缘箭头 tip 必须是「锚点距弹窗顶部」的距离（shape 坐标 y 向下）。
