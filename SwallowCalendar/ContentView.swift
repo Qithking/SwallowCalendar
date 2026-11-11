@@ -235,25 +235,48 @@ struct ContentView: View {
 
         calendarService.loadCalendars()
 
-        // 初始化默认自定义日历
-        // 默认订阅源仅首次启动插入一次（UserDefaults 标记），
-        // 用户删光全部订阅源后重启时不会复活默认源，删除可持久生效
+        // 初始化默认自定义日历（seed-dedupe 双保险）
+        // 默认订阅源由 UserDefaults 标记 + 库级 URL 判重共同决定是否插入：
+        // 标记可能因 cfprefsd 与磁盘 plist 脱节被读为 false（仅靠标记曾造成重复 seed）；
+        // 用户删光全部订阅源后（标记 true）重启不会复活默认源，删除可持久生效
         let seedKey = "hasSeededDefaultCalendarSource"
-        if !UserDefaults.standard.bool(forKey: seedKey) {
-            let defaultSource = CustomCalendarSource(
-                name: "重要日历",
-                icsURL: "https://yangh9.github.io/ChinaCalendar/cal_holiday.ics",
-                isEnabled: false,
-                isImportant: false
+        do {
+            let allSources = try CacheFetch.throwing(
+                FetchDescriptor<CustomCalendarSource>(),
+                in: modelContext,
+                operation: "订阅源全量读取"
             )
-            modelContext.insert(defaultSource)
-            do {
+
+            // 历史重复清理：同 URL 保留启用/重要优先的一条（seed-dedupe）
+            let duplicates = CustomCalendarSource.duplicatesToRemove(allSources)
+            var seedChanges = false
+            if !duplicates.isEmpty {
+                duplicates.forEach { modelContext.delete($0) }
+                seedChanges = true
+                AppLogger.settings.info("启动清理重复订阅源: \(duplicates.count) 条")
+            }
+
+            if CustomCalendarSource.shouldSeedDefaultSource(
+                hasSeededFlag: UserDefaults.standard.bool(forKey: seedKey),
+                existingURLs: allSources.map(\.icsURL)
+            ) {
+                modelContext.insert(CustomCalendarSource(
+                    name: CustomCalendarSource.defaultSourceName,
+                    icsURL: CustomCalendarSource.defaultSourceURL,
+                    isEnabled: false,
+                    isImportant: false
+                ))
+                seedChanges = true
+            }
+
+            if seedChanges {
                 // 落库成功才写 seed 标记：save 失败时标记仍写入会导致默认源永久不再插入
                 try modelContext.save()
                 UserDefaults.standard.set(true, forKey: seedKey)
-            } catch {
-                AppLogger.settings.error("默认订阅源首次插入失败（下次启动重试）: \(error.localizedDescription)")
             }
+        } catch {
+            // 查询/清理/落库任一失败均中止，下次启动重试（保留原失败重试语义）
+            AppLogger.settings.error("订阅源 seed/去重失败（下次启动重试）: \(error.localizedDescription)")
         }
 
         // 在 mainContext 注入后启动后台同步，确保使用同一 ModelContext

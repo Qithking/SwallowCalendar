@@ -215,11 +215,21 @@ struct CalendarSettingsView: View {
                 // 添加新源（两行布局：名称+URL 输入行 / 添加按钮右对齐）
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
-                        TextField("名称", text: $newSourceName)
+                        // 分组表单会把 TextField 标题抽为外置标签，frame 扩展的是
+                        // 「标签+输入框」整体，输入框本身不跟着变宽，导致标签与输入框
+                        // 之间出现死区。改用显式 Text 标签 + labelsHidden + 空 title，
+                        // 让 frame 直接约束输入框本身
+                        Text("名称")
+                        TextField("", text: $newSourceName)
+                            .labelsHidden()
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 110)
-                        TextField("ICS URL", text: $newSourceURL)
+                        Text("url")
+                        TextField("", text: $newSourceURL)
+                            .labelsHidden()
                             .textFieldStyle(.roundedBorder)
+                            // 占满名称框之外的剩余行宽，避免右侧空白
+                            .frame(maxWidth: .infinity)
                     }
                     HStack {
                         Spacer()
