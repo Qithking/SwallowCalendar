@@ -63,6 +63,13 @@ final class AppSettings {
         }
     }
 
+    /// 周末日期标记：开启后日历中周六/周日日期文字使用主题色（默认关）
+    var weekendMarkEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(weekendMarkEnabled, forKey: "weekendMarkEnabled")
+        }
+    }
+
     /// 事项到期提示音（默认无；设置后到期弹框弹出时同步播放一声）
     var dueAlertSound: DueAlertSound {
         didSet {
@@ -285,6 +292,7 @@ final class AppSettings {
         self.themeMode = ThemeMode(rawValue: UserDefaults.standard.string(forKey: "themeModeRaw") ?? "") ?? .system
         self.weekdayStart = UserDefaults.standard.object(forKey: "weekdayStart") as? Int ?? 2
         self.showLunarCalendar = UserDefaults.standard.object(forKey: "showLunarCalendar") as? Bool ?? true
+        self.weekendMarkEnabled = UserDefaults.standard.object(forKey: "weekendMarkEnabled") as? Bool ?? false
         self.accentColorHex = UserDefaults.standard.string(forKey: "accentColorHex") ?? "#007AFF"
         self.systemCalendarColorHex = UserDefaults.standard.string(forKey: "systemCalendarColorHex") ?? "#007AFF"
         self.subscriptionCalendarColorHex = UserDefaults.standard.string(forKey: "subscriptionCalendarColorHex") ?? "#FF9500"

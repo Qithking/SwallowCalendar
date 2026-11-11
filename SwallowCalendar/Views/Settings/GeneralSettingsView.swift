@@ -119,6 +119,11 @@ struct GeneralSettingsView: View {
                 Toggle("显示农历", isOn: $settings.showLunarCalendar)
                     .toggleStyle(.switch)
 
+                // 周末日期标记：开启后日历中周六/周日日期文字使用主题色
+                Toggle("周末日期标记", isOn: $settings.weekendMarkEnabled)
+                    .toggleStyle(.switch)
+                    .help("开启后，日历中周六和周日的日期数字使用主题色显示")
+
                 // 显示待办面板：四态下拉（菜单栏图标控制
                 // hover 弹层，桌面面板控制常驻面板，两者=现有逻辑）
                 Picker("显示待办面板", selection: $settings.todoPanelDisplayMode) {

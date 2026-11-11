@@ -40,6 +40,46 @@ struct CalendarEventItem: Identifiable {
     var holidayMark: CalendarPopoverHolidayMark = .none  // 弹窗行节假日标识
 }
 
+/// 周末标记：日期格文字颜色角色判定（纯函数，入仓测试）
+/// 设置开启后，周六/周日日期文字使用主题色（非当月周末用主题色淡化）；
+/// 今天 > 选中 优先级保持不变
+enum DayCellTextRole {
+    /// 日期文字颜色角色（渲染层据此映射具体颜色）
+    enum TextColorRole: Equatable {
+        case today          // 今天：白字（主题色实心背景）
+        case selected       // 选中：主题色
+        case dimmed         // 非当月：淡化
+        case weekendDimmed  // 非当月周末：主题色淡化（设置开启）
+        case weekend        // 当月周末：主题色（设置开启）
+        case normal         // 普通：primary
+    }
+
+    /// 角色判定（优先级：今天 > 选中 > 非当月淡化 > 周末 > 普通）
+    static func textColorRole(
+        isToday: Bool,
+        isSelected: Bool,
+        isCurrentMonth: Bool,
+        isWeekend: Bool,
+        weekendMarkEnabled: Bool
+    ) -> TextColorRole {
+        if isToday { return .today }
+        if isSelected { return .selected }
+        if !isCurrentMonth {
+            // 需求变更：非当月周末也标主题色，但保持淡化处理
+            if weekendMarkEnabled && isWeekend { return .weekendDimmed }
+            return .dimmed
+        }
+        if weekendMarkEnabled && isWeekend { return .weekend }
+        return .normal
+    }
+
+    /// 周末判定：周六或周日（weekday 为绝对值：1=周日…7=周六，与星期起始日设置无关）
+    static func isWeekend(_ date: Date, calendar: Calendar) -> Bool {
+        let weekday = calendar.component(.weekday, from: date)
+        return weekday == 1 || weekday == 7
+    }
+}
+
 struct CalendarDayCell: View {
     @Environment(AppSettings.self) private var appSettings
     let date: Date
@@ -220,11 +260,22 @@ struct CalendarDayCell: View {
 
     // MARK: - Colors
 
+    /// 日期文字颜色：经 DayCellTextRole 纯函数判定角色后映射为具体颜色
     private var dayTextColor: Color {
-        if isToday { return .white }
-        if isSelected { return accentColor }
-        if !isCurrentMonth { return .secondary.opacity(0.4) }
-        return .primary
+        switch DayCellTextRole.textColorRole(
+            isToday: isToday,
+            isSelected: isSelected,
+            isCurrentMonth: isCurrentMonth,
+            isWeekend: DayCellTextRole.isWeekend(date, calendar: Calendar.current),
+            weekendMarkEnabled: appSettings.weekendMarkEnabled
+        ) {
+        case .today: return .white
+        case .selected: return accentColor
+        case .dimmed: return .secondary.opacity(0.4)
+        case .weekendDimmed: return accentColor.opacity(0.4)
+        case .weekend: return accentColor
+        case .normal: return .primary
+        }
     }
 
     private var lunarTextColor: Color {
