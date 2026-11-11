@@ -159,6 +159,9 @@ struct CalendarEvent: Identifiable {
     /// 任务有效期区间（cachedToCalendarEvent 透传；
     /// 仅循环任务有周期语义，两端可独立缺省，nil = 该端不限制）
     var validity: ValidityPeriod? = nil
+    /// 单次任务标记完成时间（syncReminders 从 EKReminder.completionDate 采集；应用内 toggle 完成时写入缓存）
+    /// 无到期时间的已办任务按本字段归档日期筛选
+    var completedAt: Date? = nil
 
     /// 是否有明确的开始时间（非全天事件）
     var hasTime: Bool {

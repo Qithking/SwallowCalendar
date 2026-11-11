@@ -370,7 +370,9 @@ final class CalendarService {
             reminderAlarmIsAbsolute: Self.hasAbsoluteReminderAlarm(reminder.alarms),
             eventColorHex: nil,
             // 本地循环标记随 notes 透传：merge 回流据此区分「应用内设循环」与「外部删规则」
-            notes: reminder.notes
+            notes: reminder.notes,
+            // 采集系统完成时间：无到期时间的已办任务按此归档日期筛选（存量在下次同步回流时自动补全）
+            completedAt: reminder.completionDate
         )
     }
 
@@ -1193,6 +1195,8 @@ final class CalendarService {
         // 更新本地缓存
         if let cached = findCachedEvent(eventID: eventID) {
             cached.isCompleted = isCompleted
+            // 单次任务记录标记完成时间：无到期时间的已办任务按此归档日期筛选；取消完成时清除
+            cached.completedAt = isCompleted ? Date() : nil
             do {
                 try cacheService.context?.save()
             } catch {
@@ -2384,7 +2388,9 @@ final class CalendarService {
             // 有效期透传：双字段已归一化，组装区间载体供 UI/服务层
             validity: (cached.validStartDate != nil || cached.validEndDate != nil)
                 ? ValidityPeriod(start: cached.validStartDate, end: cached.validEndDate)
-                : nil
+                : nil,
+            // 完成时间透传（无到期时间的已办任务按此归档日期筛选）
+            completedAt: cached.completedAt
         )
     }
     

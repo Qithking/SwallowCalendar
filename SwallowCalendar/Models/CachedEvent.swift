@@ -126,6 +126,10 @@ final class CachedEvent {
     var validStartDate: Date?
     var validEndDate: Date?
 
+    /// 单次任务标记完成时间（带默认值 nil 走 SwiftData 轻量迁移）
+    /// 无到期时间的已办任务按本字段归档日期筛选；循环任务完成历史走 completedOccurrenceDatesJSON，不用本字段
+    var completedAt: Date?
+
     /// 序列首实例锚点（带默认值走 SwiftData 轻量迁移）
     /// 语义 = 创建时刻的 startDate（创建时未过时刻即当天，已过即推进后的下一期）；
     /// 完成推进把 startDate 当游标前移，展开序列若跟随游标，被越过的历史未完成实例
@@ -385,6 +389,7 @@ final class CachedEvent {
         skipHolidays: Bool = false,
         validStartDate: Date? = nil,
         validEndDate: Date? = nil,
+        completedAt: Date? = nil,
         originStartDate: Date? = nil
     ) {
         self.eventID = eventID
@@ -410,6 +415,7 @@ final class CachedEvent {
         self.skipHolidays = skipHolidays
         self.validStartDate = validStartDate
         self.validEndDate = validEndDate
+        self.completedAt = completedAt
         self.originStartDate = originStartDate
         self.lastUpdated = Date()
     }
@@ -1183,7 +1189,9 @@ final class EventCacheService {
             // 防止自定义循环（每 2 周/多选星期/第 N 个周几）首次入库丢 spec
             recurrenceSpecJSON: reminder.recurrenceSpec?.jsonString,
             reminderMinutes: reminder.reminderMinutes,
-            reminderOffsetsJSON: CachedEvent.encodeOffsetsJSON(reminder.reminderOffsets)
+            reminderOffsetsJSON: CachedEvent.encodeOffsetsJSON(reminder.reminderOffsets),
+            // 完成时间随插入落库（无到期时间的已办任务归档数据源）
+            completedAt: reminder.completedAt
         )
     }
 
@@ -1198,6 +1206,7 @@ final class EventCacheService {
         let newStart = ek.startDate
         let newEnd = ek.endDate
         let newIsCompleted = ek.isCompleted
+        let newCompletedAt = ek.completedAt
         // absolute 准点闹钟不携带提前量：提前提醒保留缓存值，不参与变更检测与覆盖
         let adoptReminder = !ek.reminderAlarmIsAbsolute
         let newReminderMinutes = ek.reminderMinutes
@@ -1239,7 +1248,7 @@ final class EventCacheService {
         }
         let specChanged = !RecurrenceSpec.jsonEquals(existing.recurrenceSpecJSON, newSpecJSON)
         // 有变更才更新，避免不必要的写入（recurrenceType：档位可能随物化历史出现而推断变化）
-        if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || minutesChanged || offsetsChanged || existing.recurrenceType != newRecurrence || specChanged {
+        if existing.title != newTitle || existing.startDate != newStart || existing.endDate != newEnd || existing.isCompleted != newIsCompleted || existing.completedAt != newCompletedAt || minutesChanged || offsetsChanged || existing.recurrenceType != newRecurrence || specChanged {
             if existing.isCompleted != newIsCompleted {
                 AppLogger.cache.warning("syncReminders isCompleted \(existing.isCompleted ? "true" : "false")→\(newIsCompleted ? "true" : "false") id=\(existing.eventID)")
             }
@@ -1247,6 +1256,7 @@ final class EventCacheService {
             existing.startDate = newStart
             existing.endDate = newEnd
             existing.isCompleted = newIsCompleted
+            existing.completedAt = newCompletedAt
             if adoptReminder {
                 // 双写同源一致值（JSON 与 minutes 均来自 EK，本就满足 max 不变量）
                 existing.reminderOffsetsJSON = newOffsetsJSON

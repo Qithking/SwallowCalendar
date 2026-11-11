@@ -51,6 +51,35 @@ struct EventCompletedListView: View {
         refreshCachedEvents()
     }
 
+    /// 已办列表过滤判定（静态纯函数，可测）：
+    /// 无到期时间的任务按「标记完成时间」归档到对应日期范围；
+    /// 完成时间缺失（存量未同步补全）时仅在「全部」tab 可见
+    static func shouldInclude(
+        _ event: CalendarEvent,
+        in range: (start: Date, end: Date),
+        filterMode: EventFilterMode
+    ) -> Bool {
+        guard event.category == .user &&
+                event.isCompleted &&
+                !event.title.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return false
+        }
+        // 无到期时间的任务按「标记完成时间」归档到对应日期范围；
+        // 完成时间缺省（存量未同步补全）时仅在「全部」tab 可见
+        if event.startDate == nil {
+            guard let completedAt = event.completedAt else {
+                return filterMode == .all
+            }
+            return completedAt >= range.start && completedAt < range.end
+        }
+        return true
+    }
+
+    /// 排序生效日期：无到期时间的已办任务按标记完成时间参与排序（无完成时间沉底）
+    private func effectiveSortDate(_ event: CalendarEvent) -> Date {
+        event.startDate ?? event.completedAt ?? .distantPast
+    }
+
     private func refreshCachedEvents() {
         let enabledCals = calendarService.enabledCalendars(preferences: calendarPreferences)
         let range = filterMode.dateRange(from: selectedDate)
@@ -61,12 +90,8 @@ struct EventCompletedListView: View {
             calendars: enabledCals,
             includeNoDateReminders: true
         )
-        
-        let result = cached.filter { event in
-            event.category == .user &&
-            event.isCompleted &&
-            !event.title.trimmingCharacters(in: .whitespaces).isEmpty
-        }
+
+        let result = cached.filter { Self.shouldInclude($0, in: range, filterMode: filterMode) }
 
         var sorted = result
         let isAscending = appSettings.sortOrder == .ascending
@@ -74,10 +99,11 @@ struct EventCompletedListView: View {
         switch appSettings.sortMode {
         case .default:
             // 与待办列表（EventTodoListView）口径统一：日期为主键、优先级为次键；
-            // 两列表主次键不一致时，同档位设置下待办与已办顺序观感矛盾
+            // 两列表主次键不一致时，同档位设置下待办与已办顺序观感矛盾；
+            // 无日期已办的日期键 = 标记完成时间（effectiveSortDate）
             sorted.sort {
-                let date0 = $0.startDate ?? .distantPast
-                let date1 = $1.startDate ?? .distantPast
+                let date0 = effectiveSortDate($0)
+                let date1 = effectiveSortDate($1)
                 if date0 != date1 {
                     return isAscending ? date0 < date1 : date0 > date1
                 }
@@ -85,12 +111,12 @@ struct EventCompletedListView: View {
             }
         case .createTime:
             sorted.sort {
-                return isAscending ? ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) : ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast)
+                return isAscending ? effectiveSortDate($0) < effectiveSortDate($1) : effectiveSortDate($0) > effectiveSortDate($1)
             }
         case .deadline:
             sorted.sort {
-                let date0 = $0.endDate ?? $0.startDate ?? .distantPast
-                let date1 = $1.endDate ?? $1.startDate ?? .distantPast
+                let date0 = $0.endDate ?? effectiveSortDate($0)
+                let date1 = $1.endDate ?? effectiveSortDate($1)
                 return isAscending ? date0 < date1 : date0 > date1
             }
         case .priority:
