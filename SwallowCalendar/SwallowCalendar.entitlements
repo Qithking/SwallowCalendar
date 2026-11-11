@@ -4,6 +4,11 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<false/>
+	<!-- hardened runtime 下 tccd 校验的日历/提醒授权键（personal-information 前缀） -->
+	<key>com.apple.security.personal-information.calendars</key>
+	<true/>
+	<key>com.apple.security.personal-information.reminders</key>
+	<true/>
 	<key>com.apple.security.calendar</key>
 	<true/>
 	<key>com.apple.security.reminders</key>
