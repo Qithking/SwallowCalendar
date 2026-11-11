@@ -19,13 +19,12 @@ struct CalendarHeaderView: View {
     var body: some View {
         HStack {
             // 左侧：当前年月（点击弹出年月选择器）
-            Button {
+            NavToolbarButton(help: "选择年月") {
                 showMonthPicker = true
             } label: {
                 Text(monthTitle)
                     .font(.system(size: 14, weight: .semibold))
             }
-            .buttonStyle(.plain)
             .focusEffectDisabled()
             .popover(isPresented: $showMonthPicker, arrowEdge: .bottom) {
                 MonthYearPickerView(currentMonth: $currentMonth, selectedDate: $selectedDate)
@@ -33,10 +32,10 @@ struct CalendarHeaderView: View {
 
             Spacer()
 
-            // 右侧：月份导航
-            HStack(spacing: 12) {
+            // 右侧：月份导航（命中区域扩大 + hover 反馈，间距由按钮内 padding 提供）
+            HStack(spacing: 0) {
                 // 上一月
-                Button {
+                NavToolbarButton(help: "上一月") {
                     withAnimation {
                         currentMonth = calendar.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
                     }
@@ -44,10 +43,9 @@ struct CalendarHeaderView: View {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 10, weight: .semibold))
                 }
-                .buttonStyle(.plain)
 
                 // 今天按钮
-                Button {
+                NavToolbarButton(help: "回到今天") {
                     withAnimation {
                         currentMonth = Date()
                         selectedDate = Date()
@@ -57,10 +55,9 @@ struct CalendarHeaderView: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(accentColor)
                 }
-                .buttonStyle(.plain)
 
                 // 下一月
-                Button {
+                NavToolbarButton(help: "下一月") {
                     withAnimation {
                         currentMonth = calendar.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
                     }
@@ -68,7 +65,6 @@ struct CalendarHeaderView: View {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 10, weight: .semibold))
                 }
-                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 4)
@@ -85,6 +81,40 @@ struct CalendarHeaderView: View {
 
     private var monthTitle: String {
         Self.monthTitleFormatter.string(from: currentMonth)
+    }
+}
+
+// MARK: - Nav Toolbar Button
+
+/// 月导航工具栏按钮：命中区域扩大（padding + contentShape 透明区可点）、
+/// hover 淡灰圆角背景 + 手型光标（对齐系统日历工具栏风格）
+private struct NavToolbarButton<Label: View>: View {
+    let help: String
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            label()
+                // padding 扩大命中区域；contentShape 让含透明区的整个矩形可点
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+            // set 幂等覆盖，不用 push/pop——项目已实证 onHover(false) 可能不触发
+            //（EventItemRow 同款坑），栈式操作会累积错乱光标栈
+            (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
+        }
+        .help(help)
     }
 }
 
