@@ -7,6 +7,7 @@
 import SwiftUI
 import AppKit
 import SwiftData
+import EventKit
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var panel: FloatingPanel<AnyView>?
@@ -150,6 +151,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 || !AppSettings.shared.todoPanelDisplayMode.menuBarHoverEnabled
         }
         hoverController = hover
+
+        // 启动日历授权门（startup-auth-gate）：授权请求原先挂在 ContentView.task，
+        // 面板未展开时视图不存在、授权请求从未执行；改挂应用生命周期，
+        // 启动即校验日历授权（notDetermined 弹授权框 / denied 引导前往设置）。
+        // 预览取证态跳过，避免授权弹窗遮挡取证窗口（口径与 UpdateChecker 一致）
+        if !isPreviewMode {
+            Task { await runStartupAuthorizationGate() }
+        }
+    }
+
+    // MARK: - 启动授权门（startup-auth-gate）
+
+    /// 启动时校验日历授权状态并引导授权
+    /// - notDetermined：直接弹系统授权框；提醒同步已开启时连带请求提醒（与原启动链路一致）
+    /// - denied/restricted：应用内无法再弹系统授权框，弹引导窗对齐提醒 denied 行为
+    /// - Note: 仅处理日历；提醒 denied 引导仍由面板展开时 initializeServices 承接，避免重复弹窗
+    @MainActor
+    private func runStartupAuthorizationGate() async {
+        let calendarService = CalendarService.shared
+        calendarService.refreshAuthorizationStatus()
+
+        if calendarService.authorizationStatus == .notDetermined {
+            let syncReminders = AppSettings.shared.syncSystemReminders
+            _ = await calendarService.requestAccess(requestReminders: syncReminders)
+        } else if CalendarService.shouldGuideCalendarAccess(calendarService.authorizationStatus) {
+            showCalendarAuthGuide()
+        }
+    }
+
+    /// 弹窗引导用户去系统设置开启日历权限（样式对齐 ContentView.showReminderAuthAlert）
+    private func showCalendarAuthGuide() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "需要日历权限"
+        alert.informativeText = "请在系统设置中开启「日历」权限，以便同步系统日历事项。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "去开启")
+        alert.addButton(withTitle: "忽略")
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            CalendarService.shared.openCalendarSettings()
+        }
     }
     
     /// 构建隐藏主菜单：仅承载文本编辑快捷键（撤销/重做/剪切/拷贝/粘贴/全选）。

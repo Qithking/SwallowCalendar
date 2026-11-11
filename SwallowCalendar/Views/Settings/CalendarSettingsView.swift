@@ -60,6 +60,15 @@ struct CalendarSettingsView: View {
                                 Text("需要授权访问提醒")
                                     .font(.system(size: 11))
                                     .foregroundColor(.orange)
+                                Button("授权") {
+                                    Task {
+                                        _ = await calendarService.requestReminderAccess()
+                                        reminderAuthStatus = calendarService.reminderAuthorizationStatus
+                                    }
+                                }
+                                .font(.system(size: 11))
+                                .buttonStyle(.plain)
+                                .foregroundColor(.blue)
                             case .restricted, .denied:
                                 Text("权限被拒绝，点击前往设置开启")
                                     .font(.system(size: 11))
@@ -101,6 +110,15 @@ struct CalendarSettingsView: View {
                                 Text("需要授权访问日历")
                                     .font(.system(size: 11))
                                     .foregroundColor(.orange)
+                                Button("授权") {
+                                    Task {
+                                        _ = await calendarService.requestAccess(requestReminders: false)
+                                        calendarAuthStatus = calendarService.authorizationStatus
+                                    }
+                                }
+                                .font(.system(size: 11))
+                                .buttonStyle(.plain)
+                                .foregroundColor(.blue)
                             case .restricted, .denied:
                                 Text("权限被拒绝，点击前往设置开启")
                                     .font(.system(size: 11))
@@ -225,13 +243,16 @@ struct CalendarSettingsView: View {
         .padding()
         .tint(Color(hex: appSettings.accentColorHex))
         .task {
-            reminderAuthStatus = calendarService.reminderAuthorizationStatus
-            calendarAuthStatus = calendarService.authorizationStatus
+            refreshAuthStatuses()
             // 仅在日历列表为空时加载，避免每次切换 tab 都重新加载
             if !hasLoadedCalendars {
                 calendarService.loadCalendars()
                 hasLoadedCalendars = true
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            // 从系统设置改授权回来后刷新，避免状态提示展示过时信息（startup-auth-gate）
+            refreshAuthStatuses()
         }
         .onDisappear {
             // 窗口关闭时确保保存所有更改
@@ -245,6 +266,14 @@ struct CalendarSettingsView: View {
             // 展示同步回传的具体失败原因（manualSync 回传真实失败信息），不用固定文案
             Text(saveStatus)
         }
+    }
+
+    /// 刷新授权快照并同步到界面状态（startup-auth-gate）
+    /// 快照在 CalendarService.init 一次性读取，用户在系统设置改授权后需显式刷新
+    private func refreshAuthStatuses() {
+        calendarService.refreshAuthorizationStatus()
+        reminderAuthStatus = calendarService.reminderAuthorizationStatus
+        calendarAuthStatus = calendarService.authorizationStatus
     }
 
     // MARK: - 系统日历行

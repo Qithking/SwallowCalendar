@@ -60,6 +60,14 @@ final class CalendarService {
 
     // MARK: - Authorization
 
+    /// 重新读取 EK 实时授权状态到快照（startup-auth-gate）
+    /// - Note: 快照在 init 时一次性读取，用户在系统设置修改授权后快照过时，
+    ///         设置页展示与启动门决策前需先刷新
+    func refreshAuthorizationStatus() {
+        authorizationStatus = EKEventStore.authorizationStatus(for: .event)
+        reminderAuthorizationStatus = EKEventStore.authorizationStatus(for: .reminder)
+    }
+
     /// 请求 EventKit 权限
     /// - Parameter requestReminders: 是否同时请求提醒权限——提醒同步默认关闭，
     ///   关闭时不应无条件索要提醒 fullAccess
@@ -101,6 +109,13 @@ final class CalendarService {
         syncEnabled && reminderAuth == .notDetermined
     }
 
+    /// 启动门是否应弹「前往系统设置」引导窗（startup-auth-gate）
+    /// denied/restricted 时应用内无法再弹系统授权框（无重新请求入口），只能引导前往设置；
+    /// notDetermined 由启动门直接弹系统授权框，fullAccess/writeOnly 无需引导
+    static func shouldGuideCalendarAccess(_ status: EKAuthorizationStatus) -> Bool {
+        status == .denied || status == .restricted
+    }
+
     /// 单独请求提醒 fullAccess（reminder-auth-prompt）
     /// - Note: 日历已授权而提醒 notDetermined 时，原 requestAccess 仅随日历授权入口触发，
     ///         该状态会永久卡死（同步条件 == .fullAccess 永不满足），需独立请求入口
@@ -120,6 +135,16 @@ final class CalendarService {
     func openReminderSettings() {
         // 尝试打开系统设置 - 隐私与安全性 - 提醒事项
         if let url = URL(string: "x-apple.systempreferences://com.apple.preference.security?Privacy_Reminders") {
+            if NSWorkspace.shared.urlForApplication(toOpen: url) != nil {
+                NSWorkspace.shared.open(url)
+            }
+        }
+    }
+
+    /// 打开系统设置中的日历权限页面（startup-auth-gate）
+    func openCalendarSettings() {
+        // 尝试打开系统设置 - 隐私与安全性 - 日历
+        if let url = URL(string: "x-apple.systempreferences://com.apple.preference.security?Privacy_Calendars") {
             if NSWorkspace.shared.urlForApplication(toOpen: url) != nil {
                 NSWorkspace.shared.open(url)
             }
