@@ -281,6 +281,8 @@ struct ReminderAlertView: View {
                     .foregroundColor(.accentColor)
             }
             .buttonStyle(.plain)
+            // 点击后不获取键盘焦点，避免系统绘制聚焦环
+            .focusEffectDisabled()
             .help("标记完成")
         }
         .padding(.horizontal, 10)
@@ -316,6 +318,7 @@ struct ReminderAlertView: View {
                     )
             }
             .buttonStyle(.plain)
+            .focusEffectDisabled()
 
             Button {
                 onCompleteAll()
@@ -330,6 +333,7 @@ struct ReminderAlertView: View {
                     )
             }
             .buttonStyle(.plain)
+            .focusEffectDisabled()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 13)

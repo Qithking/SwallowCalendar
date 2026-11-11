@@ -108,6 +108,8 @@ private struct NavToolbarButton<Label: View>: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // 点击后不获取键盘焦点，避免系统绘制聚焦环
+        .focusEffectDisabled()
         .onHover { hovering in
             isHovered = hovering
             // set 幂等覆盖，不用 push/pop——项目已实证 onHover(false) 可能不触发
@@ -115,6 +117,30 @@ private struct NavToolbarButton<Label: View>: View {
             (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
         }
         .help(help)
+    }
+}
+
+// MARK: - Month Picker Cell Role
+
+/// 年月弹框月格角色判定（纯函数，入仓测试）
+/// 只有今天所在月用主题色淡化背景标识；正在浏览的月份不做背景标记
+enum MonthPickerCellRole {
+    /// 月格角色（渲染层据此映射前景/背景色）
+    enum CellRole: Equatable {
+        case todayMonth  // 今天所在月：主题色淡化背景 + 主题色文字
+        case normal      // 普通（含浏览月）：无标识
+    }
+
+    /// 今天所在月判定（calendar/now 注入便于测试）
+    static func isTodayMonth(year: Int, month: Int, now: Date, calendar: Calendar) -> Bool {
+        let comps = calendar.dateComponents([.year, .month], from: now)
+        return comps.year == year && comps.month == month
+    }
+
+    /// 角色判定（今天月淡化 > 普通）
+    static func cellRole(isTodayMonth: Bool) -> CellRole {
+        if isTodayMonth { return .todayMonth }
+        return .normal
     }
 }
 
@@ -148,15 +174,14 @@ struct MonthYearPickerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 年份选择（支持自定义输入）
+            // 年份选择（支持自定义输入；箭头复用 NavToolbarButton：热点扩大 + hover 反馈）
             HStack {
-                Button {
+                NavToolbarButton(help: "上一年") {
                     withAnimation { selectedYear -= 1; updateYearText() }
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 10))
                 }
-                .buttonStyle(.plain)
 
                 Spacer()
 
@@ -178,13 +203,12 @@ struct MonthYearPickerView: View {
 
                 Spacer()
 
-                Button {
+                NavToolbarButton(help: "下一年") {
                     withAnimation { selectedYear += 1; updateYearText() }
                 } label: {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 10))
                 }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -200,23 +224,45 @@ struct MonthYearPickerView: View {
                     Button {
                         selectMonth(month)
                     } label: {
+                        let role = MonthPickerCellRole.cellRole(
+                            isTodayMonth: MonthPickerCellRole.isTodayMonth(
+                                year: selectedYear, month: month, now: Date(), calendar: calendar
+                            )
+                        )
                         Text(months[month - 1])
                             .font(.system(size: 12))
-                            .foregroundColor(month == selectedMonth ? .white : .primary)
+                            .foregroundColor(cellForeground(for: role))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 6)
                             .background(
-                                month == selectedMonth
-                                    ? RoundedRectangle(cornerRadius: 4).fill(accentColor)
-                                    : RoundedRectangle(cornerRadius: 4).fill(Color.clear)
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(cellBackground(for: role))
                             )
                     }
                     .buttonStyle(.plain)
+                    // 点击后不获取键盘焦点，避免系统绘制聚焦环
+                    .focusEffectDisabled()
                 }
             }
             .padding(12)
         }
         .frame(width: 220)
+    }
+
+    /// 月格前景色：今天月主题色、普通 primary
+    private func cellForeground(for role: MonthPickerCellRole.CellRole) -> Color {
+        switch role {
+        case .todayMonth: return accentColor
+        case .normal: return .primary
+        }
+    }
+
+    /// 月格背景色：今天月主题色淡化（0.15）、普通透明
+    private func cellBackground(for role: MonthPickerCellRole.CellRole) -> Color {
+        switch role {
+        case .todayMonth: return accentColor.opacity(0.15)
+        case .normal: return .clear
+        }
     }
 
     private func selectMonth(_ month: Int) {
