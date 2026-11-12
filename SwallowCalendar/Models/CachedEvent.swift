@@ -541,7 +541,7 @@ final class EventCacheService {
         return getEvents(from: startOfDay, to: endOfDay, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
     }
     
-    func getEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CachedEvent] {
+    func getEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false, expandFutureOccurrences: Bool = true) -> [CachedEvent] {
         guard let context = self.context else { return [] }
         
         // 时间窗口过滤下沉到 SwiftData 谓词，避免全表加载后内存过滤。
@@ -590,7 +590,7 @@ final class EventCacheService {
         let recurring = events.filter(\.participatesInExpansion)
         let normal = events.filter { !$0.participatesInExpansion }
         let expanded = recurring.flatMap {
-            expandOccurrences(of: $0, windowStart: startDate, windowEnd: endDate, context: context)
+            expandOccurrences(of: $0, windowStart: startDate, windowEnd: endDate, context: context, expandFuture: expandFutureOccurrences)
         }
         // 展开实例与普通行共用同一精确过滤（零长/重叠边界 + 日历过滤），并按开始时间归位排序
         return (filterEvents(normal, from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
@@ -607,7 +607,7 @@ final class EventCacheService {
     /// 避免冻结场景 startDate 停在已完成 X 时产出重复行），并按结束端越界早退
     /// - Parameter includeHolidaySkipped: true 时休日实例仍产出（月历语义：无顺延，
     ///   原休日格显示并保留「已智能跳过」标识）；列表路径默认 false 静默跳过不变
-    func expandOccurrences(of base: CachedEvent, windowStart: Date, windowEnd: Date, context: ModelContext, includeHolidaySkipped: Bool = false) -> [CachedEvent] {
+    func expandOccurrences(of base: CachedEvent, windowStart: Date, windowEnd: Date, context: ModelContext, includeHolidaySkipped: Bool = false, expandFuture: Bool = true) -> [CachedEvent] {
         var result: [CachedEvent] = []
         // 取证（SC_MONTH_DIAG=1）：展开入参与产出条数
         AppLogger.monthDiag(
@@ -639,6 +639,59 @@ final class EventCacheService {
             guard !base.hasCompletedHistory else { return result }
             // 未转单次也无历史（直接调用的普通单次行）：窗口重叠时产出本体行，
             // 保持完成路径（本体 eventID + 落库 isCompleted）可用
+            let instanceEnd = baseStart.addingTimeInterval(duration)
+            let inWindow = (baseStart >= windowStart && baseStart < windowEnd)
+                || (baseStart < windowStart && instanceEnd > windowStart)
+            if !base.isCompleted, base.isWithinValidity(baseStart), inWindow {
+                result.append(base)
+            }
+            return result
+        }
+        // 列表模式（待办/已办）：不展开未来序列——游标（startDate）之前的过期未完成
+        // occurrence 正常显示（历史事实），下一条之后的未来一律屏蔽（「全部」档
+        // windowEnd=distantFuture 若展开未来会推进到 4000 次上限卡死主线程）；
+        // 完成历史仍由 ① 独家产出，两列表据此各取所需
+        if !expandFuture {
+            // 序列起点与完成历史锚点同源（见 ② 注释），从首个匹配日推进到游标前
+            let sequenceOrigin = min(base.originStartDate ?? baseStart, baseStart)
+            var occ = spec.firstOccurrence(from: sequenceOrigin, isLunar: base.isLunar) ?? sequenceOrigin
+            // 起点对齐：跳到 ≤ windowStart 的最近相位并回退一个周期（覆盖跨窗口前缘），
+            // 避免远古锚点逐次空转；与 ② 同款逻辑
+            if let aligned = spec.alignedOccurrence(before: windowStart, origin: sequenceOrigin, isLunar: base.isLunar),
+               aligned >= occ,
+               let steppedBack = spec.previous(before: aligned, origin: sequenceOrigin, isLunar: base.isLunar),
+               steppedBack >= occ {
+                occ = steppedBack
+            }
+            var iterations = 0
+            while occ < baseStart {
+                // 有效期结束端之外全部越界，提前退出
+                if let validEnd = base.validEndDate, occ > validEnd { break }
+                // 结束重复（日期/次数）之外的期次不再产出
+                let currentIndex = spec.index(of: occ, origin: sequenceOrigin, isLunar: base.isLunar) ?? 0
+                guard spec.allows(index: currentIndex, origin: sequenceOrigin, isLunar: base.isLunar) else { break }
+                // 已完成 occurrence 的展示行由 ① 独家产出，这里只补过期未完成
+                if !completedSet.contains(occ.timeIntervalSince1970), base.isWithinValidity(occ) {
+                    let instanceEnd = occ.addingTimeInterval(duration)
+                    // 与窗口重叠才产出（零长覆盖开始日语义）
+                    if (occ >= windowStart && occ < windowEnd) || (occ < windowStart && instanceEnd > windowStart) {
+                        // 休日语义与 ② 一致：默认静默跳过（列表），月历路径不进本分支
+                        if base.skipHolidays, !includeHolidaySkipped, HolidaySkipResolver.isRestDay(occ, context: context) {
+                            // 静默跳过：不产出
+                        } else {
+                            result.append(makeOccurrenceInstance(of: base, occurrence: occ, duration: duration, isCompleted: false))
+                        }
+                    }
+                }
+                guard let next = spec.next(after: occ, origin: sequenceOrigin, isLunar: base.isLunar) else { break }
+                occ = next
+                iterations += 1
+                if iterations >= 4000 {
+                    AppLogger.cache.error("列表模式历史展开达迭代上限，中止：\(base.eventID, privacy: .public)")
+                    break
+                }
+            }
+            // 本体行（下一条 occurrence）：游标未完成且有效期内且与窗口重叠时产出
             let instanceEnd = baseStart.addingTimeInterval(duration)
             let inWindow = (baseStart >= windowStart && baseStart < windowEnd)
                 || (baseStart < windowStart && instanceEnd > windowStart)
@@ -698,6 +751,47 @@ final class EventCacheService {
             }
         }
         return result
+    }
+
+    /// 分页获取循环任务「未来未完成 occurrence」日期序列（供「查看更多待办」分页展示）。
+    /// 从游标（startDate = 下一条 occurrence）起，跳过 skip 条取 limit 条；
+    /// 受结束条件（日期/次数）与有效期结束端约束；推进链与 expandOccurrences ② 同源。
+    /// 纯函数（不触库），分页每页条数小、next 推进受限，不会重入大窗口展开的 4000 次卡死
+    static func futureOccurrenceDates(of base: CachedEvent, skip: Int, limit: Int) -> [Date] {
+        guard limit > 0, base.isRecurringActive,
+              let spec = base.recurrenceSpec,
+              let cursor = base.startDate else { return [] }
+        let origin = min(base.originStartDate ?? cursor, cursor)
+        let isLunar = base.isLunar
+        var result: [Date] = []
+        var current: Date? = cursor
+        var skipped = 0
+        var guardCount = 0
+        while let date = current, result.count < limit, guardCount < 5000 {
+            guardCount += 1
+            // 有效期结束端之外（闭区间端点之后）全部越界，提前退出
+            if let validEnd = base.validEndDate, date > validEnd { break }
+            let idx = spec.index(of: date, origin: origin, isLunar: isLunar) ?? 0
+            // 结束重复（日期/次数）之外的期次不再产出
+            guard spec.allows(index: idx, origin: origin, isLunar: isLunar) else { break }
+            if skipped >= skip {
+                result.append(date)
+            } else {
+                skipped += 1
+            }
+            current = spec.next(after: date, origin: origin, isLunar: isLunar)
+        }
+        return result
+    }
+
+    /// 按 eventID 回查循环任务本体行（供「查看更多待办」窗口打开时取 base 做分页）。
+    /// 失败与「不存在」都返回 nil（失败落日志）；调用方按 nil 视为无展开数据
+    func baseEvent(withID eventID: String) -> CachedEvent? {
+        guard let context else { return nil }
+        let descriptor = FetchDescriptor<CachedEvent>(
+            predicate: #Predicate { $0.eventID == eventID }
+        )
+        return CacheFetch.optional(descriptor, in: context, operation: "baseEvent 按 ID 回查")?.first
     }
 
     /// 菜单弹层/桌面面板的任务候选：

@@ -61,7 +61,8 @@ struct EventTodoListView: View {
             from: range.start,
             to: range.end,
             calendars: enabledCals,
-            includeNoDateReminders: true
+            includeNoDateReminders: true,
+            expandFutureOccurrences: false
         )
 
         for event in cached {

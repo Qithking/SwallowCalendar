@@ -215,8 +215,8 @@ final class CalendarService {
     /// 从缓存获取指定日期范围的事件（优先使用缓存，加快启动速度）
     /// - Note: 默认不包含无到期时间的系统提醒（用于日历视图）
     @MainActor
-    func fetchCachedEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false) -> [CalendarEvent] {
-        let cached = cacheService.getEvents(from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: includeNoDateReminders)
+    func fetchCachedEvents(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil, includeNoDateReminders: Bool = false, expandFutureOccurrences: Bool = true) -> [CalendarEvent] {
+        let cached = cacheService.getEvents(from: startDate, to: endDate, calendars: calendars, includeNoDateReminders: includeNoDateReminders, expandFutureOccurrences: expandFutureOccurrences)
         return cached.map { cachedToCalendarEvent($0) }
     }
 

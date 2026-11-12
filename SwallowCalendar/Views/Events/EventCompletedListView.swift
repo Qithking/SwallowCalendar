@@ -88,7 +88,8 @@ struct EventCompletedListView: View {
             from: range.start,
             to: range.end,
             calendars: enabledCals,
-            includeNoDateReminders: true
+            includeNoDateReminders: true,
+            expandFutureOccurrences: false
         )
 
         let result = cached.filter { Self.shouldInclude($0, in: range, filterMode: filterMode) }

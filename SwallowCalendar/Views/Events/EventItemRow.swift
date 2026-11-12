@@ -162,6 +162,21 @@ struct EventItemRow: View {
                         .help("修改")
                     }
 
+                    // 循环任务未完成本体行：查看未来全部待办日程（分页窗口）
+                    if event.recurrenceType != .none && !event.isCompleted {
+                        Button {
+                            Self.performRowAction(isHovered: $isHovered) {
+                                RecurringOccurrenceWindowManager.shared.open(eventID: event.id, title: event.title)
+                            }
+                        } label: {
+                            Image(systemName: "list.bullet.rectangle")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("查看全部待办日程")
+                    }
+
                     if onDelete != nil {
                         Button {
                             Self.performRowAction(isHovered: $isHovered) {
@@ -248,6 +263,8 @@ struct EventItemRow: View {
 /// （内边距由 CellPopoverPresenter 的 chrome 统一提供，此处不加 padding）
 private struct EventRowPopoverContent: View {
     let event: CalendarEvent
+    /// 近期 3 条未来待办日期（循环任务专用，onAppear 一次性加载）
+    @State private var upcomingDates: [Date] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -314,9 +331,55 @@ private struct EventRowPopoverContent: View {
                             .fill(Color.orange.opacity(0.15))
                     )
             }
+
+            // 循环任务：近期 3 条未来待办 + 「更多」指引
+            // （hover 弹窗为纯展示窗口 ignoresMouseEvents，不可点击，只能文字提示）
+            if event.recurrenceType != .none, !event.isCompleted, !upcomingDates.isEmpty {
+                Divider()
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("近期待办")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    ForEach(upcomingDates, id: \.self) { date in
+                        Text("· " + Self.occurrenceText(for: date, isAllDay: event.isAllDay))
+                            .font(.system(size: 11))
+                    }
+                    Text("更多待办日程请点击行内按钮查看")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+            }
         }
         .frame(minWidth: 160, alignment: .leading)
+        .onAppear(perform: loadUpcomingOccurrences)
     }
+
+    /// 回查 base 本体后取近期 3 条未来 occurrence（游标起，与「待办日程」窗口同源推进链）
+    private func loadUpcomingOccurrences() {
+        guard upcomingDates.isEmpty else { return }
+        // occurrence 实例行（复合 ID）解析回 baseID，本体行直接使用
+        let baseID = CachedEvent.parseOccurrenceID(event.id)?.baseID ?? event.id
+        guard let base = EventCacheService.shared.baseEvent(withID: baseID) else { return }
+        upcomingDates = EventCacheService.futureOccurrenceDates(of: base, skip: 0, limit: 3)
+    }
+
+    private static func occurrenceText(for date: Date, isAllDay: Bool) -> String {
+        isAllDay ? occurrenceDateFormatter.string(from: date) : occurrenceDateTimeFormatter.string(from: date)
+    }
+
+    private static let occurrenceDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy年M月d日"
+        return f
+    }()
+
+    private static let occurrenceDateTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy年M月d日 HH:mm"
+        return f
+    }()
 
     /// 时间信息：待办/提醒语义下 startDate 即到期时间
     @ViewBuilder

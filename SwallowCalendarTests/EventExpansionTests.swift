@@ -477,4 +477,84 @@ final class EventExpansionTests: XCTestCase {
             "originStart 异常晚于游标时按游标展开"
         )
     }
+
+    // MARK: - 列表模式：不展开未来（性能：本月/本年/全部大窗口不卡死）
+
+    /// 列表（待办/已办）模式 expandFutureOccurrences=false：循环任务只返回下一条
+    /// occurrence 本体行 + 窗口内完成历史，不展开窗口内全部未来 occurrence——
+    /// 「全部」档 windowEnd=distantFuture 时逐次推进会到 4000 次上限卡死主线程
+    func testListModeDoesNotExpandFutureOccurrences() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-list",
+            startDate: date(2026, 10, 26, 9, 0)
+        )
+        let start = date(2026, 10, 26)
+        let results = EventCacheService.shared.getEvents(
+            from: start, to: Date.distantFuture, expandFutureOccurrences: false
+        )
+        XCTAssertEqual(results.count, 1, "列表模式应只返回下一条 occurrence（本体行），不展开未来")
+        XCTAssertEqual(results.first?.eventID, "rec-list", "列表模式返回本体行而非复合 occurrence 实例")
+    }
+
+    /// 列表模式应展开「游标之前已过期未完成」的 occurrence + 下一条本体行，
+    /// 下一条之后的未来不展开（需求：已过期历史正常显示、未来只显示最新一条）
+    func testListModeExpandsPastUncompletedButNotFuture() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        try insertRecurring(
+            into: container.mainContext,
+            eventID: "rec-list-past",
+            startDate: date(2026, 10, 29, 9, 0),
+            completed: [date(2026, 10, 28, 9, 0)],
+            originStartDate: date(2026, 10, 25, 9, 0)
+        )
+        let start = date(2026, 10, 24)
+        let end = date(2026, 11, 1)
+        let results = EventCacheService.shared.getEvents(from: start, to: end, expandFutureOccurrences: false)
+
+        let uncompleted = results.filter { !$0.isCompleted }
+        let dates = Set(uncompleted.compactMap { row -> Date? in
+            if let occ = CachedEvent.parseOccurrenceID(row.eventID) { return occ.occurrence }
+            return row.startDate
+        })
+        XCTAssertEqual(dates, [
+            date(2026, 10, 25, 9, 0),
+            date(2026, 10, 26, 9, 0),
+            date(2026, 10, 27, 9, 0),
+            date(2026, 10, 29, 9, 0)
+        ], "列表模式应包含过期未完成历史 + 下一条（10/29），不包含更远未来（10/30、10/31）")
+        XCTAssertTrue(results.contains { $0.eventID == "rec-list-past" }, "下一条应以本体行返回")
+    }
+
+    // MARK: - 分页获取未来 occurrence（查看更多待办）
+
+    /// 分页第一页：从游标（下一条 occurrence）起取 limit 条
+    func testFutureOccurrenceDatesFirstPage() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        let start = date(2026, 10, 26, 9, 0)
+        let base = try insertRecurring(into: container.mainContext, eventID: "rec-page", startDate: start)
+
+        let page = EventCacheService.futureOccurrenceDates(of: base, skip: 0, limit: 3)
+        XCTAssertEqual(page.count, 3)
+        // Asia/Shanghai 无夏令时，一整天恒为 86400 秒
+        XCTAssertEqual(page[0], start)
+        XCTAssertEqual(page[1], start.addingTimeInterval(86_400))
+        XCTAssertEqual(page[2], start.addingTimeInterval(2 * 86_400))
+    }
+
+    /// 翻页：skip 跳过前 N 条后继续取，页码语义正确
+    func testFutureOccurrenceDatesSkipsForNextPage() throws {
+        let container = try makeContainer()
+        EventCacheService.shared.configure(with: container)
+        let start = date(2026, 10, 26, 9, 0)
+        let base = try insertRecurring(into: container.mainContext, eventID: "rec-page2", startDate: start)
+
+        let page = EventCacheService.futureOccurrenceDates(of: base, skip: 10, limit: 3)
+        XCTAssertEqual(page.count, 3)
+        XCTAssertEqual(page[0], start.addingTimeInterval(10 * 86_400), "第二页应从游标后第 10 条起")
+    }
 }
