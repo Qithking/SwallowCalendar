@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  日历 · 农历 · 待办 · 节假日 · ICS订阅
+  日历 · 农历 · 待办 · 桌面待办 · 节假日 · ICS订阅
 </p>
 
 ---
@@ -64,7 +64,10 @@
   下午3点交报告 重要         → 创建带优先级的事件
   每周一晨会 每天循环        → 创建循环任务
   ```
-- **智能过滤** - 按时间范围筛选（今天/本周/本月/本年/全部）
+- **智能过滤** - 主界面五档（今天/本周/本月/本年/全部）；菜单栏弹层与桌面面板为四档（今天/本周/本月/本年）
+- **菜单栏悬停弹层** - 悬停菜单栏图标即弹出待办清单，可直接勾选完成，点击条目打开主界面
+- **桌面常驻面板** - 独立待办面板，四档时段 + 状态筛选（全部/待办/已办），支持置顶与拖动
+- **统一排序** - 有日期在前、无日期在后、已完成置底，与主界面口径一致
 - **完成状态** - 标记完成/未完成，自动同步到系统提醒
 - **循环任务** - 支持每日/每周/每月/每年循环
 - **提醒功能** - 自定义提醒时间，可创建为系统提醒，到期弹出提醒通知
@@ -143,6 +146,9 @@ swift build
 # 运行 debug 版本
 .build/debug/SwallowCalendar
 
+# 运行单元测试
+swift test
+
 # 或使用 Xcode 打开，⌘+R 编译运行，⌘+U 运行单元测试
 open SwallowCalendar.xcodeproj
 ```
@@ -162,41 +168,39 @@ open SwallowCalendar.xcodeproj
 ### 项目结构
 
 ```
-SwallowCalendar/
-├── Models/              # 数据模型
-│   ├── CalendarEvent.swift
-│   ├── CachedEvent.swift
-│   ├── CalendarPreference.swift
-│   └── CustomCalendarSource.swift
-├── Services/            # 核心服务
-│   ├── AppDelegate.swift            # 应用代理（状态栏管理）
-│   ├── AppLogger.swift              # 统一日志
-│   ├── AppSettings.swift            # 设置管理
-│   ├── BackgroundSyncService.swift  # 后台数据同步
-│   ├── CalendarService.swift        # 日历服务
-│   ├── CountdownTimerManager.swift  # 倒计时管理器
-│   ├── EditEventWindowManager.swift # 事件编辑窗口管理
-│   ├── FloatingPanel.swift          # 可缩放浮动面板
-│   ├── ICSService.swift             # ICS 解析服务
-│   ├── IconStyle.swift              # 图标样式
-│   ├── NLPTaskParser.swift          # 自然语言解析
-│   ├── ReminderAlertService.swift   # 到期提醒服务
-│   ├── SettingsWindowManager.swift  # 设置窗口管理
-│   ├── StatusBarIconManager.swift   # 状态栏图标管理
-│   └── UpdateChecker.swift          # 更新检查
-├── Views/               # 界面视图
-│   ├── Calendar/        # 日历视图（网格/日期单元格/头部）
-│   ├── Events/          # 事件视图（列表/输入/过滤/编辑/详情弹窗）
-│   ├── Settings/        # 设置页面（通用/日历/数据/关于）
-│   ├── ReminderAlertView.swift      # 到期提醒弹窗
-│   └── VisualEffectView.swift       # 毛玻璃效果视图
-├── SwallowCalendarApp.swift         # 应用入口
-├── ContentView.swift                # 根视图
-├── Utils/               # 工具函数
-│   └── LunarCalendarHelper.swift
-└── SwallowCalendarTests/            # 单元测试
-    ├── CalendarServiceTests.swift
-    └── NLPTaskParserTests.swift
+SwallowCalendar/                        # 仓库根
+├── SwallowCalendar/                    # 应用源码
+│   ├── Models/                         # 数据模型（事件/缓存/循环/农历映射/偏好）
+│   ├── Services/                       # 核心服务
+│   │   ├── AppDelegate.swift           # 应用代理（状态栏/弹层/面板装配）
+│   │   ├── AppLogger.swift             # 统一日志
+│   │   ├── AppSettings.swift           # 设置管理
+│   │   ├── CalendarService.swift       # 日历与提醒双向同步
+│   │   ├── BackgroundSyncService.swift # 后台数据同步
+│   │   ├── ICSService.swift            # ICS 订阅与导出
+│   │   ├── NLPTaskParser.swift         # 自然语言解析
+│   │   ├── BatchAddParser.swift        # 批量添加解析
+│   │   ├── CountdownTimerManager.swift # 倒计时（单一 Timer + 最小堆）
+│   │   ├── StatusBarIconManager.swift  # 菜单栏图标
+│   │   ├── StatusItemHoverController.swift # 菜单栏悬停弹层控制
+│   │   ├── DesktopTodoPanelManager.swift   # 桌面待办面板窗口
+│   │   ├── TodayTodoSorter.swift       # 弹层排序
+│   │   ├── HolidaySkipResolver.swift   # 节假日跳过判定
+│   │   ├── ReminderAlertService.swift  # 到期提醒
+│   │   ├── EditEventWindowManager.swift# 事件编辑窗口
+│   │   ├── SettingsWindowManager.swift # 设置窗口
+│   │   └── UpdateChecker.swift         # 更新检查
+│   ├── Views/
+│   │   ├── Calendar/                   # 月历网格/日期单元格/头部
+│   │   ├── Events/                     # 待办列表/输入/编辑/过滤/完成归档
+│   │   ├── Settings/                   # 通用/日历/数据/关于
+│   │   └── StatusItem/                 # 菜单栏悬停弹层、桌面待办面板
+│   ├── Utils/                          # 农历等工具
+│   ├── SwallowCalendarApp.swift        # 应用入口
+│   └── ContentView.swift               # 根视图
+├── SwallowCalendarTests/               # 单元测试（服务/解析/缓存/循环/视图逻辑）
+├── assets/                             # 截图等资源
+└── release.sh                          # 交互式发布工具
 ```
 
 ### 主要依赖
