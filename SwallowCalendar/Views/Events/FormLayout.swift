@@ -38,6 +38,49 @@ enum FormMetrics {
     static let compactControlWidth: CGFloat = 96
 }
 
+/// 全天时间口径（新建/编辑共用）：
+/// 勾选全天后新增「起始时间/结束时间」控件（默认 00:00/23:59，必填），
+/// 保存时携带所选时分落库（isAllDay 仍为全天）；存量事件回填保留原值、缺省补默认
+enum AllDayTimeRules {
+    /// 全天默认起始 00:00
+    static let defaultStartHour = 0
+    /// 全天默认结束 23:59
+    static let defaultEndHour = 23
+    static let defaultEndMinute = 59
+
+    /// 全天保存组装：起始/结束控件的时分落到「日期行」当天。
+    /// end 日期强制同 start 当天（end 控件即使被改到别的日期也钳回当天）
+    static func occurrence(day: Date, startTime: Date, endTime: Date) -> (start: Date, end: Date) {
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: day)
+        let start = combine(dayStart: dayStart, time: startTime)
+        let end = combine(dayStart: dayStart, time: endTime)
+        return (start, end)
+    }
+
+    /// 编辑面板全天初值回填：保留原值、缺省补默认（起始 00:00 / 结束 23:59，日期取 day 当天）
+    static func initialTimes(originalStart: Date?, originalEnd: Date?, day: Date) -> (start: Date, end: Date) {
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: day)
+        let start = originalStart ?? combine(dayStart: dayStart, time: defaultDate(dayStart, hour: defaultStartHour))
+        let end = originalEnd ?? combine(dayStart: dayStart, time: defaultDate(dayStart, hour: defaultEndHour, minute: defaultEndMinute))
+        return (start, end)
+    }
+
+    /// 当天零点 + 目标时刻的时分（时区安全，避免用 24*3600 硬加）
+    private static func combine(dayStart: Date, time: Date) -> Date {
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: time)
+        return Calendar.current.date(byAdding: comps, to: dayStart) ?? dayStart
+    }
+
+    private static func defaultDate(_ dayStart: Date, hour: Int, minute: Int = 0) -> Date {
+        var comps = DateComponents()
+        comps.hour = hour
+        comps.minute = minute
+        return Calendar.current.date(byAdding: comps, to: dayStart) ?? dayStart
+    }
+}
+
 /// 表单标签：11pt 次要色、左对齐、固定列宽
 struct FormLabel: View {
     let text: String

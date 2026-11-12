@@ -2,11 +2,10 @@
 //  EventFormTimeSemanticsTests.swift
 //  SwallowCalendarTests
 //
-//  表单时间语义回归（2026-11-08 重写）
-//  历史版本 7 条用例针对「移除全天开关」的临时实现（newTaskTimeParams /
-//  editedTimeParams / CalendarService.allDayEndDate），该实现已回退且相关 API 不存在；
-//  现按当前实现重写：全天编辑未改日期保留原 endDate、改日期按原跨度平移，
-//  非全天不套用全天结束规则。
+//  表单时间语义回归（2026-11-12 全天时间口径重写）
+//  全天勾选后新增「起始时间/结束时间」控件（默认 09:00/23:00，必填），
+//  保存时携带所选时分落库（isAllDay 仍为全天）；
+//  存量全天事件编辑回填保留原值、缺省补默认。
 //
 
 import XCTest
@@ -26,81 +25,55 @@ final class EventFormTimeSemanticsTests: XCTestCase {
         return Calendar.current.date(from: components)!
     }
 
-    /// 全天结束时间的历史原值（含结束日 23:59:59）
-    private func allDayEnd(_ day: Date) -> Date {
-        day.addingTimeInterval(24 * 3600 - 1)
-    }
+    // MARK: - 全天保存组装（起始/结束时分落到「日期行」当天）
 
-    // MARK: - 全天编辑
-
-    /// 未改日期：服务层收到 nil，保留原 endDate（不写成次日 00:00）
-    func testAllDayEditWithoutDateChangeKeepsOriginalEnd() {
-        let start = date(2026, 12, 1)
-        let end = allDayEnd(start)
-        XCTAssertNil(
-            EditEventSheet.allDayEndDateOnEdit(
-                eventIsAllDay: true, originalStart: start, originalEnd: end, newStart: start
-            )
-        )
-    }
-
-    /// 同一天内只改时分：仍视为日期未变，保留原 endDate
-    func testAllDayEditSameDayTimeChangeStillKeepsOriginalEnd() {
-        let start = date(2026, 12, 1)
-        let end = allDayEnd(start)
-        let newStart = date(2026, 12, 1, hour: 8, minute: 30)
-        XCTAssertNil(
-            EditEventSheet.allDayEndDateOnEdit(
-                eventIsAllDay: true, originalStart: start, originalEnd: end, newStart: newStart
-            )
-        )
-    }
-
-    /// 改日期（跨月 10/31 → 11/1）：结束按原跨度平移
-    func testAllDayEditWithDateShiftKeepsSpanAcrossMonth() {
-        let start = date(2026, 10, 31)
-        let end = allDayEnd(start)
-        let newStart = date(2026, 11, 1)
-        let result = EditEventSheet.allDayEndDateOnEdit(
-            eventIsAllDay: true, originalStart: start, originalEnd: end, newStart: newStart
-        )
-        let expected = end.addingTimeInterval(24 * 3600)
-        XCTAssertEqual(result?.timeIntervalSince1970 ?? 0, expected.timeIntervalSince1970, accuracy: 0.001)
-    }
-
-    /// 改日期（跨年 12/31 → 次年 1/1）：结束按原跨度平移
-    func testAllDayEditWithDateShiftKeepsSpanAcrossYear() {
-        let start = date(2026, 12, 31)
-        let end = allDayEnd(start)
-        let newStart = date(2027, 1, 1)
-        let result = EditEventSheet.allDayEndDateOnEdit(
-            eventIsAllDay: true, originalStart: start, originalEnd: end, newStart: newStart
-        )
-        let expected = end.addingTimeInterval(24 * 3600)
-        XCTAssertEqual(result?.timeIntervalSince1970 ?? 0, expected.timeIntervalSince1970, accuracy: 0.001)
-    }
-
-    /// 连续多日全天（10/30–11/01）改到 11/02：跨度 3 天保持
-    func testMultiDayAllDayEditKeepsOriginalSpan() {
-        let start = date(2026, 10, 30)
-        let end = allDayEnd(date(2026, 11, 1))
-        let newStart = date(2026, 11, 2)
-        let result = EditEventSheet.allDayEndDateOnEdit(
-            eventIsAllDay: true, originalStart: start, originalEnd: end, newStart: newStart
-        )
-        let expected = end.addingTimeInterval(3 * 24 * 3600)
-        XCTAssertEqual(result?.timeIntervalSince1970 ?? 0, expected.timeIntervalSince1970, accuracy: 0.001)
-    }
-
-    /// 原本不是全天：不套用全天结束规则，交服务层按转换语义处理
-    func testTimedEventEditDoesNotUseAllDayEndRule() {
+    /// 默认时分（09:00/23:00）：start/end 均落在日期行当天
+    func testAllDayOccurrenceAssemblesDefaultTimes() {
+        let day = date(2026, 12, 1)
         let start = date(2026, 12, 1, hour: 9)
-        let end = start.addingTimeInterval(3600)
-        XCTAssertNil(
-            EditEventSheet.allDayEndDateOnEdit(
-                eventIsAllDay: false, originalStart: start, originalEnd: end, newStart: start
-            )
-        )
+        let end = date(2026, 12, 1, hour: 23)
+        let result = AllDayTimeRules.occurrence(day: day, startTime: start, endTime: end)
+        XCTAssertEqual(result.start.timeIntervalSince1970, date(2026, 12, 1, hour: 9).timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(result.end.timeIntervalSince1970, date(2026, 12, 1, hour: 23).timeIntervalSince1970, accuracy: 0.001)
+    }
+
+    /// 自定义时分：组装跟随控件值；end 日期强制同 start 当天（end 控件改到次日时钳回当天）
+    func testAllDayOccurrenceFollowsCustomTimesAndClampsEndToStartDay() {
+        let day = date(2026, 10, 31)
+        let startTime = date(2026, 10, 30, hour: 8, minute: 30)   // 时分有意带别的日期
+        let endTime = date(2026, 11, 2, hour: 17, minute: 45)
+        let result = AllDayTimeRules.occurrence(day: day, startTime: startTime, endTime: endTime)
+        XCTAssertEqual(result.start.timeIntervalSince1970, date(2026, 10, 31, hour: 8, minute: 30).timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(result.end.timeIntervalSince1970, date(2026, 10, 31, hour: 17, minute: 45).timeIntervalSince1970, accuracy: 0.001)
+    }
+
+    // MARK: - 编辑面板全天初值回填（保留原值、缺省补默认）
+
+    /// 存量全天事件：起始/结束保留原值（如 00:00、23:59:59）
+    func testAllDayInitialTimesKeepOriginalValues() {
+        let day = date(2026, 12, 1)
+        let originalStart = date(2026, 12, 1)
+        let originalEnd = date(2026, 12, 1, hour: 23, minute: 59, second: 59)
+        let result = AllDayTimeRules.initialTimes(originalStart: originalStart, originalEnd: originalEnd, day: day)
+        XCTAssertEqual(result.start.timeIntervalSince1970, originalStart.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(result.end.timeIntervalSince1970, originalEnd.timeIntervalSince1970, accuracy: 0.001)
+    }
+
+    /// 缺省补默认：无 startDate → 当天 00:00；无 endDate → 当天 23:59
+    func testAllDayInitialTimesFallbackToDefaults() {
+        let day = date(2026, 12, 1)
+        let result = AllDayTimeRules.initialTimes(originalStart: nil, originalEnd: nil, day: day)
+        XCTAssertEqual(result.start.timeIntervalSince1970, date(2026, 12, 1).timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(result.end.timeIntervalSince1970, date(2026, 12, 1, hour: 23, minute: 59).timeIntervalSince1970, accuracy: 0.001)
+    }
+
+    /// 部分缺省：有起始无结束 → 结束补默认当天 23:59
+    func testAllDayInitialTimesFillsMissingEndOnly() {
+        let day = date(2026, 12, 1)
+        let originalStart = date(2026, 12, 1, hour: 6, minute: 30)
+        let result = AllDayTimeRules.initialTimes(originalStart: originalStart, originalEnd: nil, day: day)
+        XCTAssertEqual(result.start.timeIntervalSince1970, originalStart.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(result.end.timeIntervalSince1970, date(2026, 12, 1, hour: 23, minute: 59).timeIntervalSince1970, accuracy: 0.001)
     }
 
     /// 循环展开实例：时间类参数仍全部裁剪（BUG-06 语义不变）

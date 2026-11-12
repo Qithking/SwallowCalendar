@@ -242,6 +242,9 @@ final class ReminderAlertService {
         for event in events {
             // B：已转单次且保留历史的本体行不再产生未来提醒（历史期次已完成，仅展示不提醒）
             guard !(event.hasCompletedHistory && !event.isRecurringActive) else { continue }
+            // 全天 + 永不循环（无活跃循环）：不参与到点提醒调度，
+            // 仅随应用启动时的过期待办弹窗提示（hourly 循环全天任务仍逐期到点弹）
+            if event.isAllDay && !event.isRecurringActive { continue }
             guard !HolidaySkipResolver.isSkipped(of: event, context: context) else { continue }
             guard let startDate = event.startDate else { continue }
             var offsets = event.reminderOffsets
@@ -424,6 +427,10 @@ final class ReminderAlertService {
                         }
                     }
                 } else {
+                    // 全天 + 永不循环（无活跃循环）：常规轮询不弹到点提醒，
+                    // 仅随应用启动时的过期待办弹窗提示（includeExpired 路径不过滤）；
+                    // hourly 循环全天任务仍逐期到点弹（与动态调度 nextTriggerTime 同口径）
+                    if event.isAllDay && !event.isRecurringActive { continue }
                     // 常规定时检查：逐级窗口判定 [windowStart, now]；
                     // 0 档（准点提醒/未设置提醒 fallback）视为准点档 alertTime=startDate
                     // （与启动检查「未设置提醒过期弹 startDate」对齐，

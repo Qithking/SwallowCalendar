@@ -40,6 +40,10 @@ struct TaskInputView: View {
     @State private var createAsReminder = false  // 是否创建为系统提醒
     // 全天由用户显式控制，NLP"明天"解析为 00:00 不再被隐式误判为全天
     @State private var taskIsAllDay = false
+    /// 全天起始时间控件（仅时分，默认 09:00；必填，保存时落库携带时分）
+    @State private var taskAllDayStart = Date()
+    /// 全天结束时间控件（仅时分，默认 23:00；必填，保存时落库携带时分）
+    @State private var taskAllDayEnd = Date()
     // 智能跳过节假日：勾选后 startDate 落休日顺延至下一个班日显示与提醒
     @State private var taskSkipHolidays = false
     // 任务有效期（spec/task-validity-period）：总开关默认关；开启后开始端默认勾选=任务日期、结束端不勾选
@@ -201,6 +205,36 @@ struct TaskInputView: View {
                             .toggleStyle(.switch)
                             .labelsHidden()
                             .formToggleSizing()
+                            .onChange(of: taskIsAllDay) { _, newValue in
+                                // 勾选全天：起始/结束时间补默认 00:00/23:59（日期取当前任务日期当天）
+                                if newValue {
+                                    let initial = AllDayTimeRules.initialTimes(originalStart: nil, originalEnd: nil, day: taskDate)
+                                    taskAllDayStart = initial.start
+                                    taskAllDayEnd = initial.end
+                                    // 全天仅支持永不/每小时/自定义小时级：非法预设收敛为永不，自定义非小时频率钳回
+                                    if !RecurrencePickerView.hourlyOnlyAllowedPresets.contains(taskPreset) {
+                                        taskPreset = .never
+                                        taskSpec = nil
+                                        taskRecurrence = .none
+                                        manuallyEditedRecurrence = true
+                                    } else if taskPreset == .custom, taskSpec?.frequency != .hourly {
+                                        taskSpec?.frequency = .hourly
+                                    }
+                                }
+                            }
+                    }
+                    // 全天起始/结束时间（仅时分，默认 00:00/23:59；必填恒有值，随保存落库）
+                    if taskIsAllDay {
+                        FormRow("起始时间") {
+                            DatePicker("", selection: $taskAllDayStart, displayedComponents: [.hourAndMinute])
+                                .labelsHidden()
+                                .formControlSizing()
+                        }
+                        FormRow("结束时间") {
+                            DatePicker("", selection: $taskAllDayEnd, displayedComponents: [.hourAndMinute])
+                                .labelsHidden()
+                                .formControlSizing()
+                        }
                     }
                     FormRow("农历") {
                         Toggle("", isOn: Binding(
@@ -234,7 +268,9 @@ struct TaskInputView: View {
                                 set: { taskSpec = $0; taskRecurrence = $0?.legacyType ?? .none }
                             ),
                             anchor: taskDate,
-                            isLunar: taskIsLunar
+                            isLunar: taskIsLunar,
+                            // 全天事项仅支持永不/每小时/自定义小时级（其他档灰显）
+                            hourlyOnly: taskIsAllDay
                         )
                     }
                     FormRow("限制有效期") {
@@ -381,10 +417,14 @@ struct TaskInputView: View {
 
         Task { @MainActor in
             do {
+                // 全天：起始/结束时分落到任务日期当天（默认 09:00/23:00，必填随保存落库）
+                let allDayParams = isAllDay
+                    ? AllDayTimeRules.occurrence(day: taskDate, startTime: taskAllDayStart, endTime: taskAllDayEnd)
+                    : nil
                 try calendarService.createEvent(
                     title: taskTitle.isEmpty ? "待办事项" : taskTitle,
-                    startDate: taskDate,
-                    endDate: isAllDay ? nil : taskDate.addingTimeInterval(3600),
+                    startDate: isAllDay ? allDayParams!.start : taskDate,
+                    endDate: isAllDay ? allDayParams!.end : taskDate.addingTimeInterval(3600),
                     isAllDay: isAllDay,
                     calendar: nil,
                     priority: taskPriority == .none ? nil : taskPriority,
@@ -419,6 +459,9 @@ struct TaskInputView: View {
         taskReminderOffsets = []
         taskIsLunar = false
         taskIsAllDay = false
+        // 全天起始/结束时间复位（勾选全天时由 onChange 重新补默认 09:00/23:00）
+        taskAllDayStart = Date()
+        taskAllDayEnd = Date()
         createAsReminder = false
         taskSkipHolidays = false
         // 有效期复位：总开关关 + 默认两端勾选态（spec Assumption：开=开始勾选/结束不勾选）

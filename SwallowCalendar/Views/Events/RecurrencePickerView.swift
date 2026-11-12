@@ -15,11 +15,19 @@ struct RecurrencePickerView: View {
     /// 用户改动后回调（父视图同步旧档位字段与「手动修改」标记）
     var onChange: () -> Void = {}
 
+    /// 全天事项的周期档位限制（需求：仅支持「永不」「每小时」与自定义小时级；
+    /// 其他档位灰显不可选——存量非法档仍显示原值，用户重选后收敛）
+    var hourlyOnly: Bool = false
+
+    /// 全天事项可选的周期档位
+    static let hourlyOnlyAllowedPresets: Set<RecurrencePreset> = [.never, .hourly, .custom]
+
     var body: some View {
         VStack(alignment: .leading, spacing: FormMetrics.rowSpacing) {
             Picker("", selection: $preset) {
                 ForEach(RecurrencePreset.allCases) { item in
                     Text(item.title).tag(item)
+                        .disabled(hourlyOnly && !Self.hourlyOnlyAllowedPresets.contains(item))
                 }
             }
             .labelsHidden()
@@ -30,11 +38,19 @@ struct RecurrencePickerView: View {
                 guard newValue != .custom else {
                     // 自定义进入时保证有可编辑底稿（保留现有维度）
                     if spec == nil { spec = RecurrenceSpec.customDraft }
+                    // 全天事项：自定义频率锁定小时级（底稿已是 hourly；存量其他频率钳回）
+                    if hourlyOnly, spec?.frequency != .hourly {
+                        spec?.frequency = .hourly
+                    }
                     onChange()
                     return
                 }
                 spec = RecurrenceSpec.spec(for: newValue, anchor: anchor, current: spec)
                 onChange()
+            }
+
+            if hourlyOnly {
+                FormHint("全天事项仅支持「永不」「每小时」或自定义小时级重复")
             }
 
             if preset == .custom, spec != nil {
@@ -91,6 +107,7 @@ struct RecurrencePickerView: View {
                 Picker("", selection: binding.frequency) {
                     ForEach(RecurrenceFrequency.allCases, id: \.self) { frequency in
                         Text("每\(frequency.displayName)").tag(frequency)
+                            .disabled(hourlyOnly && frequency != .hourly)
                     }
                 }
                 .labelsHidden()

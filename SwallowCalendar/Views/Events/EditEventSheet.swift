@@ -25,6 +25,10 @@ struct EditEventSheet: View {
     @State private var title: String
     @State private var startDate: Date
     @State private var isAllDay: Bool
+    /// 全天起始时间控件（仅时分，默认 09:00；必填，保存时落库携带时分）
+    @State private var allDayStart: Date = Date()
+    /// 全天结束时间控件（仅时分，默认 23:00；必填，保存时落库携带时分）
+    @State private var allDayEnd: Date = Date()
     // 智能跳过节假日：初始值从缓存读取，保存时写回
     @State private var skipHolidays = false
     // 任务有效期（spec/task-validity-period）：控件态从缓存读初值；
@@ -84,21 +88,6 @@ struct EditEventSheet: View {
         return (nil, nil, nil)
     }
 
-    /// 编辑保存全天事件时的 endDate 决策：
-    /// - 原本不是全天 → nil（服务层按单日处理）
-    /// - 原本全天且未改日期 → nil（服务层保留原 endDate，避免 23:59:59 被改写）
-    /// - 原本全天且改了日期 → 原 endDate 按新开始时间平移（保持跨度，跨月/跨年安全）
-    static func allDayEndDateOnEdit(
-        eventIsAllDay: Bool,
-        originalStart: Date?,
-        originalEnd: Date?,
-        newStart: Date
-    ) -> Date? {
-        guard eventIsAllDay, let originalStart, let originalEnd,
-              !Calendar.current.isDate(newStart, inSameDayAs: originalStart) else { return nil }
-        return originalEnd.addingTimeInterval(newStart.timeIntervalSince(originalStart))
-    }
-
     /// 当前编辑对象是否为循环展开出的单期行（复合 ID）
     private var isOccurrenceInstance: Bool {
         CachedEvent.parseOccurrenceID(event.id) != nil
@@ -113,6 +102,14 @@ struct EditEventSheet: View {
         _title = State(initialValue: event.title)
         _startDate = State(initialValue: event.startDate ?? Date())
         _isAllDay = State(initialValue: event.isAllDay)
+        // 全天初值回填：起始/结束时间控件保留存量原值、缺省补默认（09:00/23:00）
+        if event.isAllDay {
+            let initial = AllDayTimeRules.initialTimes(
+                originalStart: event.startDate, originalEnd: event.endDate, day: event.startDate ?? Date()
+            )
+            _allDayStart = State(initialValue: initial.start)
+            _allDayEnd = State(initialValue: initial.end)
+        }
 
         // 获取原始周期（从缓存读取本体记录，occurrence 虚拟行复合 ID 已在快照查询内解析）
         var snapshotValidity: ValidityPeriod? = nil
@@ -254,6 +251,22 @@ struct EditEventSheet: View {
                             // 单期行不允许改时间，避免回拨整条序列游标
                             .disabled(isOccurrenceInstance)
                     }
+                    .onChange(of: isAllDay) { _, newValue in
+                        // 定时转全天：起始/结束时间补默认 00:00/23:59（日期取当前日期行当天）
+                        if newValue {
+                            let initial = AllDayTimeRules.initialTimes(originalStart: nil, originalEnd: nil, day: startDate)
+                            allDayStart = initial.start
+                            allDayEnd = initial.end
+                            // 全天仅支持永不/每小时/自定义小时级：非法预设收敛为永不，自定义非小时频率钳回
+                            if !RecurrencePickerView.hourlyOnlyAllowedPresets.contains(taskPreset) {
+                                taskPreset = .never
+                                taskSpec = nil
+                                taskRecurrence = .none
+                            } else if taskPreset == .custom, taskSpec?.frequency != .hourly {
+                                taskSpec?.frequency = .hourly
+                            }
+                        }
+                    }
 
                     FormRow("日期") {
                         DatePicker("", selection: $startDate, displayedComponents: isAllDay ? [.date] : [.date, .hourAndMinute])
@@ -261,6 +274,22 @@ struct EditEventSheet: View {
                             .disabled(isOccurrenceInstance)
                             // 固有宽度 + FormRow 的 trailing 容器：右边缘与「全天」开关共线
                             .formControlSizing()
+                    }
+
+                    // 全天起始/结束时间（仅时分，默认 09:00/23:00；必填恒有值，随保存落库）
+                    if isAllDay {
+                        FormRow("起始时间") {
+                            DatePicker("", selection: $allDayStart, displayedComponents: [.hourAndMinute])
+                                .labelsHidden()
+                                .disabled(isOccurrenceInstance)
+                                .formControlSizing()
+                        }
+                        FormRow("结束时间") {
+                            DatePicker("", selection: $allDayEnd, displayedComponents: [.hourAndMinute])
+                                .labelsHidden()
+                                .disabled(isOccurrenceInstance)
+                                .formControlSizing()
+                        }
                     }
 
                     if isOccurrenceInstance {
@@ -283,7 +312,9 @@ struct EditEventSheet: View {
                                 set: { taskSpec = $0; taskRecurrence = $0?.legacyType ?? .none }
                             ),
                             anchor: startDate,
-                            isLunar: isLunar
+                            isLunar: isLunar,
+                            // 全天事项仅支持永不/每小时/自定义小时级（其他档灰显）
+                            hourlyOnly: isAllDay
                         )
                     }
 
@@ -413,19 +444,20 @@ struct EditEventSheet: View {
             do {
                 // 非全天保存时保留原截止时间：原带时间事项按开始时间平移量平移原 endDate（时长不变，
                 // 未改开始时间时截止时间保持原值）；全天转带时间无原始时长可保，才兜底开始时间 + 1 小时
+                let newStartDate: Date
                 let newEndDate: Date?
                 if isAllDay {
-                    // 全天：未改日期保留原 endDate；改日期按原跨度平移（跨月/跨年安全）
-                    newEndDate = Self.allDayEndDateOnEdit(
-                        eventIsAllDay: event.isAllDay,
-                        originalStart: event.startDate,
-                        originalEnd: event.endDate,
-                        newStart: startDate
-                    )
-                } else if !event.isAllDay, let originalStart = event.startDate, let originalEnd = event.endDate {
-                    newEndDate = originalEnd.addingTimeInterval(startDate.timeIntervalSince(originalStart))
+                    // 全天：起始/结束时分落到日期行当天（默认 09:00/23:00），随保存落库
+                    let allDay = AllDayTimeRules.occurrence(day: startDate, startTime: allDayStart, endTime: allDayEnd)
+                    newStartDate = allDay.start
+                    newEndDate = allDay.end
                 } else {
-                    newEndDate = startDate.addingTimeInterval(3600)
+                    newStartDate = startDate
+                    if !event.isAllDay, let originalStart = event.startDate, let originalEnd = event.endDate {
+                        newEndDate = originalEnd.addingTimeInterval(startDate.timeIntervalSince(originalStart))
+                    } else {
+                        newEndDate = startDate.addingTimeInterval(3600)
+                    }
                 }
                 // 有效期三态：与 init 快照比较——
                 // 相等 = 未触碰传 nil 保持原值；不等 = .some(currentValidity)
@@ -438,7 +470,7 @@ struct EditEventSheet: View {
                 // 展开实例传 nil 时间参数，服务层也会二次丢弃（双保险）
                 let timeParams = Self.sanitizedTimeParams(
                     for: event.id,
-                    startDate: startDate,
+                    startDate: newStartDate,
                     endDate: newEndDate,
                     isAllDay: isAllDay
                 )

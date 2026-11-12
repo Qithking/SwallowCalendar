@@ -141,4 +141,46 @@ final class ReminderAlertDynamicScheduleTests: XCTestCase {
         )
         XCTAssertEqual(nextNormal, saturday, "未勾选跳过的对照事件应正常命中准点档")
     }
+
+    // MARK: - 全天 + 永不循环：不参与到点提醒调度（仅随启动过期弹窗提示）
+
+    /// 全天 + 无循环任务：动态调度不应为其生成准点触发时刻
+    func testAllDayNonRecurringEventExcludedFromScheduling() throws {
+        let start = anchor.addingTimeInterval(600)
+        let event = makeEvent(id: "allday-never", start: start)
+        event.isAllDay = true
+        try context.save()
+
+        let next = ReminderAlertService.nextTriggerTime(
+            now: anchor, events: [event], snoozeRecords: [], context: context
+        )
+        XCTAssertNil(next, "全天永不循环任务不参与到点提醒调度，仅随启动过期弹窗提示")
+    }
+
+    /// 全天 + 小时级循环（hourly）：仍逐期到点调度（每期 occurrence 到点弹）
+    func testAllDayHourlyRecurringEventStillScheduled() throws {
+        let start = anchor.addingTimeInterval(600)
+        let event = makeEvent(id: "allday-hourly", start: start)
+        event.isAllDay = true
+        event.recurrenceType = .custom
+        event.recurrenceSpec = RecurrenceSpec(frequency: .hourly, interval: 1)
+        try context.save()
+
+        let next = ReminderAlertService.nextTriggerTime(
+            now: anchor, events: [event], snoozeRecords: [], context: context
+        )
+        XCTAssertEqual(next, start, "每小时循环的全天任务仍按期到点触发")
+    }
+
+    /// 带时间的非全天任务不受过滤影响（回归对照）
+    func testTimedNonRecurringEventStillScheduled() throws {
+        let start = anchor.addingTimeInterval(600)
+        let event = makeEvent(id: "timed-never", start: start)
+        try context.save()
+
+        let next = ReminderAlertService.nextTriggerTime(
+            now: anchor, events: [event], snoozeRecords: [], context: context
+        )
+        XCTAssertEqual(next, start, "带时间的永不循环任务照常准点触发")
+    }
 }
