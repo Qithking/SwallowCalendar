@@ -245,9 +245,11 @@ struct DesktopTodoPanelView: View {
         .windowBackgroundDrag()
         .tint(Color(hex: appSettings.accentColorHex))
         .onAppear {
-            // 初始档 = 应用设置「默认显示待办」（映射四档，「全部」回退本月）
+            // 初始档 = 上次选择的过滤档（改档即持久化）；无记忆时回退应用设置
+            //「默认显示待办」（映射四档，「全部」回退本月）。
             // 改档后由 onChange(mode) 链路 reload，无条件 reload 会造成挂载双查库
-            let initialMode = DesktopTodoPanelFilter.defaultMode(from: appSettings.defaultFilterModeEnum)
+            let initialMode = appSettings.todoPanelFilterModeEnum
+                ?? DesktopTodoPanelFilter.defaultMode(from: appSettings.defaultFilterModeEnum)
             if initialMode == mode {
                 reload()
             } else {
@@ -273,7 +275,10 @@ struct DesktopTodoPanelView: View {
         .onChange(of: appSettings.defaultFilterModeEnum) { _, newMode in
             mode = DesktopTodoPanelFilter.defaultMode(from: newMode)
         }
-        .onChange(of: mode) { _, _ in
+        .onChange(of: mode) { _, newMode in
+            // 改档即持久化（下次启动加载上次选择）；设置「默认显示待办」联动
+            // 改档同样会走到这里，联动结果也记为上次选择
+            appSettings.todoPanelFilterMode = newMode.rawValue
             reload()
         }
         .onChange(of: statusFilter) { _, _ in

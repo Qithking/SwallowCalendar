@@ -140,6 +140,20 @@ final class AppSettings {
         }
     }
 
+    /// 桌面面板过滤档持久化（rawValue 字符串；空串=无记忆，回退「默认显示待办」设置）
+    /// - Note: 面板改档即保存；下次启动加载上次选择，无记忆时按设置默认映射四档
+    var todoPanelFilterMode: String {
+        didSet {
+            UserDefaults.standard.set(todoPanelFilterMode, forKey: "todoPanelFilterMode")
+        }
+    }
+
+    /// 面板过滤档解析：仅面板四档合法；空串/「全部」档/脏数据 → nil（回退设置默认）
+    var todoPanelFilterModeEnum: EventFilterMode? {
+        let mode = EventFilterMode(rawValue: todoPanelFilterMode)
+        return DesktopTodoPanelFilter.modes.contains(mode ?? .today) ? mode : nil
+    }
+
     /// 桌面待办面板显示屏幕偏好（displayID 字符串；空串=默认主屏幕）
     /// - Note: 外接屏拔出后 ID 无法匹配，面板回退主屏幕（targetScreen 纯函数）
     var todoPanelScreenID: String {
@@ -318,6 +332,9 @@ final class AppSettings {
         self.statusBarCountdownEnabled = UserDefaults.standard.object(forKey: "statusBarCountdownEnabled") as? Bool ?? false
         // 「显示待办面板」：新键直读（默认菜单栏图标）；旧 Bool 开关键存在则迁移
         //（true→两者/false→菜单栏图标）并删除旧键，升级用户行为零回归；
+        // 桌面面板过滤档记忆（空串=无记忆，回退「默认显示待办」设置）；须在迁移分支前初始化
+        self.todoPanelFilterMode = UserDefaults.standard.string(forKey: "todoPanelFilterMode") ?? ""
+
         // 桌面待办面板显示屏幕（空串=默认主屏幕）；须在迁移分支前初始化（分支内读 self 属性）
         self.todoPanelScreenID = UserDefaults.standard.string(forKey: "todoPanelScreenID") ?? ""
 
