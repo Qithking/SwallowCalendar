@@ -140,15 +140,41 @@ final class AppSettings {
         }
     }
 
-    /// 桌面面板过滤档持久化（rawValue 字符串；空串=无记忆，回退「默认显示待办」设置）
-    /// - Note: 面板改档即保存；下次启动加载上次选择，无记忆时按设置默认映射四档
+    /// 主界面过滤档持久化（五档含「全部」；空串=无记忆，视图回退本月）
+    /// - Note: 设置项「默认显示待办」已移除，主界面改档即持久化、启动加载上次选择
+    var mainFilterMode: String {
+        didSet {
+            UserDefaults.standard.set(mainFilterMode, forKey: "mainFilterMode")
+        }
+    }
+
+    /// 主界面过滤档解析（EventFilterMode 全档合法）：空串/脏数据 → nil
+    var mainFilterModeEnum: EventFilterMode? {
+        EventFilterMode(rawValue: mainFilterMode)
+    }
+
+    /// 菜单栏 hover 弹层过滤档持久化（四档；空串/「全部」/脏数据 → nil，视图回退本月）
+    var hoverFilterMode: String {
+        didSet {
+            UserDefaults.standard.set(hoverFilterMode, forKey: "hoverFilterMode")
+        }
+    }
+
+    /// 弹层过滤档解析：仅面板四档合法（弹层/面板同档位集）
+    var hoverFilterModeEnum: EventFilterMode? {
+        let mode = EventFilterMode(rawValue: hoverFilterMode)
+        return DesktopTodoPanelFilter.modes.contains(mode ?? .today) ? mode : nil
+    }
+
+    /// 桌面面板过滤档持久化（rawValue 字符串；空串=无记忆，视图回退今天）
+    /// - Note: 面板改档即保存；下次启动加载上次选择
     var todoPanelFilterMode: String {
         didSet {
             UserDefaults.standard.set(todoPanelFilterMode, forKey: "todoPanelFilterMode")
         }
     }
 
-    /// 面板过滤档解析：仅面板四档合法；空串/「全部」档/脏数据 → nil（回退设置默认）
+    /// 面板过滤档解析：仅面板四档合法；空串/「全部」档/脏数据 → nil
     var todoPanelFilterModeEnum: EventFilterMode? {
         let mode = EventFilterMode(rawValue: todoPanelFilterMode)
         return DesktopTodoPanelFilter.modes.contains(mode ?? .today) ? mode : nil
@@ -207,17 +233,8 @@ final class AppSettings {
         }
     }
 
-    /// 默认显示待办过滤模式
-    var defaultFilterMode: String {
-        didSet {
-            UserDefaults.standard.set(defaultFilterMode, forKey: "defaultFilterMode")
-        }
-    }
-
-    /// 获取 EventFilterMode 枚举值
-    var defaultFilterModeEnum: EventFilterMode {
-        EventFilterMode(rawValue: defaultFilterMode) ?? .thisMonth
-    }
+    // 「默认显示待办」设置项已移除（2026-11-12）：三入口（主界面/弹层/桌面面板）
+    // 过滤档各自持久化记忆，不再有全局默认档设置
 
     var colorScheme: ColorScheme? {
         switch themeMode {
@@ -328,11 +345,12 @@ final class AppSettings {
         self.dueAlertSound = DueAlertSound(rawValue: UserDefaults.standard.string(forKey: "dueAlertSound") ?? "") ?? .none
         self.sortMode = SortMode(rawValue: UserDefaults.standard.string(forKey: "sortMode") ?? "") ?? .default
         self.sortOrder = SortOrder(rawValue: UserDefaults.standard.string(forKey: "sortOrder") ?? "") ?? .descending
-        self.defaultFilterMode = UserDefaults.standard.string(forKey: "defaultFilterMode") ?? "本月"
         self.statusBarCountdownEnabled = UserDefaults.standard.object(forKey: "statusBarCountdownEnabled") as? Bool ?? false
         // 「显示待办面板」：新键直读（默认菜单栏图标）；旧 Bool 开关键存在则迁移
         //（true→两者/false→菜单栏图标）并删除旧键，升级用户行为零回归；
-        // 桌面面板过滤档记忆（空串=无记忆，回退「默认显示待办」设置）；须在迁移分支前初始化
+        // 过滤档持久化记忆（三入口各自独立；须在迁移分支前初始化——分支内读 self 属性）
+        self.mainFilterMode = UserDefaults.standard.string(forKey: "mainFilterMode") ?? ""
+        self.hoverFilterMode = UserDefaults.standard.string(forKey: "hoverFilterMode") ?? ""
         self.todoPanelFilterMode = UserDefaults.standard.string(forKey: "todoPanelFilterMode") ?? ""
 
         // 桌面待办面板显示屏幕（空串=默认主屏幕）；须在迁移分支前初始化（分支内读 self 属性）

@@ -108,12 +108,8 @@ struct GeneralSettingsView: View {
                     Text("周一").tag(2)
                 }
 
-                // 默认显示待办过滤
-                Picker("默认显示待办", selection: $settings.defaultFilterMode) {
-                    ForEach(EventFilterMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode.rawValue)
-                    }
-                }
+                // 「默认显示待办」设置已移除（2026-11-12）：主界面/弹层/桌面面板
+                // 过滤档各自改档即持久化记忆，无需全局默认档
 
                 // 显示农历
                 Toggle("显示农历", isOn: $settings.showLunarCalendar)

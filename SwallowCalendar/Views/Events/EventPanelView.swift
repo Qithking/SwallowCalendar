@@ -17,7 +17,7 @@ struct EventPanelView: View {
     // 初始值即用户默认档：子列表 onAppear 先于父 onAppear 执行，若初始档为 .thisMonth，
     // 同步首刷会先查出全量再被默认档过滤（闪现全部事项）；初始值取默认档则首刷即最终档，
     // 父 onAppear 同值赋值幂等不触发二刷；设置变更仍由下方 onChange 兜底
-    @State private var filterMode: EventFilterMode = AppSettings.shared.defaultFilterModeEnum
+    @State private var filterMode: EventFilterMode = AppSettings.shared.mainFilterModeEnum ?? .thisMonth
     @State private var refreshTrigger = false
     // 直接读 appSettings 主题色，无需 @State 复制与 onChange 同步
     private var accentColor: Color { Color(hex: appSettings.accentColorHex) }
@@ -156,11 +156,9 @@ struct EventPanelView: View {
         .onChange(of: appSettings.syncSystemReminders) { _, _ in
             refreshTrigger.toggle()
         }
-        .onAppear {
-            filterMode = appSettings.defaultFilterModeEnum
-        }
-        .onChange(of: appSettings.defaultFilterModeEnum) { _, newMode in
-            filterMode = newMode
+        // 「默认显示待办」设置已移除：主界面过滤档改档即持久化，启动加载上次选择
+        .onChange(of: filterMode) { _, newMode in
+            appSettings.mainFilterMode = newMode.rawValue
         }
         .tint(accentColor)
     }

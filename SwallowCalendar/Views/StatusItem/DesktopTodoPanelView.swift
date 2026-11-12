@@ -17,15 +17,9 @@ import SwiftData
 /// - 无日期待办无到期语义，四档恒显示
 /// - 有日期按 EventFilterMode.dateRange 左闭右开区间判定（周起始日由 AppSettings 决定）
 enum DesktopTodoPanelFilter {
-    /// 面板固定四档（复用 EventFilterMode 但不含 .all——spec 明确不设「全部」档）
+    /// 面板固定四档（复用 EventFilterMode 但不含 .all——spec 明确不设「全部」档）；
+    /// 弹层同用本档位集（hoverFilterModeEnum clamp 同口径）
     static let modes: [EventFilterMode] = [.today, .thisWeek, .thisMonth, .thisYear]
-
-    /// 设置「默认显示待办」映射到面板/弹层四档：
-    /// 主界面独有「全部」档 → 回退本月（与 AppSettings defaultFilterModeEnum fallback 一致）；
-    /// 四档原样保留。面板/弹层初始档与设置联动共用本函数（PanelFilterModeClampTests 覆盖）
-    static func defaultMode(from settingsMode: EventFilterMode) -> EventFilterMode {
-        modes.contains(settingsMode) ? settingsMode : .thisMonth
-    }
 
     static func included(
         _ event: CachedEvent,
@@ -245,11 +239,9 @@ struct DesktopTodoPanelView: View {
         .windowBackgroundDrag()
         .tint(Color(hex: appSettings.accentColorHex))
         .onAppear {
-            // 初始档 = 上次选择的过滤档（改档即持久化）；无记忆时回退应用设置
-            //「默认显示待办」（映射四档，「全部」回退本月）。
+            // 初始档 = 上次选择的过滤档（改档即持久化）；无记忆时回退今天（原初始档）。
             // 改档后由 onChange(mode) 链路 reload，无条件 reload 会造成挂载双查库
-            let initialMode = appSettings.todoPanelFilterModeEnum
-                ?? DesktopTodoPanelFilter.defaultMode(from: appSettings.defaultFilterModeEnum)
+            let initialMode = appSettings.todoPanelFilterModeEnum ?? .today
             if initialMode == mode {
                 reload()
             } else {
@@ -271,13 +263,8 @@ struct DesktopTodoPanelView: View {
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             reload()
         }
-        // 设置「默认显示待办」变更联动（主界面 EventPanelView 同款）
-        .onChange(of: appSettings.defaultFilterModeEnum) { _, newMode in
-            mode = DesktopTodoPanelFilter.defaultMode(from: newMode)
-        }
         .onChange(of: mode) { _, newMode in
-            // 改档即持久化（下次启动加载上次选择）；设置「默认显示待办」联动
-            // 改档同样会走到这里，联动结果也记为上次选择
+            // 改档即持久化（下次启动加载上次选择）
             appSettings.todoPanelFilterMode = newMode.rawValue
             reload()
         }

@@ -2,11 +2,10 @@
 //  PanelFilterModeClampTests.swift
 //  SwallowCalendarTests
 //
-//  弹层/面板默认过滤档位回归测试
-//  bug: status-views-filter-default——弹层仅今日语义无档位切换，面板初始档
-//  硬编码 .today，均未使用应用设置「默认显示待办」；
-//  期望：设置值映射到四档（面板/弹层不含「全部」档）——四档原样、
-//  「全部」回退本月（与 AppSettings defaultFilterModeEnum fallback 一致）
+//  过滤档位持久化记忆回归测试（2026-11-12）：
+//  应用设置「默认显示待办」已移除——主界面（五档含全部）、菜单栏 hover 弹层
+//  （四档）、桌面面板（四档）三入口各自改档即持久化，启动加载上次选择；
+//  无记忆（空串/脏数据）时按入口原默认初始化（主界面/弹层本月、面板今天）。
 //
 
 import XCTest
@@ -15,21 +14,56 @@ import XCTest
 @MainActor
 final class PanelFilterModeClampTests: XCTestCase {
 
-    /// 四档原样保留（today/thisWeek/thisMonth/thisYear）
-    func testClampKeepsPanelModes() {
-        for mode in DesktopTodoPanelFilter.modes {
-            XCTAssertEqual(DesktopTodoPanelFilter.defaultMode(from: mode), mode,
-                           "四档 \(mode.rawValue) 应原样保留")
+    // MARK: - 主界面过滤档（五档含「全部」）
+
+    /// mainFilterMode didSet 写入 UserDefaults（round-trip）
+    func testMainFilterModePersists() {
+        AppSettings.shared.mainFilterMode = EventFilterMode.all.rawValue
+        XCTAssertEqual(
+            UserDefaults.standard.string(forKey: "mainFilterMode"),
+            EventFilterMode.all.rawValue
+        )
+        AppSettings.shared.mainFilterMode = ""
+    }
+
+    /// 存储值解析：五档合法值原样；空串/脏数据 → nil（视图回退本月）
+    func testMainFilterModeEnumParses() {
+        for mode in EventFilterMode.allCases {
+            AppSettings.shared.mainFilterMode = mode.rawValue
+            XCTAssertEqual(AppSettings.shared.mainFilterModeEnum, mode,
+                           "主界面五档 \(mode.rawValue) 应原样保留")
         }
+        AppSettings.shared.mainFilterMode = "garbage"
+        XCTAssertNil(AppSettings.shared.mainFilterModeEnum, "脏数据应返回 nil")
+        AppSettings.shared.mainFilterMode = ""
     }
 
-    /// 设置为「全部」（主界面独有档）时回退本月——弹层/面板无全部档
-    func testClampAllFallsBackToThisMonth() {
-        XCTAssertEqual(DesktopTodoPanelFilter.defaultMode(from: .all), .thisMonth,
-                       "「全部」档应回退本月（与 AppSettings fallback 一致）")
+    // MARK: - 弹层过滤档（四档，无「全部」）
+
+    /// hoverFilterMode didSet 写入 UserDefaults（round-trip）
+    func testHoverFilterModePersists() {
+        AppSettings.shared.hoverFilterMode = EventFilterMode.thisWeek.rawValue
+        XCTAssertEqual(
+            UserDefaults.standard.string(forKey: "hoverFilterMode"),
+            EventFilterMode.thisWeek.rawValue
+        )
+        AppSettings.shared.hoverFilterMode = ""
     }
 
-    // MARK: - 面板过滤档持久化（用户需求：改档即保存，下次启动加载上次选择，无记忆回退设置默认）
+    /// 存储值解析：四档合法值原样；空串/「全部」档/脏数据 → nil（视图回退本月）
+    func testHoverFilterModeEnumClampsToPanelModes() {
+        for mode in DesktopTodoPanelFilter.modes {
+            AppSettings.shared.hoverFilterMode = mode.rawValue
+            XCTAssertEqual(AppSettings.shared.hoverFilterModeEnum, mode)
+        }
+        AppSettings.shared.hoverFilterMode = EventFilterMode.all.rawValue
+        XCTAssertNil(AppSettings.shared.hoverFilterModeEnum, "「全部」档不属于弹层四档，应返回 nil")
+        AppSettings.shared.hoverFilterMode = "garbage"
+        XCTAssertNil(AppSettings.shared.hoverFilterModeEnum, "脏数据应返回 nil")
+        AppSettings.shared.hoverFilterMode = ""
+    }
+
+    // MARK: - 桌面面板过滤档（四档，沿用 todoPanelFilterMode）
 
     /// todoPanelFilterMode didSet 写入 UserDefaults（round-trip）
     func testPanelFilterModePersists() {
@@ -50,10 +84,10 @@ final class PanelFilterModeClampTests: XCTestCase {
         AppSettings.shared.todoPanelFilterMode = ""
     }
 
-    /// 存储值解析：空串（默认）/非法值（主界面「全部」档或脏数据）→ nil，调用方回退设置默认
+    /// 存储值解析：空串（默认）/非法值（主界面「全部」档或脏数据）→ nil，调用方回退入口默认
     func testPanelFilterModeEnumReturnsNilForInvalidOrEmpty() {
         AppSettings.shared.todoPanelFilterMode = ""
-        XCTAssertNil(AppSettings.shared.todoPanelFilterModeEnum, "空串应返回 nil（回退设置默认）")
+        XCTAssertNil(AppSettings.shared.todoPanelFilterModeEnum, "空串应返回 nil（回退入口默认）")
 
         AppSettings.shared.todoPanelFilterMode = EventFilterMode.all.rawValue
         XCTAssertNil(AppSettings.shared.todoPanelFilterModeEnum, "「全部」档不属于面板四档，应返回 nil")

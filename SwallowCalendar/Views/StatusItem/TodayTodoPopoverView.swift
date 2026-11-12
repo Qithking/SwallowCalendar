@@ -45,7 +45,11 @@ struct TodayTodoPopoverView: View {
             .labelsHidden()
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .onChange(of: mode) { _, _ in reload() }
+            .onChange(of: mode) { _, newMode in
+                // 改档即持久化（下次启动加载上次选择）
+                appSettings.hoverFilterMode = newMode.rawValue
+                reload()
+            }
 
             Divider()
 
@@ -59,10 +63,10 @@ struct TodayTodoPopoverView: View {
         }
         .frame(width: 300)
         .onAppear {
-            // 初始档 = 应用设置「默认显示待办」（映射四档，「全部」回退本月）
-            // 与桌面面板一致——改档后由 onChange(mode) 链路 reload，
-            // 无条件 reload + 改档触发 onChange 再 reload 会造成挂载双查库
-            let initialMode = DesktopTodoPanelFilter.defaultMode(from: appSettings.defaultFilterModeEnum)
+            // 初始档 = 上次选择的过滤档（改档即持久化）；无记忆时回退本月（原初始档）。
+            // 改档后由 onChange(mode) 链路 reload，无条件 reload + 改档触发 onChange
+            // 再 reload 会造成挂载双查库
+            let initialMode = appSettings.hoverFilterModeEnum ?? .thisMonth
             if initialMode == mode {
                 reload()
             } else {
