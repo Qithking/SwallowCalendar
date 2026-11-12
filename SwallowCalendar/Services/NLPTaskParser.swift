@@ -57,17 +57,22 @@ struct NLPTaskParser {
         // 解析日期（包括农历）
         let dateResult = parseChineseDate(trimmed)
         let title = cleanTitle(trimmed)
+        // 天级日期（matched 非空且无显式时分）标记
+        var isDateOnly = false
 
         // 只给日期、未给时间的输入默认 09:00（原为当天 00:00，提醒落在半夜）；
-        // 输入含显式时间（几点/HH:MM/小时后等）时按输入走，不覆盖
+        // 输入含显式时间（几点/HH:MM/小时后等）时按输入走，不覆盖。
+        // 天级日期（无时分）同时标记全天事件：表单自动勾选「全天」（00:00/23:59 默认起止）
         let parsedDate: Date
         if !dateResult.matched.isEmpty, !Self.containsExplicitTime(dateResult.matched) {
             parsedDate = Self.defaultMorningTime(dateResult.date)
+            isDateOnly = true
         } else {
             parsedDate = dateResult.date
         }
 
         var result = ParsedTask(title: title, date: parsedDate)
+        result.isAllDay = isDateOnly
 
         // 标记是否为农历
         if dateResult.isLunar {
@@ -828,6 +833,8 @@ struct ParsedTask {
     var recurrence: RecurrenceType?
     var isLunar: Bool = false
     var reminderMinutes: Int?
+    /// 只描述日期（天级）、未给具体时间 → 全天事件（如表单「全天」开关自动勾选）
+    var isAllDay: Bool = false
 
     init(title: String, date: Date) {
         self.title = title
@@ -837,5 +844,6 @@ struct ParsedTask {
         self.recurrence = nil
         self.isLunar = false
         self.reminderMinutes = nil
+        self.isAllDay = false
     }
 }

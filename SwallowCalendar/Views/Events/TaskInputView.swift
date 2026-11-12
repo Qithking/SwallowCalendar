@@ -37,6 +37,8 @@ struct TaskInputView: View {
     @State private var manuallyEditedRecurrence = false
     @State private var manuallyEditedReminder = false
     @State private var manuallyEditedLunar = false
+    /// 用户手动改过「全天」开关后，NLP 解析结果不再覆盖该开关
+    @State private var manuallyEditedAllDay = false
     @State private var createAsReminder = false  // 是否创建为系统提醒
     // 全天由用户显式控制，NLP"明天"解析为 00:00 不再被隐式误判为全天
     @State private var taskIsAllDay = false
@@ -200,8 +202,15 @@ struct TaskInputView: View {
                         .formControlSizing()
                     }
                     FormRow("全天") {
-                        // 显式"全天"开关，不按时分==0 隐式推断，用户可控可感知
-                        Toggle("", isOn: $taskIsAllDay)
+                        // 显式"全天"开关，不按时分==0 隐式推断，用户可控可感知；
+                        // 手动勾选/取消后不被 NLP 解析结果覆盖
+                        Toggle(
+                            "",
+                            isOn: Binding(
+                                get: { taskIsAllDay },
+                                set: { taskIsAllDay = $0; manuallyEditedAllDay = true }
+                            )
+                        )
                             .toggleStyle(.switch)
                             .labelsHidden()
                             .formToggleSizing()
@@ -390,6 +399,8 @@ struct TaskInputView: View {
             }
         }
         if !manuallyEditedLunar { taskIsLunar = parsed.isLunar }
+        // 只描述日期（天级）、未给具体时间 → 自动勾选「全天」；用户手动改过开关则不覆盖
+        if !manuallyEditedAllDay { taskIsAllDay = parsed.isAllDay }
     }
 
     private func addTask() {
@@ -480,6 +491,7 @@ struct TaskInputView: View {
         manuallyEditedRecurrence = false
         manuallyEditedReminder = false
         manuallyEditedLunar = false
+        manuallyEditedAllDay = false
     }
 
 }

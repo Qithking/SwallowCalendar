@@ -8,6 +8,25 @@ import XCTest
 
 class NLPTaskParserTests: XCTestCase {
 
+    /// 只描述日期（天级）、未给具体时间的输入 → 按全天事件处理
+    func testDateOnlyInputMarksAllDay() {
+        // 公历日期片段（用户原话样例）
+        XCTAssertTrue(NLPTaskParser.parse("7月2日老张生日").isAllDay)
+        // 相对日期（明天）
+        XCTAssertTrue(NLPTaskParser.parse("明天交报告").isAllDay)
+        // 农历日期片段
+        XCTAssertTrue(NLPTaskParser.parse("农历五月初五吃粽子").isAllDay)
+    }
+
+    /// 含显式时间或无日期的输入 → 不按全天处理
+    func testExplicitTimeOrNoDateNotAllDay() {
+        // 显式时分
+        XCTAssertFalse(NLPTaskParser.parse("明天下午3点开会").isAllDay)
+        XCTAssertFalse(NLPTaskParser.parse("今天上午9点体检").isAllDay)
+        // 无日期分量（matched 为空）
+        XCTAssertFalse(NLPTaskParser.parse("每天 喝水").isAllDay)
+    }
+
     func testParseChineseDateWithTime() {
         // 测试带时间的日期解析
         let result1 = NLPTaskParser.parse("明天下午3点开会")
