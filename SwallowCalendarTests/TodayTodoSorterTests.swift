@@ -45,12 +45,13 @@ final class TodayTodoSorterTests: XCTestCase {
 
     // MARK: - 排序规则
 
-    /// AC-1：无时间未完成置顶，排在有时间未完成之前
-    func testNoTimeIncompletePinnedTop() {
+    /// 无时间未完成排在有时间未完成之后（2026-11-12 口径变更：与主界面一致——
+    /// 无到期事项无紧迫性排末尾，不再置顶）
+    func testNoTimeIncompleteAfterTimed() {
         let noTime = makeEvent(id: "a", startDate: nil)
         let timed = makeEvent(id: "b", startDate: calendar.date(byAdding: .hour, value: -1, to: now))
-        let sorted = TodayTodoSorter.sort([timed, noTime], now: now, calendar: calendar)
-        XCTAssertEqual(sorted.map(\.eventID), ["a", "b"])
+        let sorted = TodayTodoSorter.sort([noTime, timed], now: now, calendar: calendar)
+        XCTAssertEqual(sorted.map(\.eventID), ["b", "a"])
     }
 
     /// AC-1：未完成按 startDate 升序
@@ -85,13 +86,13 @@ final class TodayTodoSorterTests: XCTestCase {
         XCTAssertEqual(sorted.map(\.eventID), ["dNone", "dTime"])
     }
 
-    /// AC-1：综合分组——无时间未完成 > 有时间未完成 > 已完成
+    /// 综合分组（2026-11-12 口径变更）——有时间未完成 < 无时间未完成 < 已完成
     func testFullGroupOrdering() {
         let done = makeEvent(id: "done", startDate: now, isCompleted: true)
         let timed = makeEvent(id: "timed", startDate: now.addingTimeInterval(600))
         let noTime = makeEvent(id: "noTime", startDate: nil)
-        let sorted = TodayTodoSorter.sort([done, timed, noTime], now: now, calendar: calendar)
-        XCTAssertEqual(sorted.map(\.eventID), ["noTime", "timed", "done"])
+        let sorted = TodayTodoSorter.sort([done, noTime, timed], now: now, calendar: calendar)
+        XCTAssertEqual(sorted.map(\.eventID), ["timed", "noTime", "done"])
     }
 
     /// 排序稳定性：同组同时间保持输入顺序

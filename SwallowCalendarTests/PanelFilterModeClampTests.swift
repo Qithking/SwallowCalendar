@@ -63,6 +63,93 @@ final class PanelFilterModeClampTests: XCTestCase {
         AppSettings.shared.hoverFilterMode = ""
     }
 
+    // MARK: - 弹层初始档（bug: popover-anchor 回归）
+
+    /// NSPopover show 后 onAppear 切档会二次改变内容尺寸，macOS 26 弹层重排
+    /// 时序不稳（实测弹层脱离锚点错位/高度不跟手）——初始档必须在弹层挂载前
+    /// 由静态解析函数定死，视图 onAppear 只刷数据不再切档
+
+    /// 弹层初始档解析：有记忆档取记忆档；无记忆/脏数据回退本月（弹层原初始档）
+    func testPopoverInitialModeResolvedBeforeShow() {
+        AppSettings.shared.hoverFilterMode = EventFilterMode.today.rawValue
+        XCTAssertEqual(
+            TodayTodoPopoverView.resolveInitialMode(from: AppSettings.shared),
+            .today,
+            "有记忆档应在挂载前解析为记忆档"
+        )
+
+        AppSettings.shared.hoverFilterMode = ""
+        XCTAssertEqual(
+            TodayTodoPopoverView.resolveInitialMode(from: AppSettings.shared),
+            .thisMonth,
+            "无记忆应回退本月（弹层原初始档）"
+        )
+
+        AppSettings.shared.hoverFilterMode = "garbage"
+        XCTAssertEqual(
+            TodayTodoPopoverView.resolveInitialMode(from: AppSettings.shared),
+            .thisMonth,
+            "脏数据应回退本月"
+        )
+
+        AppSettings.shared.hoverFilterMode = ""
+    }
+
+    // MARK: - 弹层固定高度（bug: popover-fixed-height 回归）
+
+    /// NSPopover show 后 contentSize 变化 macOS 26 不重排（实测高度定格，
+    /// 空态弹出后切档高度不涨）：内容区必须固定高度，与档位/数据量无关
+    func testPopoverContentHeightIsFixed() {
+        XCTAssertEqual(
+            TodayTodoPopoverView.contentHeight, 420,
+            "内容区固定高度应沿用原列表上限 420"
+        )
+        // bug: popover-initial-position 第4轮——show 前必须显式告知完整内容尺寸：
+        // macOS 26 show 前不执行 SwiftUI 布局（contentSize={0,0}），系统按默认 320
+        // 估算定位，内容渲染成 457 高后窗口原点不动 → 顶部冲出菜单栏
+        XCTAssertEqual(
+            TodayTodoPopoverView.contentWidth, 300,
+            "弹层宽度常量应为 300"
+        )
+        XCTAssertEqual(
+            TodayTodoPopoverView.showContentSize.width, TodayTodoPopoverView.contentWidth,
+            "show 前告知的宽度应与视图宽度同源"
+        )
+        XCTAssertGreaterThan(
+            TodayTodoPopoverView.showContentSize.height,
+            TodayTodoPopoverView.contentHeight,
+            "show 前告知的高度必须覆盖档位行 + 分割线 + 内容区"
+        )
+    }
+
+    // MARK: - show 前尺寸解析（bug: popover-initial-position 第4轮）
+
+    /// 实测尺寸有效时优先采用实测（宽度统一为视图宽度，高度取实测）
+    func testResolvedContentSizeUsesMeasured() {
+        let resolved = TodayTodoPopoverView.resolvedContentSize(
+            measured: NSSize(width: 320, height: 457)
+        )
+        XCTAssertEqual(resolved.width, TodayTodoPopoverView.contentWidth,
+                       "宽度应统一为视图宽度常量")
+        XCTAssertEqual(resolved.height, 457, "高度应采用实测值")
+    }
+
+    /// 实测为 nil（视图尚未布局）→ 退回兜底尺寸
+    func testResolvedContentSizeFallsBackWhenNil() {
+        XCTAssertEqual(
+            TodayTodoPopoverView.resolvedContentSize(measured: nil),
+            TodayTodoPopoverView.showContentSize
+        )
+    }
+
+    /// 实测为 0 值（布局未执行，异常值）→ 退回兜底尺寸，不采用 0
+    func testResolvedContentSizeFallsBackWhenZero() {
+        XCTAssertEqual(
+            TodayTodoPopoverView.resolvedContentSize(measured: NSSize(width: 0, height: 0)),
+            TodayTodoPopoverView.showContentSize
+        )
+    }
+
     // MARK: - 桌面面板过滤档（四档，沿用 todoPanelFilterMode）
 
     /// todoPanelFilterMode didSet 写入 UserDefaults（round-trip）

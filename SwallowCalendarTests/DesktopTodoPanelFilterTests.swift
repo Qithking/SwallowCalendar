@@ -62,6 +62,92 @@ final class DesktopTodoPanelFilterTests: XCTestCase {
         }
     }
 
+    // MARK: - 无到期已办归档判定（2026-11-12 口径对齐主界面 EventCompletedListView.shouldInclude：
+    // 无到期已办按「标记完成时间」归档到档位范围；完成时间缺失不显示——主界面仅「全部」时间档
+    // 可见，弹层/面板无全部时间档 → 各档均不显示）
+
+    /// 有到期已办不走归档判定（按 startDate 档位精判，includesCompleted 恒 true）
+    func testCompletedWithDateNotArchived() {
+        let event = makeEvent(id: "dated", startDate: date(2026, 10, 20), isCompleted: true)
+        event.completedAt = date(2026, 10, 23, 10)
+        XCTAssertTrue(DesktopTodoPanelFilter.includesCompleted(event, mode: .today, now: now))
+    }
+
+    /// 无到期已办按完成时间归档：完成时间在今天 → 今天档显示；
+    /// 完成时间不在档位范围（去年完成）→ 各档均不显示
+    func testNoDateCompletedArchivedByCompletedAt() {
+        let todayDone = makeEvent(id: "doneToday", startDate: nil, isCompleted: true)
+        todayDone.completedAt = date(2026, 10, 23, 10)
+        XCTAssertTrue(DesktopTodoPanelFilter.includesCompleted(todayDone, mode: .today, now: now))
+
+        let lastYearDone = makeEvent(id: "doneLastYear", startDate: nil, isCompleted: true)
+        lastYearDone.completedAt = date(2025, 5, 1, 10)
+        for mode in DesktopTodoPanelFilter.modes {
+            XCTAssertFalse(
+                DesktopTodoPanelFilter.includesCompleted(lastYearDone, mode: mode, now: now),
+                "去年完成的无到期已办应在 \(mode.rawValue) 档不显示（按完成时间归档）"
+            )
+        }
+    }
+
+    /// 完成时间缺失（存量未补全）→ 各档均不显示
+    func testNoDateCompletedWithoutCompletedAtExcluded() {
+        let event = makeEvent(id: "none", startDate: nil, isCompleted: true)
+        for mode in DesktopTodoPanelFilter.modes {
+            XCTAssertFalse(
+                DesktopTodoPanelFilter.includesCompleted(event, mode: mode, now: now),
+                "完成时间缺失的无到期已办应在 \(mode.rawValue) 档不显示（主界面仅全部可见）"
+            )
+        }
+    }
+
+    /// 未完成不走本判定（无到期未完成恒显由 included 承担）
+    func testIncludesCompletedIgnoresUncompleted() {
+        let event = makeEvent(id: "todo", startDate: nil)
+        XCTAssertFalse(DesktopTodoPanelFilter.includesCompleted(event, mode: .today, now: now))
+    }
+
+    /// 空标题（仅空白）已办不入列表（口径对齐主界面 EventCompletedListView.shouldInclude）
+    func testCompletedWithBlankTitleExcluded() {
+        let event = makeEvent(id: "blank", startDate: nil, isCompleted: true)
+        event.title = "   "
+        event.completedAt = date(2026, 10, 23, 10)
+        for mode in DesktopTodoPanelFilter.modes {
+            XCTAssertFalse(
+                DesktopTodoPanelFilter.includesCompleted(event, mode: mode, now: now),
+                "空标题已办应在 \(mode.rawValue) 档不显示"
+            )
+        }
+    }
+
+    // MARK: - 列表可见性唯一入口（isTodoVisible：未完成前置判定收敛）
+
+    /// 未完成：档位内直接可见（无到期恒显、有日期按档位）
+    func testIsTodoVisibleUncompleted() {
+        let noDate = makeEvent(id: "noDate", startDate: nil)
+        let today = makeEvent(id: "today", startDate: now)
+        let outOfRange = makeEvent(id: "out", startDate: date(2026, 12, 1))
+        XCTAssertTrue(DesktopTodoPanelFilter.isTodoVisible(noDate, mode: .today, now: now))
+        XCTAssertTrue(DesktopTodoPanelFilter.isTodoVisible(today, mode: .today, now: now))
+        XCTAssertFalse(DesktopTodoPanelFilter.isTodoVisible(outOfRange, mode: .today, now: now),
+                       "档位外未完成不可见")
+    }
+
+    /// 已完成：档位内 + 归档判定通过才可见（无到期已办按完成时间归档）
+    func testIsTodoVisibleCompleted() {
+        let datedDone = makeEvent(id: "datedDone", startDate: now, isCompleted: true)
+        let noDateDoneToday = makeEvent(id: "noDateDone", startDate: nil, isCompleted: true)
+        noDateDoneToday.completedAt = date(2026, 10, 23, 10)
+        let noDateDoneWithoutAt = makeEvent(id: "noAt", startDate: nil, isCompleted: true)
+
+        XCTAssertTrue(DesktopTodoPanelFilter.isTodoVisible(datedDone, mode: .today, now: now))
+        XCTAssertTrue(DesktopTodoPanelFilter.isTodoVisible(noDateDoneToday, mode: .today, now: now))
+        XCTAssertFalse(
+            DesktopTodoPanelFilter.isTodoVisible(noDateDoneWithoutAt, mode: .today, now: now),
+            "完成时间缺失的无到期已办不可见"
+        )
+    }
+
     // MARK: - 今天档
 
     func testTodayIncludesTimedEventToday() {
@@ -216,17 +302,18 @@ final class DesktopTodoPanelFilterTests: XCTestCase {
         XCTAssertEqual(DesktopTodoPanelStatusFilter.allCases, [.all, .todo, .done])
     }
 
-    // MARK: - 面板排序（用户需求：无到期日期排最前，其余按时间升序）
+    // MARK: - 面板排序（2026-11-12 口径变更：无到期日期排末尾，与主界面一致——
+    // 无到期事项无紧迫性不抢视线；已完成仍置底，其余按时间升序）
 
-    func testPanelSortNoDateFirstThenAscending() {
+    func testPanelSortNoDateLastThenAscending() {
         let early = makeEvent(id: "early", startDate: date(2026, 10, 23, 8))
         let late = makeEvent(id: "late", startDate: date(2026, 10, 25, 20))
         let noDate = makeEvent(id: "none", startDate: nil)
         let sorted = DesktopTodoPanelSort.sort([early, noDate, late])
         XCTAssertEqual(
             sorted.map(\.eventID),
-            ["none", "early", "late"],
-            "无日期最前，其余按开始时间从早到晚（升序，七轮需求）"
+            ["early", "late", "none"],
+            "无日期置底（与主界面一致），其余按开始时间从早到晚（升序）"
         )
     }
 

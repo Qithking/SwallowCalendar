@@ -135,7 +135,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let hover = StatusItemHoverController()
         hover.contentProvider = { [weak hover] in
             NSHostingController(
-                rootView: TodayTodoPopoverView(onOpenMainPanel: { hover?.openMainPanel() })
+                // 初始档在挂载前从记忆档解析定死（show 后切档会触发弹层重排错位）
+                rootView: TodayTodoPopoverView(
+                    onOpenMainPanel: { hover?.openMainPanel() },
+                    initialMode: TodayTodoPopoverView.resolveInitialMode(from: AppSettings.shared)
+                )
                     .environment(AppSettings.shared)
             )
         }

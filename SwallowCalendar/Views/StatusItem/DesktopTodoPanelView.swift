@@ -32,6 +32,36 @@ enum DesktopTodoPanelFilter {
         let range = mode.dateRange(from: now)
         return start >= range.start && start < range.end
     }
+
+    /// 已办归档判定（2026-11-12 口径对齐主界面 EventCompletedListView.shouldInclude）：
+    /// 无到期已办按「标记完成时间」归档到档位范围；完成时间缺失不显示
+    /// （主界面完成时间缺省仅「全部」时间档可见，弹层/面板无全部时间档 → 各档均不显示）；
+    /// 空标题不入已办（口径对齐主界面，异常数据）。
+    /// 有到期已办恒 true（已由 included 按 startDate 档位精判）；未完成恒 false（防御，
+    /// 调用方应走 isTodoVisible，由其对未完成短路）
+    static func includesCompleted(
+        _ event: CachedEvent,
+        mode: EventFilterMode,
+        now: Date
+    ) -> Bool {
+        guard event.isCompleted else { return false }
+        guard !event.title.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        guard event.startDate == nil else { return true }
+        guard let completedAt = event.completedAt else { return false }
+        let range = mode.dateRange(from: now)
+        return completedAt >= range.start && completedAt < range.end
+    }
+
+    /// 待办列表可见性（唯一入口：未完成前置判定只在此处维护一次）：
+    /// 档位粗判（included）通过后，未完成直接可见；已完成再走归档判定
+    static func isTodoVisible(
+        _ event: CachedEvent,
+        mode: EventFilterMode,
+        now: Date
+    ) -> Bool {
+        guard included(event, mode: mode, now: now) else { return false }
+        return !event.isCompleted || includesCompleted(event, mode: mode, now: now)
+    }
 }
 
 // MARK: - 时间显示纯函数
@@ -96,10 +126,10 @@ enum DesktopTodoPanelStatusFilter: String, CaseIterable {
 
 // MARK: - 面板排序纯函数
 
-/// 面板排序（DesktopTodoPanelFilterTests 覆盖，用户需求：无到期日期排最前，其余按时间升序——七轮由降序改回升序）：
+/// 面板排序（DesktopTodoPanelFilterTests 覆盖；2026-11-12 口径变更：无到期日期排末尾，
+/// 与主界面 EventTodoListView 一致——无到期事项无紧迫性不抢视线；原「排最前」口径废止）：
 /// - 已完成仍置底（保留原口径）
-/// - 组内：无日期在前，有日期按开始时间从早到晚（升序），同时刻按标题稳定排序避免刷新抖动
-/// - 面板专属排序：弹层 TodayTodoSorter（升序）行为不变
+/// - 组内：有日期按开始时间从早到晚（升序），无日期排在有日期之后；同时刻按标题稳定排序避免刷新抖动
 enum DesktopTodoPanelSort {
     static func sort(_ events: [CachedEvent]) -> [CachedEvent] {
         events.sorted { a, b in
@@ -108,9 +138,9 @@ enum DesktopTodoPanelSort {
             case (nil, nil):
                 return a.title < b.title
             case (nil, _):
-                return true
-            case (_?, nil):
                 return false
+            case (_?, nil):
+                return true
             case (let d1?, let d2?):
                 if d1 != d2 { return d1 < d2 }
                 return a.title < b.title
@@ -135,7 +165,8 @@ enum TodoListLoader {
         let fetched = EventCacheService.shared.userTodoCandidates(from: range.start, to: range.end)
         return fetched.filter { event in
             !HolidaySkipResolver.isSkipped(of: event, context: context)
-                && DesktopTodoPanelFilter.included(event, mode: mode, now: now)
+                // 档位精判 + 已办归档（未完成/已完成前置判定收敛在 isTodoVisible 内）
+                && DesktopTodoPanelFilter.isTodoVisible(event, mode: mode, now: now)
         }
     }
 

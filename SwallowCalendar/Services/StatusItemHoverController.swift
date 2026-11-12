@@ -99,6 +99,13 @@ final class StatusItemHoverController: NSResponder {
         let frameInScreen = window.convertToScreen(button.convert(button.bounds, to: nil))
         guard frameInScreen.contains(NSEvent.mouseLocation) else { return }
         popover.contentViewController = contentProvider()
+        // bug: popover-initial-position 第4轮——show 前必须显式告知完整内容尺寸：
+        // macOS 26 show 前不执行 SwiftUI 布局（contentSize={0,0}），系统按默认 320
+        // 估算定位，内容渲染成 457 高后窗口原点不动 → 顶部冲出菜单栏（实测超屏顶 111pt）。
+        // 先触发一次布局取真实 fittingSize（项目先例 CalendarGridView/ReminderAlertView），
+        // 异常值退回兜底尺寸，避免硬编码余量在控件高度变化时失效
+        let measured = popover.contentViewController?.view.fittingSize
+        popover.contentSize = TodayTodoPopoverView.resolvedContentSize(measured: measured)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
 

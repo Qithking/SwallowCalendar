@@ -9,8 +9,9 @@ import Foundation
 
 enum TodayTodoSorter {
 
-    /// 弹层排序：
-    /// 1. 分组——无时间未完成(0) < 有时间未完成(1) < 已完成(2)
+    /// 弹层排序（2026-11-12 口径变更：与主界面一致）：
+    /// 1. 分组——有时间未完成(0) < 无时间未完成(1) < 已完成(2)
+    ///    （无到期事项无紧迫性排末尾，不再置顶）
     /// 2. 组内按 startDate 升序，nil 视为最早
     /// 3. 同键保持输入顺序（稳定排序）
     static func sort(
@@ -50,8 +51,8 @@ enum TodayTodoSorter {
         return start < now
     }
 
-    /// 分组键：无时间未完成 0 / 有时间未完成 1 / 已完成 2
+    /// 分组键：有时间未完成 0 / 无时间未完成 1 / 已完成 2（2026-11-12 口径变更）
     private static func group(of event: CachedEvent) -> Int {
-        event.isCompleted ? 2 : (event.startDate == nil ? 0 : 1)
+        event.isCompleted ? 2 : (event.startDate == nil ? 1 : 0)
     }
 }
