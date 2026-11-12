@@ -10,3 +10,12 @@ Package.resolved
 .mimocode/
 .scratch/
 .claude/
+.screenshots/
+.swiftpm/
+CONTEXT.md
+
+# Xcode 本机用户数据（不应入库，共享 scheme 在 xcshareddata 中保留）
+SwallowCalendar.xcodeproj/xcuserdata/
+SwallowCalendar.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcuserstate
+*.xcscmblueprint

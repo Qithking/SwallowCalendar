@@ -228,7 +228,7 @@ SwallowCalendar/
 
 ## 📄 许可证
 
-本项目基于 [GPLv3 License](./LICENSE) 开源。
+本项目基于 [AGPLv3 License](./LICENSE) 开源。
 
 ---
 
