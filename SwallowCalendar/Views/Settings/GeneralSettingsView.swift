@@ -135,6 +135,18 @@ struct GeneralSettingsView: View {
                     }
                 }
 
+                // 桌面面板显示屏幕：桌面面板档（桌面面板/两者）时可选，
+                // 默认主屏幕（空串）；选副屏后常驻面板移到该屏右上默认位置
+                if settings.todoPanelDisplayMode.desktopPanelEnabled {
+                    Picker("桌面面板显示屏幕", selection: $settings.todoPanelScreenID) {
+                        Text("主屏幕").tag("")
+                        ForEach(NSScreen.screens, id: \.self) { screen in
+                            Text(Self.screenTitle(screen, screens: NSScreen.screens)).tag(Self.screenID(screen))
+                        }
+                    }
+                    .help("桌面待办面板显示在所选屏幕上；默认主屏幕")
+                }
+
                 // 到期提示音：默认「无」；设置后事项到期弹框弹出时同步播放一声。
                 // 选中即试听（选「无」不响），与到期弹框同款 NSSound 播放方式
                 Picker("到期提示音", selection: $settings.dueAlertSound) {
@@ -151,6 +163,28 @@ struct GeneralSettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    // MARK: - 屏幕选项
+
+    /// 屏幕稳定标识（displayID 字符串，与 AppSettings.todoPanelScreenID 对应）
+    private static func screenID(_ screen: NSScreen) -> String {
+        if let id = DesktopTodoPanelManager.displayID(of: screen) { return String(id) }
+        return ""
+    }
+
+    /// 下拉展示名：系统主屏（screens.first，菜单栏所在屏）标注「（主屏幕）」，
+    /// 同名屏追加 displayID 末 4 位去重
+    /// - Note: 不用 NSScreen.main——它是「含键盘焦点窗口的屏」，焦点切到副屏时 main
+    ///   跟着变，会把副屏误标为主屏（如 PHL 主屏 + 2381 副屏场景）
+    private static func screenTitle(_ screen: NSScreen, screens: [NSScreen]) -> String {
+        let name = screen.localizedName
+        if screen == screens.first { return name + "（主屏幕）" }
+        if screens.filter({ $0.localizedName == name }).count > 1,
+           let id = DesktopTodoPanelManager.displayID(of: screen) {
+            return name + String(format: " (%04d)", id % 10000)
+        }
+        return name
     }
 
     // 预览格式化器缓存：格式未变化时复用（body 每次求值都会调用本计算属性）

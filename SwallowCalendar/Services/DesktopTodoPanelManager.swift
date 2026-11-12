@@ -43,6 +43,42 @@ final class DesktopTodoPanelManager {
         panel?.level = Self.level(isPinned: pinned)
     }
 
+    // MARK: - 显示屏幕偏好
+
+    /// 屏幕稳定标识（CGDirectDisplayID，deviceDescription "NSScreenNumber"）
+    static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
+        screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+    }
+
+    /// 屏幕解析纯函数（测试覆盖）：preferredID（displayID 字符串）匹配 → 对应屏；
+    /// 空串（默认=主屏幕）或未匹配（外接屏拔出）→ nil，调用方回退主屏幕
+    static func targetScreen(preferredID: String, screens: [NSScreen]) -> NSScreen? {
+        guard let preferred = CGDirectDisplayID(preferredID), !preferredID.isEmpty else { return nil }
+        return screens.first { displayID(of: $0) == preferred }
+    }
+
+    /// 当前偏好对应的目标屏（空串/未匹配回退系统主屏）
+    /// - Note: 回退用 NSScreen.screens.first（菜单栏所在屏=系统设置主屏），
+    ///   不用 NSScreen.main——它跟随键盘焦点窗口所在屏动态变化
+    private func preferredScreen() -> NSScreen? {
+        let preferred = AppSettings.shared.todoPanelScreenID
+        if let matched = Self.targetScreen(preferredID: preferred, screens: NSScreen.screens) {
+            return matched
+        }
+        return NSScreen.screens.first
+    }
+
+    /// 屏幕偏好变更联动（AppSettings.todoPanelScreenID.didSet 共用）：
+    /// 面板可见且当前不在目标屏 → 移到目标屏右上默认位置并持久化（用户之后仍可拖动）
+    func applyScreenPreference() {
+        guard isPanelVisible, let panel, let target = preferredScreen() else { return }
+        // 已在目标屏则不动（保留用户拖动位置）
+        if panel.screen == target { return }
+        let frame = Self.defaultFrame(on: target)
+        panel.setFrame(frame, display: true)
+        Self.persist(frame)
+    }
+
     /// 面板当前是否可见（orderOut 后 SwiftUI 视图
     /// 不销毁，通知仍触发 reload 查库；视图以本属性守卫跳过隐藏期间查询，
     /// 重显由 syncVisibility 兜底补发刷新）
@@ -132,9 +168,15 @@ final class DesktopTodoPanelManager {
         return true
     }
 
-    /// 默认出现在主屏幕右上区域（visibleFrame 已避开状态栏与 Dock）
+    /// 默认出现在偏好屏幕右上区域（visibleFrame 已避开状态栏与 Dock）；
+    /// 偏好为空串/屏已拔出时回退主屏幕
     private func defaultFrame() -> NSRect {
-        let visible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        Self.defaultFrame(on: preferredScreen())
+    }
+
+    /// 指定屏幕右上区域的默认面板位置（size 固定 300×420，边距 24）
+    static func defaultFrame(on screen: NSScreen?) -> NSRect {
+        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let size = CGSize(width: 300, height: 420)
         return NSRect(
             x: visible.maxX - size.width - 24,

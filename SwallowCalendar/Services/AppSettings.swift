@@ -140,6 +140,18 @@ final class AppSettings {
         }
     }
 
+    /// 桌面待办面板显示屏幕偏好（displayID 字符串；空串=默认主屏幕）
+    /// - Note: 外接屏拔出后 ID 无法匹配，面板回退主屏幕（targetScreen 纯函数）
+    var todoPanelScreenID: String {
+        didSet {
+            UserDefaults.standard.set(todoPanelScreenID, forKey: "todoPanelScreenID")
+            // 面板可见且当前不在目标屏时移到目标屏默认位置
+            Task { @MainActor in
+                DesktopTodoPanelManager.shared.applyScreenPreference()
+            }
+        }
+    }
+
     /// 系统日历分类颜色
     var systemCalendarColorHex: String {
         didSet {
@@ -306,6 +318,9 @@ final class AppSettings {
         self.statusBarCountdownEnabled = UserDefaults.standard.object(forKey: "statusBarCountdownEnabled") as? Bool ?? false
         // 「显示待办面板」：新键直读（默认菜单栏图标）；旧 Bool 开关键存在则迁移
         //（true→两者/false→菜单栏图标）并删除旧键，升级用户行为零回归；
+        // 桌面待办面板显示屏幕（空串=默认主屏幕）；须在迁移分支前初始化（分支内读 self 属性）
+        self.todoPanelScreenID = UserDefaults.standard.string(forKey: "todoPanelScreenID") ?? ""
+
         // init 内赋值不触发 didSet，迁移分支需手动持久化新键
         if UserDefaults.standard.object(forKey: "desktopTodoPanelEnabled") is Bool {
             let legacy = UserDefaults.standard.bool(forKey: "desktopTodoPanelEnabled")
