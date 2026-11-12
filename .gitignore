@@ -12,6 +12,7 @@ Package.resolved
 .claude/
 .screenshots/
 .swiftpm/
+docs/
 CONTEXT.md
 
 # Xcode 本机用户数据（不应入库，共享 scheme 在 xcshareddata 中保留）
