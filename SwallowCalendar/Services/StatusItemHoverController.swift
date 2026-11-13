@@ -22,9 +22,6 @@ final class StatusItemHoverController: NSResponder {
     /// 弹层内容构造器（由装配方注入，便于视图回调接线）
     var contentProvider: (() -> NSViewController)?
 
-    /// 点击弹层条目时的回调（关弹层 + 打开主面板）
-    private var onOpenMainPanel: (() -> Void)?
-
     /// 弹出抑制器（由装配方注入）：返回 true 时挂起弹出——
     /// 主面板与弹层互斥（用户需求：打开主界面时不显示 pop 弹出框）
     var isSuppressed: (() -> Bool)?
@@ -37,7 +34,11 @@ final class StatusItemHoverController: NSResponder {
     override init() {
         super.init()
         // transient：点击弹层外部自动关闭（跟踪失效时的兜底）
-        popover.behavior = .transient
+        // fix: popover-click-open-panel——transient 弹层会成为 key window，
+        // 关闭时使 app 失活（失去唯一 key 窗口），随后打开的主面板会被失活
+        // 自动关闭链误关。改为 applicationDefined：弹层不成为 key，关闭时
+        // 不影响 app 激活状态；弹层关闭仍由 hover 移出/点击图标逻辑主动触发
+        popover.behavior = .applicationDefined
         popover.animates = false
     }
 
@@ -45,10 +46,12 @@ final class StatusItemHoverController: NSResponder {
         fatalError("不支持从 NSCoder 初始化")
     }
 
-    /// 绑定状态栏 button 并安装跟踪区域（重复调用以最后一次为准）
-    func bind(button: NSButton, onOpenMainPanel: @escaping () -> Void) {
+    /// 绑定状态栏 button 并安装跟踪区域（重复调用以最后一次为准）。
+    /// 「关弹层 + 开主面板」仅由图标点击（performStatusItemClick）触发，
+    /// 弹层条目不可点击唤起主面板（用户需求，守卫测试
+    /// StatusPopoverEntryClickGuardTests 把关）
+    func bind(button: NSButton) {
         self.button = button
-        self.onOpenMainPanel = onOpenMainPanel
         // .inVisibleRect：rect 动态等于 visibleRect，随 button 宽度（徽标切换）自动同步
         let area = NSTrackingArea(
             rect: .zero,
@@ -73,10 +76,11 @@ final class StatusItemHoverController: NSResponder {
     }
 
     override func mouseExited(with event: NSEvent) {
-        // 移出图标即取消挂起的弹出（<300ms 划过不弹）
+        // 移出跟踪源（图标/弹层）即取消挂起的弹出（<300ms 划过不弹）
         openTimer?.invalidate()
         openTimer = nil
-        // 延迟检查：鼠标若已移入弹层则保持（图标→弹层间隙）
+        // 延迟检查：鼠标若已移入弹层则保持（图标→弹层间隙），
+        // 移出弹层（非经图标路径）则 300ms 后关弹层（fix: status-popover-mouse-exit-no-close）
         closeCheckTimer?.invalidate()
         closeCheckTimer = Timer.scheduledTimer(
             timeInterval: Self.hoverDelay,
@@ -106,7 +110,28 @@ final class StatusItemHoverController: NSResponder {
         // 异常值退回兜底尺寸，避免硬编码余量在控件高度变化时失效
         let measured = popover.contentViewController?.view.fittingSize
         popover.contentSize = TodayTodoPopoverView.resolvedContentSize(measured: measured)
+        // 弹层内容视图装鼠标跟踪（fix: status-popover-mouse-exit-no-close）：
+        // 鼠标从弹窗移出（非经图标路径）也要触发关闭检查——与图标移出复用
+        // 同一 mouseExited → closeCheckTimer 链
+        installPopoverTracking(on: popover.contentViewController?.view)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
+
+    /// 给弹层内容视图安装鼠标进入/移出跟踪区。
+    /// 弹窗为 .applicationDefined 非 key 窗口，必须 .activeAlways 才能收到跟踪事件；
+    /// 弹层内进入触发 openTimer 由 openTimerFired 的 !popover.isShown guard 兜住，无副作用
+    func installPopoverTracking(on view: NSView?) {
+        guard let view else { return }
+        // 幂等：先移除本控制器已装的跟踪区，防重复安装叠加
+        for area in view.trackingAreas where area.owner === self {
+            view.removeTrackingArea(area)
+        }
+        view.addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
     }
 
     @objc private func closeCheckTimerFired() {
@@ -121,21 +146,17 @@ final class StatusItemHoverController: NSResponder {
 
     // MARK: - 公开操作
 
-    /// 弹层条目点击：关弹层并打开主面板
-    func openMainPanel() {
-        closePopover()
-        onOpenMainPanel?()
-    }
+    /// 弹层当前是否展开（点击图标判断用）
+    var isPopoverShown: Bool { popover.isShown }
 
-    /// 关闭弹层并取消挂起定时器（点击图标前调用，避免弹层与主面板叠加）
+    /// 关闭弹层并取消挂起定时器（点击图标时调用，避免弹层与主面板叠加）
     func closePopover() {
         openTimer?.invalidate()
         openTimer = nil
         closeCheckTimer?.invalidate()
         closeCheckTimer = nil
-        if popover.isShown {
-            popover.performClose(nil)
-        }
+        guard popover.isShown else { return }
+        popover.performClose(nil)
     }
 
     // MARK: - 私有辅助

@@ -24,7 +24,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 不设置 behavior 即保持默认不可移除（AppKit 无 .removalDisallowed，
         // 默认空值已禁止 Cmd+拖除；显式 .removalAllowed 才会开放移除）——accessory
         // 应用无 Dock 图标与菜单栏恢复入口，图标被拖除后唯一入口消失且无法自行恢复
-        item.button?.action = #selector(performStatusItemClick)
+        item.button?.action = #selector(performStatusItemClick(_:))
         item.button?.target = self
         item.button?.imagePosition = .imageLeft
         // 绑定到 StatusBarIconManager，使图标更新能自动同步
@@ -53,7 +53,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // 检查更新（预览取证态跳过启动检查，避免更新弹窗遮挡编辑/批量添加窗口；
         // 判断口径与下方调试入口一致：能解析出有效预览态（1/tall）才视为预览模式）
-        let isPreviewMode = ProcessInfo.processInfo.environment["SC_OPEN_EDIT_PREVIEW"] == "1"
+        // 诊断态（SC_DIAG_REAL=1）同样跳过：更新弹窗与启动授权门弹窗干扰调试
+        // （用户反馈：每次启动调试实例都弹授权框）
+        let isDiagMode = ProcessInfo.processInfo.environment["SC_DIAG_REAL"] == "1"
+        let isPreviewMode = isDiagMode
+            || ProcessInfo.processInfo.environment["SC_OPEN_EDIT_PREVIEW"] == "1"
             || Self.batchAddPreviewState() != nil
         if !isPreviewMode {
             UpdateChecker.shared.checkOnStartup()
@@ -130,23 +134,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 启动补偿：开关已开则显示桌面面板（覆盖 AppSettings.didSet 早于 configure 的时序）
         DesktopTodoPanelManager.shared.syncVisibility()
 
-        // 装配 hover 弹层：条目点击 → 关弹层并打开主面板（主面板已开时 open 仅前置，不会被关掉）
+        // 装配 hover 弹层：条目文字不可点击唤起主面板（仅图标点击触发，
+        // 守卫测试 StatusPopoverEntryClickGuardTests 把关）。
         // 注入 AppSettings 环境（主面板同款）：行内倒计时胶囊需要主题色
         let hover = StatusItemHoverController()
-        hover.contentProvider = { [weak hover] in
+        hover.contentProvider = {
             NSHostingController(
                 // 初始档在挂载前从记忆档解析定死（show 后切档会触发弹层重排错位）
                 rootView: TodayTodoPopoverView(
-                    onOpenMainPanel: { hover?.openMainPanel() },
                     initialMode: TodayTodoPopoverView.resolveInitialMode(from: AppSettings.shared)
                 )
                     .environment(AppSettings.shared)
             )
         }
         if let button = statusItem.button {
-            hover.bind(button: button) { [weak self] in
-                self?.panel?.open()
-            }
+            hover.bind(button: button)
         }
         // 弹层显示控制：主面板可见时互斥不弹（挂起而非关闭，面板关闭后可再悬停弹出）；
         // 「显示待办面板」不含菜单栏图标档时同样挂起（无/桌面面板档，动态读取）
@@ -231,13 +233,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     /// 点击状态栏图标时的处理
-    @objc private func performStatusItemClick() {
+    @objc private func performStatusItemClick(_ sender: Any?) {
         // 状态栏 action 固定在主线程，assumeIsolated 进入 MainActor 上下文
         MainActor.assumeIsolated {
-            // 点击前先关 hover 弹层，避免弹层与主面板叠加（点击行为不变）
-            hoverController?.closePopover()
             guard let panel = panel else { return }
-            panel.toggle()
+            if let hover = hoverController, hover.isPopoverShown {
+                // 弹层展示时点击图标：面板未显示则先打开面板（成为 key window）
+                // 再关弹层——弹层关闭时 app 已有 key 窗口不会失活，失活自动关闭
+                // 三链不会误关刚打开的面板（先关后开的顺序已被实测否定：
+                // 弹层关闭的失活级联在 open 后 0.8~2.4s 持续触发）。
+                // 禁止在此处对失活自动关闭做时间窗抑制：先开后关已消除失活根源，
+                // 抑制窗口反而会吞掉用户打开面板后立刻点击面板外部的真实关闭意图
+                // （实测：初次点击不关、二次点击才关——fix: popover-click-open-panel）
+                if !panel.isPresented {
+                    panel.open()
+                }
+                hover.closePopover()
+            } else {
+                // 弹层未展示：正常 toggle（无弹层关闭即无失活源，无需抑制窗口）
+                panel.toggle()
+            }
         }
     }
     

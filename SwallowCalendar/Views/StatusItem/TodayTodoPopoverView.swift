@@ -12,9 +12,6 @@ import SwiftUI
 import SwiftData
 
 struct TodayTodoPopoverView: View {
-    /// 点击条目时打开主面板的回调（由 StatusItemHoverController 注入）
-    var onOpenMainPanel: () -> Void = {}
-
     @State private var todos: [CachedEvent] = []
     /// 超时判定基准时刻（reload 时更新；弹层显示期间时间推移不自动刷新，弹层生命短暂可接受）
     @State private var reloadAt: Date = Date()
@@ -25,11 +22,7 @@ struct TodayTodoPopoverView: View {
 
     private let calendar = Calendar.current
 
-    init(
-        onOpenMainPanel: @escaping () -> Void = {},
-        initialMode: EventFilterMode
-    ) {
-        self.onOpenMainPanel = onOpenMainPanel
+    init(initialMode: EventFilterMode) {
         _mode = State(initialValue: initialMode)
     }
 
@@ -179,9 +172,7 @@ struct TodayTodoPopoverView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .contentShape(Rectangle())
-        // 点击条目文字打开主面板
-        .onTapGesture { onOpenMainPanel() }
+        // 用户需求：条目文字不可点击唤起主面板——该行为仅由状态栏图标点击触发
     }
 
     private var emptyState: some View {

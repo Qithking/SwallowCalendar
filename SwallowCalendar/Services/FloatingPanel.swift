@@ -135,12 +135,30 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         }
     }
     
-    @objc private func appDidResignActive() {
+    @objc func appDidResignActive() {
+        autoCloseIfNeeded()
+    }
+
+    /// 失活自动关闭统一入口（resignKey 链与 resignActive 链共用）。
+    /// fix: popover-click-open-panel——弹层关闭的失活误关已由「先开后关」
+    /// 消除（面板先成为 key window，弹层关闭时 app 不失活），无需时间窗抑制；
+    /// frontmost 判定保留为防御层（app 失活但仍是系统前台 → 用户没切走）
+    private func autoCloseIfNeeded() {
         if shouldClose() {
+            // fix: popover-click-open-panel——弹层关闭会使 app 短暂失活
+            // （弹层窗口是唯一 key 窗口，点击状态栏图标触发其自动关闭）。
+            // 此时用户并未切走（app 失活但仍是系统前台，frontmost 为自己），
+            // 不应关闭刚打开的面板；真正的用户切走由 frontmost 变化识别
+            if !NSApp.isActive,
+               NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Bundle.main.bundleIdentifier {
+                return
+            }
+            // 记录自动关闭时刻，供 toggle 识别同一次状态栏点击的回声
+            lastAutoCloseAt = Date()
             close()
         }
     }
-    
+
     func toggle() {
         if isPresented {
             close()
@@ -259,8 +277,7 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     /// （R-1 同型竞态）
     func closeOnGlobalClick(at location: NSPoint) {
         guard shouldCloseOnGlobalClick(at: location) else { return }
-        lastAutoCloseAt = Date()
-        close()
+        autoCloseIfNeeded()
     }
 
     /// 安装全局鼠标按下监听器（open 时调用，幂等）。
@@ -286,18 +303,17 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     }
     
     func windowDidResignKey(_ notification: Notification) {
-        // 应用内其他窗口（编辑/设置/提醒弹窗、菜单、Popover）抢走 key 时不关闭面板，
-        // 点击其他应用的失焦场景由 deactivateObserver 兜底关闭
-        if let newKeyWindow = NSApp.keyWindow, newKeyWindow !== self, NSApp.isActive {
+        // 应用仍在前台且系统里仍存在 key 窗口时不关闭面板：
+        // - 其他窗口（编辑/设置/提醒弹窗、菜单、Popover）抢走 key：不是失焦
+        // - key 交接过渡态可能读到自身（实测 newKeyIsSelf=1 仍收到 resignKey）：不是失焦
+        // 点击状态栏图标时 keyWindow 为 nil（状态栏窗口不可 key），走下方关闭；
+        // 切换到其他应用由 deactivateObserver 兜底关闭
+        if NSApp.isActive, NSApp.keyWindow != nil {
             return
         }
-        if shouldClose() {
-            // 记录自动关闭时刻，供 toggle 识别同一次状态栏点击的回声
-            lastAutoCloseAt = Date()
-            close()
-        }
+        autoCloseIfNeeded()
     }
-    
+
     override func close() {
         super.close()
         // NSPanel 的 close 仅 orderOut 不销毁层级，显式置空 contentViewController
