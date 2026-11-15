@@ -167,4 +167,47 @@ final class TodayTodoSorterTests: XCTestCase {
         let noTime = makeEvent(id: "f", startDate: nil)
         XCTAssertFalse(TodayTodoSorter.isOverdue(noTime, now: now))
     }
+
+    // MARK: - 倒计时胶囊渲染判定（showsCountdown，2026-11-15 复查 P1-c）
+
+    /// 当天全天任务不渲染：倒计时指向归属日零点已为负值，会误显「已过期」胶囊
+    func testShowsCountdownAllDayTodayFalse() {
+        let todayDayStart = calendar.startOfDay(for: now)
+        XCTAssertFalse(TodayTodoSorter.showsCountdown(isAllDay: true, startDate: todayDayStart, now: now, calendar: calendar))
+    }
+
+    /// 未来日全天任务渲染：倒计时到归属日零点为正值
+    func testShowsCountdownAllDayFutureTrue() {
+        let tomorrowDayStart = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: now)!)
+        XCTAssertTrue(TodayTodoSorter.showsCountdown(isAllDay: true, startDate: tomorrowDayStart, now: now, calendar: calendar))
+    }
+
+    /// 带时间任务恒渲染（remaining<=0 已被 isOverdue 红字分支拦截，到得兜底的必为正值）
+    func testShowsCountdownTimedAlwaysTrue() {
+        let past = now.addingTimeInterval(-3600)
+        XCTAssertTrue(TodayTodoSorter.showsCountdown(isAllDay: false, startDate: past, now: now, calendar: calendar))
+    }
+
+    /// 无时间任务（startDate nil）不渲染：无期限无倒计时语义
+    func testShowsCountdownNilStartDateFalse() {
+        XCTAssertFalse(TodayTodoSorter.showsCountdown(isAllDay: false, startDate: nil, now: now, calendar: calendar))
+    }
+
+    // MARK: - 已开始判定（hasStarted，2026-11-15 维护性收敛）
+
+    /// 无到期时间视为已开始（可被标记完成）
+    func testHasStartedNilStartDateTrue() {
+        XCTAssertTrue(TodayTodoSorter.hasStarted(startDate: nil, now: now))
+    }
+
+    /// 未来实例未开始（不得提前标完成推进周期序列）
+    func testHasStartedFutureFalse() {
+        XCTAssertFalse(TodayTodoSorter.hasStarted(startDate: now.addingTimeInterval(60), now: now))
+    }
+
+    /// 过去与临界时刻（== now）均已开始
+    func testHasStartedPastAndBoundaryTrue() {
+        XCTAssertTrue(TodayTodoSorter.hasStarted(startDate: now.addingTimeInterval(-60), now: now))
+        XCTAssertTrue(TodayTodoSorter.hasStarted(startDate: now, now: now))
+    }
 }

@@ -160,7 +160,8 @@ struct TodayTodoPopoverView: View {
                         Text("已过期")
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.red)
-                    } else if !event.isCompleted {
+                    } else if !event.isCompleted,
+                              TodayTodoSorter.showsCountdown(isAllDay: event.isAllDay, startDate: event.startDate, now: reloadAt) {
                         // 未过期倒计时胶囊，对齐主界面 EventItemRow
                         CountdownTextView(
                             startDate: event.startDate,

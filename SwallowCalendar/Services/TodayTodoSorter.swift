@@ -63,6 +63,30 @@ enum TodayTodoSorter {
         return start < now
     }
 
+    /// 是否渲染倒计时胶囊（isOverdue=false 且未完成时的兜底口径）：
+    /// - 带时间任务：距开始时刻的剩余有意义，恒渲染（remaining<=0 已被 isOverdue 红字分支拦截）
+    /// - 全天任务：倒计时指向归属日零点，当天全天已「进行中」且 remaining=零点−now<0，
+    ///   会被 CountdownFormatter 渲染成「已过期」胶囊，与「当天整天不算过期」矛盾——当天全天不渲染
+    /// 参数化 (isAllDay, startDate) 而非整个事件，CachedEvent/CalendarEvent 两个 UI 模型共用
+    static func showsCountdown(
+        isAllDay: Bool,
+        startDate: Date?,
+        now: Date,
+        calendar: Calendar = .current
+    ) -> Bool {
+        guard let start = startDate else { return false }
+        if isAllDay {
+            return !calendar.isDate(start, inSameDayAs: now)
+        }
+        return true
+    }
+
+    /// 实例是否已开始（startDate <= now；无到期时间视为已开始）。
+    /// 提醒完成标记仅作用于已开始实例——未开始实例被提前标完成会错误推进周期任务序列
+    static func hasStarted(startDate: Date?, now: Date) -> Bool {
+        (startDate ?? now) <= now
+    }
+
     /// 分组键：有时间未完成 0 / 无时间未完成 1 / 已完成 2（2026-11-12 口径变更）
     private static func group(of event: CachedEvent) -> Int {
         event.isCompleted ? 2 : (event.startDate == nil ? 1 : 0)

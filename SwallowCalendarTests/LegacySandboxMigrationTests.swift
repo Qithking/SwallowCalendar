@@ -48,6 +48,9 @@ final class LegacySandboxMigrationTests: XCTestCase {
         let migrated = LegacySandboxStoreMigrator.migrateIfNeeded(into: context, legacySources: legacy)
 
         XCTAssertEqual(migrated, 2)
+        // 手动 ModelContext 无 autosave:insert 仅入本 context 内存,跨 context fetch
+        // 读不到未落库数据——save 后再断言(生产链路由调用方 save,迁移器不负责)
+        try context.save()
         let all = try sources(in: container)
         XCTAssertEqual(all.count, 2)
         let holiday = try XCTUnwrap(all.first { $0.icsURL == "https://example.com/holiday.ics" })
@@ -70,6 +73,8 @@ final class LegacySandboxMigrationTests: XCTestCase {
             isEnabled: true, isImportant: true
         )]
         XCTAssertEqual(LegacySandboxStoreMigrator.migrateIfNeeded(into: context, legacySources: legacy), 0)
+        // 预插的"已有源"同样未落库:save 后跨 context 才能读到 count==1
+        try context.save()
         XCTAssertEqual(try sources(in: container).count, 1, "同 URL 已存在不得重复插入")
     }
 

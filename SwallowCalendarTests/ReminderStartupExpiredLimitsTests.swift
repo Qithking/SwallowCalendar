@@ -197,7 +197,7 @@ final class ReminderStartupExpiredLimitsTests: XCTestCase {
             events: [],
             isExpired: true,
             hiddenCount: 5,
-            onCompleteAll: {}
+            onCompleteAll: { _ in }
         )
         XCTAssertEqual(ReminderAlertWindowController.shared.lastHiddenCount, 5)
         ReminderAlertWindowController.shared.close()

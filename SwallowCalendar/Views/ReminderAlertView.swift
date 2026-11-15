@@ -40,8 +40,8 @@ final class ReminderAlertWindowController {
         events: [CachedEvent],
         isExpired: Bool,
         hiddenCount: Int = 0,
-        onCompleteAll: @escaping () -> Void,
-        onEventComplete: @escaping (String) -> Void = { _ in },
+        onCompleteAll: @escaping ([CachedEvent]) -> Void,
+        onEventComplete: @escaping (CachedEvent) -> Void = { _ in },
         onSnooze: @escaping (String, Int) -> Void = { _, _ in }
     ) {
         // P1-6：旧弹窗仍有未处理行时合并进新弹窗——被顶掉事项的提醒键
@@ -67,12 +67,14 @@ final class ReminderAlertWindowController {
             isExpired: isExpired,
             hiddenCount: hiddenCount,
             onDismiss: { [weak self] in self?.close() },
-            onCompleteAll: { [weak self] in
+            // 完成回调由视图直接传行数据：removeRow 先移行、末行完成还会先 close，
+            // 回调侧从快照回查会因时序查不到——合并行（不在本轮 events 内）尤其如此
+            onCompleteAll: { [weak self] rows in
                 self?.close()
-                onCompleteAll()
+                onCompleteAll(rows)
             },
-            onEventComplete: { eventID in
-                onEventComplete(eventID)
+            onEventComplete: { event in
+                onEventComplete(event)
             },
             onSnooze: { eventID, minutes in
                 onSnooze(eventID, minutes)
@@ -132,9 +134,11 @@ struct ReminderAlertView: View {
     /// 启动弹窗因上限被隐藏的历史逾期条数（>0 时头部明示，避免误以为只有这些）
     let hiddenCount: Int
     let onDismiss: () -> Void
-    let onCompleteAll: () -> Void
-    /// 单条完成回调（eventID）
-    let onEventComplete: (String) -> Void
+    /// 全部标记完成回调：直接传当前展示行全集（含合并旧行），
+    /// 回调侧不可从快照回查（removeRow/末行 close 先于回调执行）
+    let onCompleteAll: ([CachedEvent]) -> Void
+    /// 单条完成回调：直接传该行数据（该行已被 removeRow 移出展示列表）
+    let onEventComplete: (CachedEvent) -> Void
     /// 稍后提醒回调（eventID, minutes）
     let onSnooze: (String, Int) -> Void
     /// 展示行变化回调（P1-6）：removeRow / 外部刷新导致行集合变化时
@@ -149,8 +153,8 @@ struct ReminderAlertView: View {
         isExpired: Bool,
         hiddenCount: Int = 0,
         onDismiss: @escaping () -> Void,
-        onCompleteAll: @escaping () -> Void,
-        onEventComplete: @escaping (String) -> Void,
+        onCompleteAll: @escaping ([CachedEvent]) -> Void,
+        onEventComplete: @escaping (CachedEvent) -> Void,
         onSnooze: @escaping (String, Int) -> Void,
         onDisplayChange: @escaping ([CachedEvent]) -> Void = { _ in }
     ) {
@@ -268,8 +272,8 @@ struct ReminderAlertView: View {
     private func eventRow(_ event: CachedEvent) -> some View {
         let isOverdue = (event.startDate ?? Date()) < Date()
         // 未开始实例：与服务端「仅标记已开始的实例」口径一致（ReminderAlertService
-        // onCompleteAll/onEventComplete 内 (startDate ?? now) <= now 才标完成）
-        let isNotStarted = (event.startDate ?? Date()) > Date()
+        // onCompleteAll/onEventComplete 内 hasStarted 才标完成）
+        let isNotStarted = !TodayTodoSorter.hasStarted(startDate: event.startDate, now: Date())
         return HStack(spacing: 10) {
             Circle()
                 .fill(isOverdue ? Color.orange : accentColor)
@@ -304,10 +308,11 @@ struct ReminderAlertView: View {
             .help("稍后提醒")
             // 单条完成：事项变已办并从弹窗移除，其余保留。
             // P1-7：未开始实例（提前提醒场景）被服务端静默跳过，行已消失
-            // 用户误以为完成——禁用按钮并明示原因
+            // 用户误以为完成——禁用按钮并明示原因。
+            // 回调直接传该行数据（removeRow 已把它移出展示列表，回调侧无法回查）
             Button {
                 removeRow(event)
-                onEventComplete(event.eventID)
+                onEventComplete(event)
             } label: {
                 Image(systemName: "checkmark.circle")
                     .font(.system(size: 13))
@@ -356,7 +361,7 @@ struct ReminderAlertView: View {
             .focusEffectDisabled()
 
             Button {
-                onCompleteAll()
+                onCompleteAll(displayedEvents)
             } label: {
                 Text("全部标记完成")
                     .font(.system(size: 12, weight: .medium))

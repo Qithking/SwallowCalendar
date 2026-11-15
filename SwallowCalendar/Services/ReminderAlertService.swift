@@ -693,23 +693,24 @@ final class ReminderAlertService {
             events: events,
             isExpired: isExpired,
             hiddenCount: hiddenCount,
-            onCompleteAll: { [weak self] in
+            // 完成回调直接接收视图传来的行数据（展示全集含合并旧行）：
+            // 合并行不在本轮 events 内，eventID 回查会查不到导致完成静默丢弃
+            onCompleteAll: { [weak self] rows in
                 Task { @MainActor in
                     // 仅标记已开始的实例——"提醒时间已到但事件尚未开始"（startDate > now）
                     // 的实例被提前标完成会错误推进周期任务序列
                     guard let self else { return }
-                    for event in events where (event.startDate ?? Date()) <= Date() {
+                    for event in rows where TodayTodoSorter.hasStarted(startDate: event.startDate, now: Date()) {
                         await self.markAsCompleted(eventID: event.eventID)
                     }
                 }
             },
-            onEventComplete: { [weak self] eventID in
+            onEventComplete: { [weak self] event in
                 Task { @MainActor in
                     // 单条完成与"全部完成"同一语义：仅已开始实例才标记
                     guard let self,
-                          let event = events.first(where: { $0.eventID == eventID }),
-                          (event.startDate ?? Date()) <= Date() else { return }
-                    await self.markAsCompleted(eventID: eventID)
+                          TodayTodoSorter.hasStarted(startDate: event.startDate, now: Date()) else { return }
+                    await self.markAsCompleted(eventID: event.eventID)
                 }
             },
             onSnooze: { [weak self] eventID, minutes in

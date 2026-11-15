@@ -101,30 +101,14 @@ struct EventItemRow: View {
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
 
-                        if !Self.showsTimeBadge(isCompleted: event.isCompleted, isOverdue: isOverdue) {
-                            // 已完成历史行不渲染时间徽标
-                        } else if isOverdue {
-                            Text("已过期")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(.red)
-                        } else {
-                            countdownBorderedView
-                        }
+                        timeBadge
                     } else {
                         // 全天事件：显示日期 + 倒计时
                         Text(formattedDate)
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
 
-                        if !Self.showsTimeBadge(isCompleted: event.isCompleted, isOverdue: isOverdue) {
-                            // 已完成历史行不渲染时间徽标
-                        } else if isOverdue {
-                            Text("已过期")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(.red)
-                        } else {
-                            countdownBorderedView
-                        }
+                        timeBadge
                     }
 
                     // 系统提醒标签
@@ -224,6 +208,27 @@ struct EventItemRow: View {
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
             }
+        }
+    }
+
+    /// 时间徽标（带时间/全天两个分支共用，口径统一防漂移）：
+    /// 已完成历史行不渲染 → 过期红字「已过期」→ 其余倒计时胶囊。
+    /// showsCountdown 兜底：当天全天任务进行中倒计时指向归属日零点已为负值，
+    /// 渲染会误显「已过期」——当天全天不渲染（口径见 TodayTodoSorter.showsCountdown）
+    @ViewBuilder
+    private var timeBadge: some View {
+        if !Self.showsTimeBadge(isCompleted: event.isCompleted, isOverdue: isOverdue) {
+            // 已完成历史行不渲染时间徽标
+        } else if isOverdue {
+            Text("已过期")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.red)
+        } else if TodayTodoSorter.showsCountdown(
+            isAllDay: event.isAllDay,
+            startDate: event.startDate,
+            now: Date()
+        ) {
+            countdownBorderedView
         }
     }
 

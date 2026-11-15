@@ -359,7 +359,8 @@ struct DesktopTodoPanelView: View {
                     Text("已过期")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.red)
-                } else if !event.isCompleted {
+                } else if !event.isCompleted,
+                          TodayTodoSorter.showsCountdown(isAllDay: event.isAllDay, startDate: event.startDate, now: reloadAt) {
                     CountdownTextView(
                         startDate: event.startDate,
                         accentColorHex: appSettings.accentColorHex,
