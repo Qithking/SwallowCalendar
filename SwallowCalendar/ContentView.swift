@@ -235,6 +235,34 @@ struct ContentView: View {
 
         calendarService.loadCalendars()
 
+        // 旧沙盒库订阅源一次性迁移（fix: subscription-data-lost-after-sandbox-switch）：
+        // 沙盒→非沙盒切换后订阅源留在旧容器库，seed 兜底又被遗留的标记 true 挡住不重建；
+        // 迁移幂等（同 URL 跳过），完成标记避免每次启动探测旧库；读取失败不落标记下次重试
+        do {
+            let migrationFlag = "legacySandboxStoreMigrated"
+            if UserDefaults.standard.bool(forKey: migrationFlag) {
+                // 已完成迁移（含旧库不存在的判定），不再触碰旧库
+            } else if FileManager.default.fileExists(atPath: LegacySandboxStoreMigrator.legacyStoreURL.path) {
+                let legacySources = try LegacySandboxStoreMigrator.fetchLegacySources(
+                    at: LegacySandboxStoreMigrator.legacyStoreURL
+                )
+                let migrated = LegacySandboxStoreMigrator.migrateIfNeeded(
+                    into: modelContext,
+                    legacySources: legacySources
+                )
+                if migrated > 0 {
+                    try modelContext.save()
+                    AppLogger.settings.info("旧沙盒订阅源迁移完成: \(migrated) 条")
+                }
+                UserDefaults.standard.set(true, forKey: migrationFlag)
+            } else {
+                // 旧库不存在（新机器/已清理），视为无需迁移，落标记避免每次启动探测
+                UserDefaults.standard.set(true, forKey: migrationFlag)
+            }
+        } catch {
+            AppLogger.settings.error("旧沙盒订阅源迁移失败（下次启动重试）: \(error.localizedDescription)")
+        }
+
         // 初始化默认自定义日历（seed-dedupe 双保险）
         // 默认订阅源由 UserDefaults 标记 + 库级 URL 判重共同决定是否插入：
         // 标记可能因 cfprefsd 与磁盘 plist 脱节被读为 false（仅靠标记曾造成重复 seed）；
