@@ -77,6 +77,12 @@ enum LegacySandboxStoreMigrator {
                 isImportant: sqlite3_column_int(statement, 1) != 0
             ))
         }
+        // 循环只认 SQLITE_ROW 为继续；中途 SQLITE_BUSY/CORRUPT 等错误同样退出循环，
+        // 静默返回部分源会令调用方迁移一半就落完成标记，剩余订阅永久丢失——
+        // 非 SQLITE_DONE 一律抛错，调用方 catch 后不落标记，下次启动重试
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw MigrationError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
         return sources
     }
 

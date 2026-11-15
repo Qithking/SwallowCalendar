@@ -10,9 +10,22 @@
 		03E9B5BE2F91FE3600F9E0BB /* SwallowCalendar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwallowCalendar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		03E9B5D02F91FE3600F9E0BB /* Exceptions for "SwallowCalendar" folder in "SwallowCalendar" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 03E9B5BD2F91FE3600F9E0BB /* SwallowCalendar */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		03E9B5C02F91FE3600F9E0BB /* SwallowCalendar */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				03E9B5D02F91FE3600F9E0BB /* Exceptions for "SwallowCalendar" folder in "SwallowCalendar" target */,
+			);
 			path = SwallowCalendar;
 			sourceTree = "<group>";
 		};

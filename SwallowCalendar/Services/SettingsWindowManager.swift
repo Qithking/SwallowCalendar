@@ -26,24 +26,24 @@ final class SettingsWindowManager {
         // 已有窗口则直接激活并置顶
         if let window = settingsWindow {
             window.level = NSWindow.Level.floating
-            
+
             DispatchQueue.main.async {
                 NSApp.activate(ignoringOtherApps: true)
-                
+
                 if window.isVisible {
                     window.makeKeyAndOrderFront(nil)
                 } else {
                     window.orderFront(nil)
                 }
-                
+
                 window.makeKey()
                 window.becomeKey()
-                
+
+                // P1-2（审查 2026-11-15）：仅回落窗口层级，不做二次激活——
+                // 此前 0.3s 后无条件 activate+makeKey 会抢走用户正在
+                // 输入的其他窗口的焦点
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     window.level = NSWindow.Level.normal
-                    NSApp.activate(ignoringOtherApps: true)
-                    window.makeKey()
-                    window.becomeKey()
                 }
             }
             return
@@ -94,12 +94,10 @@ final class SettingsWindowManager {
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(self as Any?)
             window.becomeKey()
-            
+
+            // P1-2（审查 2026-11-15）：仅回落窗口层级，不做二次激活（同上）
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 window.level = NSWindow.Level.normal
-                NSApp.activate(ignoringOtherApps: true)
-                window.makeKey()
-                window.becomeKey()
             }
         }
     }

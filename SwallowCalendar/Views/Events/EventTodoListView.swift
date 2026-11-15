@@ -165,7 +165,7 @@ struct EventTodoListView: View {
                                     onEdit: onEditEvent,
                                     onDelete: onDeleteEvent,
                                     onComplete: onCompleteEvent,
-                                    isOverdue: event.startDate != nil && event.startDate! < Date()
+                                    isOverdue: TodayTodoSorter.isOverdue(event, now: Date())
                                 )
                             }
                             if hasMoreEvents {

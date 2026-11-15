@@ -52,6 +52,12 @@ struct EditEventSheet: View {
     @State private var contentHeight: CGFloat = 0
     /// 内容高度变化回调（窗口管理器据此自适应高度）
     var onContentHeightChange: ((CGFloat) -> Void)?
+    /// 用户改动状态回调（P1-10）：任何可编辑字段偏离初始快照时上报 true/false，
+    /// 窗口管理器据此在「编辑中切换到另一事项」时弹未保存确认
+    var onDirtyChange: ((Bool) -> Void)?
+    /// 打开时的字段指纹快照（P1-10）：与当前 dirtySignatureValue 比较判定是否有未保存修改。
+    /// 带默认值以便 init 末尾读取 self 计算属性时自身已视为初始化
+    private var initialSignature: String = ""
     
     /// 原始 spec 快照（幂等比较真源）
     private let originalSpec: RecurrenceSpec?
@@ -93,12 +99,13 @@ struct EditEventSheet: View {
         CachedEvent.parseOccurrenceID(event.id) != nil
     }
 
-    init(event: CalendarEvent, calendarService: CalendarService, onDismiss: (() -> Void)? = nil, onSave: (() -> Void)? = nil, preview: EditPreviewState? = nil, onContentHeightChange: ((CGFloat) -> Void)? = nil) {
+    init(event: CalendarEvent, calendarService: CalendarService, onDismiss: (() -> Void)? = nil, onSave: (() -> Void)? = nil, preview: EditPreviewState? = nil, onContentHeightChange: ((CGFloat) -> Void)? = nil, onDirtyChange: ((Bool) -> Void)? = nil) {
         self.event = event
         self.calendarService = calendarService
         self.onDismiss = onDismiss
         self.onSave = onSave
         self.onContentHeightChange = onContentHeightChange
+        self.onDirtyChange = onDirtyChange
         _title = State(initialValue: event.title)
         _startDate = State(initialValue: event.startDate ?? Date())
         _isAllDay = State(initialValue: event.isAllDay)
@@ -178,6 +185,8 @@ struct EditEventSheet: View {
                 _validityEnd = State(initialValue: Calendar.current.date(byAdding: .month, value: 1, to: base) ?? base)
             }
         }
+        // P1-10：全部 @State 初值就绪后取指纹快照（dirty 判定基准）
+        self.initialSignature = dirtySignatureValue
     }
 
     var body: some View {
@@ -208,6 +217,35 @@ struct EditEventSheet: View {
             contentHeight = height
             onContentHeightChange?(height)
         }
+        // P1-10：可编辑字段偏离初始指纹即上报，供切换编辑对象时弹未保存确认
+        .onChange(of: dirtySignatureValue) { _, new in
+            onDirtyChange?(new != initialSignature)
+        }
+    }
+
+    /// 可编辑字段指纹（P1-10）：拼接所有用户可改字段，与 initialSignature
+    /// 比较判定是否有未保存修改。用字符串拼接，不依赖各类型 Equatable
+    private var dirtySignatureValue: String {
+        [
+            title,
+            String(startDate.timeIntervalSince1970),
+            String(isAllDay),
+            String(allDayStart.timeIntervalSince1970),
+            String(allDayEnd.timeIntervalSince1970),
+            String(skipHolidays),
+            String(validityEnabled),
+            String(validityHasStart),
+            String(validityHasEnd),
+            String(validityStart.timeIntervalSince1970),
+            String(validityEnd.timeIntervalSince1970),
+            String(describing: taskColor),
+            String(describing: taskPriority),
+            String(describing: taskRecurrence),
+            String(isLunar),
+            String(describing: taskPreset),
+            String(describing: taskSpec),
+            String(describing: taskReminderOffsets)
+        ].joined(separator: "\u{1F}")
     }
 
     /// 内容自适应的最大高度：常规展开态（下限 487，周期自定义/有效期约 +200）都能完整显示；

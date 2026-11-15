@@ -57,12 +57,6 @@ struct TodayTodoPopoverView: View {
         return NSSize(width: contentWidth, height: measured.height)
     }
 
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter
-    }()
-
     var body: some View {
         VStack(spacing: 0) {
             // 档位筛选行（status-views-filter-default：今天/本周/本月/本年；
@@ -151,9 +145,16 @@ struct TodayTodoPopoverView: View {
 
             if let start = event.startDate {
                 HStack(spacing: 4) {
-                    Text(event.isAllDay ? "全天" : Self.timeFormatter.string(from: start))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // P1-4（审查 2026-11-15）：复用桌面面板时间口径——今天 HH:mm、
+                    // 非今天带日期、跨年带年份，否则周/月/年档跨天条目无法分辨是哪天
+                    Text(DesktopTodoPanelTimeText.text(
+                        for: start,
+                        isAllDay: event.isAllDay,
+                        now: reloadAt,
+                        calendar: .current
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     // 超时标识：红色「已过期」，对齐主面板 EventItemRow 样式（口径见 TodayTodoSorter.isOverdue）
                     if TodayTodoSorter.isOverdue(event, now: reloadAt) {
                         Text("已过期")

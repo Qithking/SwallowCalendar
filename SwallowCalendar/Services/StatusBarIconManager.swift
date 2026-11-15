@@ -204,11 +204,23 @@ final class StatusBarIconManager {
         !lastWasFallback || lastKey != currentKey
     }
 
+    /// 自定义格式是否含随时间变化的占位成分（未被单引号包裹的日期/时间字母）。
+    /// 此前只判 d/D，EEEE（星期）/MM（月份）/h:mm（时间）等被误判为静态，
+    /// 缓存键恒定导致跨天/跨分钟图标不更新；变化格式与 solidDate 同模式不缓存
+    static func customFormatIsTimeVarying(_ format: String) -> Bool {
+        var inLiteral = false
+        for ch in format {
+            if ch == "'" { inLiteral.toggle(); continue }
+            if !inLiteral, "yYMLwWDdEFegGahHmsSXxu".contains(ch) { return true }
+        }
+        return false
+    }
+
     private static func generateIcon(style: IconStyle, customFormat: String, customFormatStyle: AppSettings.CustomFormatStyle = .none, iconColor: NSColor = .systemBlue, cache: NSCache<NSString, NSImage>? = nil) -> NSImage {
-        // 生成缓存 key（日期相关的图标不缓存，因为每天都变）
+        // 生成缓存 key（日期/时间相关的图标不缓存，因为随时间变化）
         let shouldCache: Bool
         let cacheKey: String
-        
+
         switch style {
         case .solidDate, .strokeDate:
             // 日期图标每天变化，不缓存
@@ -218,7 +230,7 @@ final class StatusBarIconManager {
             shouldCache = true
             cacheKey = "calendarIcon_\(iconColor.hexString)"
         case .customFormat:
-            shouldCache = !customFormat.contains("d") && !customFormat.contains("dd") && !customFormat.contains("D") && !customFormat.contains("DD")
+            shouldCache = !customFormatIsTimeVarying(customFormat)
             cacheKey = "custom_\(customFormat)_\(customFormatStyle.rawValue)_\(iconColor.hexString)"
         }
         

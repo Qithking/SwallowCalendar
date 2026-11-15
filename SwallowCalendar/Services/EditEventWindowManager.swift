@@ -12,6 +12,9 @@ final class EditEventWindowManager: NSObject, NSWindowDelegate {
 
     private var editWindow: NSWindow?
     private var isOpening = false
+    /// 当前编辑窗口是否有未保存修改（P1-10）：EditEventSheet 字段偏离初始指纹时上报，
+    /// 编辑中切换到另一事项时据此弹确认，避免改动静默丢失
+    private var currentIsDirty = false
     /// 最近一次内容自然高度；首帧回调可能早于窗口创建，建窗后据此补做一次尺寸对齐
     private var measuredContentHeight: CGFloat = 0
 
@@ -21,8 +24,24 @@ final class EditEventWindowManager: NSObject, NSWindowDelegate {
     func openEditWindow(event: CalendarEvent, calendarService: CalendarService, onDismiss: @escaping () -> Void, onSave: @escaping () -> Void = { }, preview: EditPreviewState? = nil) {
         guard !isOpening else { return }
 
+        // P1-10：已有编辑窗口且有未保存修改时先确认——静默 close 会丢改动；
+        // 用户取消则保持当前窗口不动
+        if editWindow?.isVisible == true, currentIsDirty {
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = "放弃未保存的修改？"
+            alert.informativeText = "当前事项的修改尚未保存，打开新事项将丢失这些修改。"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "放弃修改")
+            alert.addButton(withTitle: "继续编辑")
+            if alert.runModal() != .alertFirstButtonReturn {
+                return
+            }
+        }
+
         // 关闭已有窗口
         editWindow?.close()
+        currentIsDirty = false
         measuredContentHeight = 0
 
         isOpening = true
@@ -42,6 +61,9 @@ final class EditEventWindowManager: NSObject, NSWindowDelegate {
             preview: preview,
             onContentHeightChange: { [weak self] height in
                 self?.applyContentHeight(height)
+            },
+            onDirtyChange: { [weak self] dirty in
+                self?.currentIsDirty = dirty
             }
         )
 
@@ -86,6 +108,7 @@ final class EditEventWindowManager: NSObject, NSWindowDelegate {
     /// 窗口红叉关闭时清空引用，打断 manager→window 保留链（红叉路径也断链）
     func windowWillClose(_ notification: Notification) {
         editWindow = nil
+        currentIsDirty = false
     }
 
     /// 取证定位：把编辑窗口摆到主面板旁边（仅调试入口调用，便于同屏对比材质）

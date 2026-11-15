@@ -201,11 +201,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    /// 构建隐藏主菜单：仅承载文本编辑快捷键（撤销/重做/剪切/拷贝/粘贴/全选）。
-    /// 菜单项 target 为 nil，触发时经 responder chain 路由到当前 field editor；
-    /// autoenables 默认开启，非文本聚焦态自动禁用，不影响其它快捷键行为。
+    /// 构建隐藏主菜单：应用菜单（退出/关闭窗口）承载 Cmd+Q/Cmd+W 快捷键路由，
+    /// 编辑菜单承载文本编辑快捷键（撤销/重做/剪切/拷贝/粘贴/全选）。
+    /// 菜单项 target 为 nil，触发时经 responder chain 路由（terminate:/performClose:
+    /// 落到 NSApp/当前 key window，编辑项落到当前 field editor）；
+    /// autoenables 默认开启，非对应上下文自动禁用，不影响其它快捷键行为。
     private func setupMainMenu() {
         let mainMenu = NSMenu()
+
+        // 应用菜单：LSUIElement 无菜单栏展示，但 mainMenu 仍参与键盘路由——
+        // 缺失时 Cmd+Q/Cmd+W 无响应，应用无法键盘退出
+        let app = NSMenu(title: "SwallowCalendar")
+        let quit = NSMenuItem(title: "退出 SwallowCalendar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        app.addItem(quit)
+        app.addItem(.separator())
+        let closeWindow = NSMenuItem(title: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        app.addItem(closeWindow)
+        let appItem = NSMenuItem()
+        appItem.submenu = app
+        mainMenu.addItem(appItem)
+
         let edit = NSMenu(title: "编辑")
 
         let addItem: (String, Selector, String, NSEvent.ModifierFlags?) -> Void = { title, action, key, extraMask in

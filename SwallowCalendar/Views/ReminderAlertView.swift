@@ -24,6 +24,11 @@ final class ReminderAlertWindowController {
 
     private var window: ReminderAlertWindow?
 
+    /// 当前弹窗仍在展示的未处理行（P1-6 修复）：
+    /// 新一轮提醒整体替换弹窗时，被顶掉事项的提醒键已写入去重缓存，
+    /// 不合并进新弹窗则永不再提醒——show() 用它把旧未处理行带回来
+    private(set) var currentVisibleEvents: [CachedEvent] = []
+
     /// 测试观测：最近一次弹窗因上限被隐藏的条数（产线不读取）
     private(set) var lastHiddenCount = 0
 
@@ -39,6 +44,14 @@ final class ReminderAlertWindowController {
         onEventComplete: @escaping (String) -> Void = { _ in },
         onSnooze: @escaping (String, Int) -> Void = { _, _ in }
     ) {
+        // P1-6：旧弹窗仍有未处理行时合并进新弹窗——被顶掉事项的提醒键
+        // 已入去重缓存，不合并则永不再提醒；旧行已由弹窗内刷新机制
+        // （refreshedDisplayRows）实时剔除已完成/已删除，直接取用
+        var mergedEvents = events
+        if window?.isVisible == true, !currentVisibleEvents.isEmpty {
+            let newIDs = Set(events.map(\.eventID))
+            mergedEvents.append(contentsOf: currentVisibleEvents.filter { !newIDs.contains($0.eventID) })
+        }
         window?.close()
 
         // 宽 340 与主面板一致；高度由 SwiftUI 内容自适应（fittingSize），
@@ -47,8 +60,10 @@ final class ReminderAlertWindowController {
         let width: CGFloat = 340
 
         lastHiddenCount = hiddenCount
+        // 初始展示行 = 合并后的行集合（排序在视图 init 内完成）
+        currentVisibleEvents = mergedEvents
         let rootView = ReminderAlertView(
-            events: events,
+            events: mergedEvents,
             isExpired: isExpired,
             hiddenCount: hiddenCount,
             onDismiss: { [weak self] in self?.close() },
@@ -61,6 +76,9 @@ final class ReminderAlertWindowController {
             },
             onSnooze: { eventID, minutes in
                 onSnooze(eventID, minutes)
+            },
+            onDisplayChange: { [weak self] rows in
+                self?.currentVisibleEvents = rows
             }
         )
 
@@ -102,6 +120,7 @@ final class ReminderAlertWindowController {
     func close() {
         window?.close()
         window = nil
+        currentVisibleEvents = []
     }
 }
 
@@ -118,6 +137,9 @@ struct ReminderAlertView: View {
     let onEventComplete: (String) -> Void
     /// 稍后提醒回调（eventID, minutes）
     let onSnooze: (String, Int) -> Void
+    /// 展示行变化回调（P1-6）：removeRow / 外部刷新导致行集合变化时
+    /// 通知 controller 同步 currentVisibleEvents，供弹窗替换时合并旧未处理行
+    let onDisplayChange: ([CachedEvent]) -> Void
 
     /// 单条完成/稍后提醒后从弹窗移除该行（其余保留，全部移除后自动关闭）
     @State private var displayedEvents: [CachedEvent]
@@ -129,7 +151,8 @@ struct ReminderAlertView: View {
         onDismiss: @escaping () -> Void,
         onCompleteAll: @escaping () -> Void,
         onEventComplete: @escaping (String) -> Void,
-        onSnooze: @escaping (String, Int) -> Void
+        onSnooze: @escaping (String, Int) -> Void,
+        onDisplayChange: @escaping ([CachedEvent]) -> Void = { _ in }
     ) {
         self.events = events
         self.isExpired = isExpired
@@ -138,6 +161,7 @@ struct ReminderAlertView: View {
         self.onCompleteAll = onCompleteAll
         self.onEventComplete = onEventComplete
         self.onSnooze = onSnooze
+        self.onDisplayChange = onDisplayChange
         // 过期待办按「过期时间」降序展示（最近过期的在最上面）：
         // 过期时刻 = startDate − 最大提醒提前量（expiryTime），非 startDate 本身
         _displayedEvents = State(initialValue: events.sorted {
@@ -170,6 +194,10 @@ struct ReminderAlertView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         // Esc 键关闭弹窗
         .onExitCommand(perform: onDismiss)
+        // P1-6：行集合变化（单条移除/外部刷新）时同步 controller 的未处理行快照
+        .onChange(of: displayedEvents.map(\.eventID)) { _, _ in
+            onDisplayChange(displayedEvents)
+        }
         // 4 视图同步：显示期间别处完成/编辑后重查快照，已完成/已删除行移除，
         // 全部移除后自动关闭（与 removeRow 同语义）
         .onReceive(NotificationCenter.default.publisher(for: .cachedEventsChanged)) { _ in
@@ -239,6 +267,9 @@ struct ReminderAlertView: View {
     /// 单条事项行：状态圆点 + 标题 + 时间 + 行内操作（稍后提醒菜单 / 单条完成）
     private func eventRow(_ event: CachedEvent) -> some View {
         let isOverdue = (event.startDate ?? Date()) < Date()
+        // 未开始实例：与服务端「仅标记已开始的实例」口径一致（ReminderAlertService
+        // onCompleteAll/onEventComplete 内 (startDate ?? now) <= now 才标完成）
+        let isNotStarted = (event.startDate ?? Date()) > Date()
         return HStack(spacing: 10) {
             Circle()
                 .fill(isOverdue ? Color.orange : accentColor)
@@ -271,7 +302,9 @@ struct ReminderAlertView: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("稍后提醒")
-            // 单条完成：事项变已办并从弹窗移除，其余保留
+            // 单条完成：事项变已办并从弹窗移除，其余保留。
+            // P1-7：未开始实例（提前提醒场景）被服务端静默跳过，行已消失
+            // 用户误以为完成——禁用按钮并明示原因
             Button {
                 removeRow(event)
                 onEventComplete(event.eventID)
@@ -281,9 +314,11 @@ struct ReminderAlertView: View {
                     .foregroundColor(.accentColor)
             }
             .buttonStyle(.plain)
+            .disabled(isNotStarted)
+            .opacity(isNotStarted ? 0.3 : 1)
             // 点击后不获取键盘焦点，避免系统绘制聚焦环
             .focusEffectDisabled()
-            .help("标记完成")
+            .help(isNotStarted ? "事项未开始，暂不能标记完成" : "标记完成")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)

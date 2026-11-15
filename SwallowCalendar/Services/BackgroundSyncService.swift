@@ -148,6 +148,10 @@ final class BackgroundSyncService {
         // 使用 EventCacheService 的统一上下文（优先为环境上下文，与 @Query 共享）
         guard let context = EventCacheService.shared.context else { return "本地存储未就绪，请稍后重试" }
 
+        // 同步前刷新授权快照：属性为启动时快照，运行中被吊销后仍误判已授权，
+        // 会使 fetchEvents 返回空并触发差集误删窗口内全部系统事件缓存
+        CalendarService.shared.refreshAuthorizationStatus()
+
         var failures: [String] = []
 
         // 日历授权门槛只包住系统日历/提醒同步——ICS 订阅源同步不依赖 EventKit 授权，

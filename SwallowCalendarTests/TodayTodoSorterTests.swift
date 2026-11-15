@@ -122,7 +122,7 @@ final class TodayTodoSorterTests: XCTestCase {
         XCTAssertFalse(TodayTodoSorter.isToday(yesterday, now: now, calendar: calendar))
     }
 
-    // MARK: - 超时判定（口径经用户确认：仅带时间且开始时间已过、未完成才算）
+    // MARK: - 超时判定（口径经用户确认：非全天按开始时间已过；全天按归属日早于今天）
 
     /// 带时间未完成且开始时间已过 → 超时
     func testOverdueTimedPastStart() {
@@ -153,6 +153,13 @@ final class TodayTodoSorterTests: XCTestCase {
         let dayStart = calendar.startOfDay(for: now)
         let allDay = makeEvent(id: "e", startDate: dayStart, isAllDay: true)
         XCTAssertFalse(TodayTodoSorter.isOverdue(allDay, now: now))
+    }
+
+    /// 全天任务归属日早于今天 → 超时（2026-11-15 口径统一：昨天及以前的全天算过期）
+    func testOverdueAllDayYesterday() {
+        let yesterdayDayStart = calendar.startOfDay(for: calendar.date(byAdding: .day, value: -1, to: now)!)
+        let allDay = makeEvent(id: "e2", startDate: yesterdayDayStart, isAllDay: true)
+        XCTAssertTrue(TodayTodoSorter.isOverdue(allDay, now: now))
     }
 
     /// 无时间任务无期限 → 永不超时

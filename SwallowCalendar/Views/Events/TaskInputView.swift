@@ -404,6 +404,8 @@ struct TaskInputView: View {
     }
 
     private func addTask() {
+        // 防重入：落库是异步任务，期间再按回车会重复创建同一任务
+        guard !isProcessing else { return }
         let text = inputText.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
 
