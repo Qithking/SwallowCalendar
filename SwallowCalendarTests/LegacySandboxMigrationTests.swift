@@ -93,10 +93,10 @@ final class LegacySandboxMigrationTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("legacy-migration-test-\(UUID().uuidString).store")
         Self.makeLegacySchemaStore(at: url) { db in
-            // 列序与真实旧库 .schema 一致:ZISENABLED, ZISIMPORTANT, ZICSURL, ZNAME
+            // 列序与真实旧库 .schema 一致:Z_PK, Z_ENT, Z_OPT, ZISENABLED, ZICSURL, ZNAME
             sqlite3_exec(
                 db,
-                "INSERT INTO ZCUSTOMCALENDARSOURCE VALUES (1, 1, 1, 1, 1, 'https://example.com/real.ics', '中国节假日')",
+                "INSERT INTO ZCUSTOMCALENDARSOURCE VALUES (1, 1, 1, 1, 'https://example.com/real.ics', '中国节假日')",
                 nil, nil, nil
             )
         }
@@ -107,7 +107,8 @@ final class LegacySandboxMigrationTests: XCTestCase {
         XCTAssertEqual(fetched.first?.icsURL, "https://example.com/real.ics")
         XCTAssertEqual(fetched.first?.name, "中国节假日")
         XCTAssertEqual(fetched.first?.isEnabled, true)
-        XCTAssertEqual(fetched.first?.isImportant, true)
+        // 旧库无 ZISIMPORTANT 列，该状态无从恢复恒 false
+        XCTAssertEqual(fetched.first?.isImportant, false)
     }
 
     /// 旧库不存在 → 抛错(调用方决定是否落定完成标记)
@@ -122,8 +123,10 @@ final class LegacySandboxMigrationTests: XCTestCase {
     private static let legacySchemaSQL = """
     CREATE TABLE ZCALENDARPREFERENCE (Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER);
     CREATE TABLE ZCUSTOMCALENDARSOURCE ( Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER,
-        ZISENABLED INTEGER, ZISIMPORTANT INTEGER, ZICSURL VARCHAR, ZNAME VARCHAR );
+        ZISENABLED INTEGER, ZICSURL VARCHAR, ZNAME VARCHAR );
     """
+    // fixture 必须与真实旧库 .schema 逐列一致（2026-11-15 实测无 ZISIMPORTANT 列）：
+    // fixture 比真实库多列会让测试全绿而真机 prepare 失败——迁移恒败、订阅永不恢复
 
     /// 建旧库表结构后回调 db 句柄(建库方测试用)
     private static func makeLegacySchemaStore(

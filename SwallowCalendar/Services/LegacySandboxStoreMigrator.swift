@@ -58,8 +58,11 @@ enum LegacySandboxStoreMigrator {
         }
         defer { sqlite3_close(db) }
 
+        // 列集按真实旧库 .schema（2026-11-15 实测）：
+        // (Z_PK, Z_ENT, Z_OPT, ZISENABLED, ZICSURL, ZNAME)——无 ZISIMPORTANT 列，
+        // 查询该列会让 prepare 直接失败（曾因此迁移恒败、订阅源永不恢复）
         let sql = """
-        SELECT ZISENABLED, ZISIMPORTANT, ZICSURL, ZNAME
+        SELECT ZISENABLED, ZICSURL, ZNAME
         FROM ZCUSTOMCALENDARSOURCE ORDER BY Z_PK
         """
         var statement: OpaquePointer?
@@ -83,10 +86,11 @@ enum LegacySandboxStoreMigrator {
                 break
             }
             sources.append(LegacySource(
-                name: columnText(statement, 3),
-                icsURL: columnText(statement, 2),
+                name: columnText(statement, 2),
+                icsURL: columnText(statement, 1),
                 isEnabled: sqlite3_column_int(statement, 0) != 0,
-                isImportant: sqlite3_column_int(statement, 1) != 0
+                // 旧库无 ZISIMPORTANT 列，该状态无从恢复，恒 false
+                isImportant: false
             ))
         }
         return sources
