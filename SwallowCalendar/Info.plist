@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 单实例（enforce-single-instance）：与 GENERATE_INFOPLIST_FILE 生成内容合并输出 -->
+	<key>LSMultipleInstancesProhibited</key>
+	<true/>
+</dict>
+</plist>

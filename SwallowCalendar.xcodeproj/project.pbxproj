@@ -256,6 +256,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SwallowCalendar/Info.plist;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "SwallowCalendar需要访问日历以显示和管理您的日程安排";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "SwallowCalendar需要访问日历以显示和管理您的日程安排";
@@ -292,6 +293,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SwallowCalendar/Info.plist;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "SwallowCalendar需要访问日历以显示和管理您的日程安排";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "SwallowCalendar需要访问日历以显示和管理您的日程安排";
